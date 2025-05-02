@@ -29,12 +29,14 @@ Novahost is a modern web application for managing virtual machines across Proxmo
 ## Development Setup
 
 1. Clone the repository:
+
    ```bash
    git clone https://github.com/yourusername/vm-forge.git
    cd vm-forge
    ```
 
 2. Install dependencies:
+
    ```bash
    npm install
    ```
@@ -46,15 +48,18 @@ Novahost is a modern web application for managing virtual machines across Proxmo
      - Click "Connect to Supabase" in the top right of the editor
      - Follow the setup wizard to connect your project
      - Create a `.env` file in the root directory with:
+
        ```env
        VITE_SUPABASE_URL=your_supabase_url
        VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
        VITE_USE_POSTGRES=false
+       JWT_SECRET=your_very_strong_and_secret_jwt_key # Needed for signing authentication tokens
        ```
 
    - To use PostgreSQL:
      - Set up a PostgreSQL database instance
      - Create a `.env` file in the root directory with:
+
        ```env
        VITE_POSTGRES_HOST=your_postgres_host
        VITE_POSTGRES_PORT=5432
@@ -62,22 +67,50 @@ Novahost is a modern web application for managing virtual machines across Proxmo
        VITE_POSTGRES_PASSWORD=your_postgres_password
        VITE_POSTGRES_DB=your_postgres_database
        VITE_USE_POSTGRES=true
+       JWT_SECRET=your_very_strong_and_secret_jwt_key # Needed for signing authentication tokens
        ```
+
+     - **Generate Default Admin Password Hash:**
+       - Run the script to generate a bcrypt hash for your desired default admin password:
+
+         ```bash
+         node server/generate-hash.js your_chosen_password
+         ```
+
+       - Copy the generated hash output (the long string starting with `$2b$10$...`).
+       - Paste this hash into the `INSERT INTO users` statement within the `migrations/schema.sql` file, replacing the placeholder `'YOUR_BCRYPT_HASH_HERE'`.
+
+       
      - Run migrations to create the database schema:
+
        ```bash
        npm run migrate:up
        ```
+
      - To create new migrations for schema changes:
+
        ```bash
        npm run migrate:create -- -n migration_name
        ```
 
+   - **Generate Default Admin Password Hash:**
+     - Run the script to generate a bcrypt hash for your desired default admin password:
+
+       ```bash
+       node server/generate-hash.js your_chosen_password
+       ```
+
+     - Copy the generated hash output (the long string starting with `$2b$10$...`).
+     - Paste this hash into the `INSERT INTO users` statement within the `migrations/schema.sql` file, replacing the placeholder `'YOUR_BCRYPT_HASH_HERE'`.
+
 4. Start the development server:
+
    ```bash
    npm run dev
    ```
 
 5. Start the backend server:
+
    ```bash
    npm run server
    ```
@@ -88,6 +121,7 @@ The application will be available at `http://localhost:5173`
 ## Production Deployment
 
 1. Build the application:
+
    ```bash
    npm run build
    ```

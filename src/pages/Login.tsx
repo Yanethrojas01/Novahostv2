@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Server as Servers, EyeOff, Eye } from 'lucide-react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../hooks/useAuth'; // Corrected import path
 import { motion } from 'framer-motion';
 
 const API_BASE_URL = 'http://localhost:3001/api'; // Define API base URL

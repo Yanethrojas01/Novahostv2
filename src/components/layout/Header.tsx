@@ -1,4 +1,4 @@
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../hooks/useAuth'; // Corrected import path
 import { useTheme } from '../../contexts/ThemeContext';
 import { Bell, Menu, Moon, Sun, User } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';

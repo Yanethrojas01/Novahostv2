@@ -4,6 +4,8 @@ import pg from 'pg';
 import https from 'https'; // Needed for custom agent
 import dotenv from 'dotenv';
 import Proxmox, { proxmoxApi } from 'proxmox-api'; // Import the proxmox library
+import bcrypt from 'bcrypt'; // For password hashing
+import jwt from 'jsonwebtoken'; // For JWT generation/verification
 
 // Load environment variables from .env file
 dotenv.config();
@@ -23,15 +25,96 @@ app.use(express.json());
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 
-// Mock authentication middleware - would be replaced with real auth in production
+// --- Authentication Middleware ---
 const authenticate = (req, res, next) => {
   const authHeader = req.headers.authorization;
-  if (!authHeader) {
-    return res.status(401).json({ error: 'Unauthorized' });
+  const token = authHeader && authHeader.split(' ')[1]; // Expecting "Bearer TOKEN"
+
+  if (token == null) {
+    console.log('Auth middleware: No token provided');
+    return res.status(401).json({ error: 'Unauthorized: No token provided' });
   }
-  // In a real implementation, validate the token here
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) {
+      console.log('Auth middleware: Invalid token', err.message);
+      // Differentiate between expired and invalid tokens if needed
+      if (err.name === 'TokenExpiredError') {
+        return res.status(401).json({ error: 'Unauthorized: Token expired' });
+      }
+      return res.status(403).json({ error: 'Forbidden: Invalid token' }); // Use 403 for invalid token
+    }
+    // Token is valid, attach user info to the request object
+    req.user = user;
+    console.log('Auth middleware: Token verified for user:', user.userId, 'Role:', user.role); // Log user ID and role
+    next(); // Proceed to the next middleware or route handler
+  });
+};
+
+// --- Role-Based Access Control Middleware (Example) ---
+const requireAdmin = (req, res, next) => {
+  // Assumes 'authenticate' middleware runs first and sets req.user
+  if (!req.user || req.user.role !== 'admin') {
+    console.log('RequireAdmin: Access denied for user:', req.user?.userId, 'Role:', req.user?.role);
+    return res.status(403).json({ error: 'Forbidden: Admin privileges required' });
+  }
   next();
 };
+
+// --- User Management Routes (Admin Only) ---
+
+// POST /api/users - Create a new user
+app.post('/api/users', authenticate, requireAdmin, async (req, res) => {
+  const { username, email, password, role_name = 'user', is_active = true } = req.body; // Default role to 'user'
+  console.log(`--- POST /api/users --- Creating user: ${email}, Role: ${role_name}`);
+
+  // Validation
+  if (!username || !email || !password) {
+    return res.status(400).json({ error: 'Username, email, and password are required' });
+  }
+  if (!['admin', 'user', 'viewer'].includes(role_name)) {
+    return res.status(400).json({ error: 'Invalid role specified. Must be admin, user, or viewer.' });
+  }
+
+  try {
+    // Check if role exists
+    const roleResult = await pool.query('SELECT id FROM roles WHERE name = $1', [role_name]);
+    if (roleResult.rows.length === 0) {
+      return res.status(400).json({ error: `Role '${role_name}' not found in database.` });
+    }
+    const roleId = roleResult.rows[0].id;
+
+    // Hash the password
+    const saltRounds = 10;
+    const passwordHash = await bcrypt.hash(password, saltRounds);
+
+    // Insert the user
+    const insertResult = await pool.query(
+      `INSERT INTO users (username, email, password_hash, role_id, is_active)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, username, email, role_id, is_active, created_at, updated_at`,
+      [username, email, passwordHash, roleId, is_active]
+    );
+
+    const newUser = insertResult.rows[0];
+    // Add role name back for the response
+    newUser.role_name = role_name;
+    delete newUser.role_id; // Don't need role_id in response
+
+    console.log('Successfully created user:', newUser);
+    res.status(201).json(newUser);
+
+  } catch (error) {
+    console.error('Error creating user:', error);
+    // Handle potential unique constraint violation (e.g., email already exists)
+    if (error.code === '23505') { // PostgreSQL unique violation code
+      return res.status(409).json({ error: 'Email or username already exists.' });
+    }
+    res.status(500).json({ error: 'Failed to create user.' });
+  }
+});
+
+
 
 // Routes
 // Health check
@@ -669,7 +752,7 @@ app.get('/api/hypervisors', authenticate, async (req, res) => {
   }
 });
 // POST /api/hypervisors - Create new hyperviso
-app.post('/api/hypervisors', authenticate, async (req, res) => {
+app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => { // Added requireAdmin
   //console.log('--- Received POST /api/hypervisors ---'); // <-- Añade esta línea
     const { type, host, username, password, apiToken, tokenName } = req.body;
 
@@ -973,7 +1056,7 @@ app.post('/api/hypervisors', authenticate, async (req, res) => {
 });
 
 // GET /api/hypervisors/:id - Get a single hypervisor by ID
-app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
+app.get('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) => { // Added requireAdmin
   const { id } = req.params;
   console.log(`GET /api/hypervisors/${id} called`);
   try {
@@ -1036,7 +1119,7 @@ function getProxmoxError(error) {
 
 // PUT /api/hypervisors/:id - Update an existing hypervisor (example, frontend doesn't use this yet for general edits)
 // Let's update it to allow changing name, host, username, api_token
-app.put('/api/hypervisors/:id', authenticate, async (req, res) => {
+app.put('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) => { // Added requireAdmin
   const { id } = req.params;
   console.log(`PUT /api/hypervisors/${id} called with body:`, req.body);
   const { name, host, username, apiToken } = req.body; // Only allow updating these fields for now
@@ -1067,7 +1150,7 @@ app.put('/api/hypervisors/:id', authenticate, async (req, res) => {
 });
 
 // DELETE /api/hypervisors/:id - Delete a hypervisor
-app.delete('/api/hypervisors/:id', authenticate, async (req, res) => {
+app.delete('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) => { // Added requireAdmin
   const { id } = req.params;
   console.log(`DELETE /api/hypervisors/${id} called`);
   try {
@@ -1087,7 +1170,7 @@ app.delete('/api/hypervisors/:id', authenticate, async (req, res) => {
 
 // POST /api/hypervisors/:id/connect - Versión Corregida
 // Connect to hypervisor
-app.post('/api/hypervisors/:id/connect', authenticate, async (req, res) => {
+app.post('/api/hypervisors/:id/connect', authenticate, requireAdmin, async (req, res) => { // Added requireAdmin
   const { id } = req.params;
   console.log(`POST /api/hypervisors/${id}/connect called`);
   try {
@@ -1206,7 +1289,7 @@ app.get('/api/vm-plans', authenticate, async (req, res) => {
 });
 
 // POST /api/vm-plans - Create a new VM plan
-app.post('/api/vm-plans', authenticate, async (req, res) => {
+app.post('/api/vm-plans', authenticate, requireAdmin, async (req, res) => { // Added requireAdmin
   console.log('--- POST /api/vm-plans --- Body:', req.body);
   const { name, description, specs, icon, is_active = true } = req.body;
 
@@ -1231,7 +1314,7 @@ app.post('/api/vm-plans', authenticate, async (req, res) => {
 });
 
 // PUT /api/vm-plans/:id - Update a VM plan (specifically isActive status)
-app.put('/api/vm-plans/:id', authenticate, async (req, res) => {
+app.put('/api/vm-plans/:id', authenticate, requireAdmin, async (req, res) => { // Added requireAdmin
   const { id } = req.params;
   const { is_active } = req.body;
   console.log(`--- PUT /api/vm-plans/${id} --- Body:`, req.body);
@@ -1259,7 +1342,7 @@ app.put('/api/vm-plans/:id', authenticate, async (req, res) => {
 });
 
 // DELETE /api/vm-plans/:id - Delete a VM plan
-app.delete('/api/vm-plans/:id', authenticate, async (req, res) => {
+app.delete('/api/vm-plans/:id', authenticate, requireAdmin, async (req, res) => { // Added requireAdmin
   const { id } = req.params;
   console.log(`--- DELETE /api/vm-plans/${id} ---`);
   try {
