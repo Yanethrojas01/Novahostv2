@@ -1,8 +1,10 @@
 export interface User {
   id: string;
+  username: string; // Add username
   name?: string; // Make name optional as it might not be in the token initially
   email: string;
   role: 'admin' | 'user' | 'viewer';
+  is_active?: boolean; // Add is_active (optional as it might not always be present)
 }
 
 export interface LoginCredentials {

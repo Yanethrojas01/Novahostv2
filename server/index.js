@@ -165,6 +165,103 @@ app.post('/api/users', authenticate, requireAdmin, async (req, res) => {
   }
 });
 
+// PUT /api/users/:id - Update a user (Admin Only)
+app.put('/api/users/:id', authenticate, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { username, email, role_name, is_active } = req.body;
+  // Note: Password changes should likely be a separate endpoint/process for security.
+  // We are NOT allowing password updates via this endpoint for now.
+
+  console.log(`--- PUT /api/users/${id} --- Updating user: ${email}, Role: ${role_name}, Active: ${is_active}`);
+
+  // Validation
+  if (!username || !email) {
+    return res.status(400).json({ error: 'Username and email are required' });
+  }
+  if (role_name && !['admin', 'user', 'viewer'].includes(role_name)) {
+    return res.status(400).json({ error: 'Invalid role specified. Must be admin, user, or viewer.' });
+  }
+  if (typeof is_active !== 'boolean') {
+    return res.status(400).json({ error: 'is_active must be a boolean value.' });
+  }
+
+  try {
+    // Find the role ID if role_name is provided
+    let roleId = null;
+    if (role_name) {
+      const roleResult = await pool.query('SELECT id FROM roles WHERE name = $1', [role_name]);
+      if (roleResult.rows.length === 0) {
+        return res.status(400).json({ error: `Role '${role_name}' not found.` });
+      }
+      roleId = roleResult.rows[0].id;
+    }
+
+    // Build the update query dynamically based on provided fields
+    const updates = [];
+    const values = [];
+    let valueIndex = 1;
+
+    updates.push(`username = $${valueIndex++}`); values.push(username);
+    updates.push(`email = $${valueIndex++}`); values.push(email);
+    if (roleId) { updates.push(`role_id = $${valueIndex++}`); values.push(roleId); }
+    updates.push(`is_active = $${valueIndex++}`); values.push(is_active);
+    updates.push(`updated_at = now()`);
+
+    values.push(id); // Add the user ID for the WHERE clause
+
+    const updateQuery = `UPDATE users SET ${updates.join(', ')} WHERE id = $${valueIndex} RETURNING id, username, email, role_id, is_active, created_at, updated_at`;
+
+    const result = await pool.query(updateQuery, values);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const updatedUser = result.rows[0];
+    // Add role name back for consistency
+    updatedUser.role_name = role_name || (await pool.query('SELECT name FROM roles WHERE id = $1', [updatedUser.role_id])).rows[0]?.name;
+    delete updatedUser.role_id;
+
+    console.log('Successfully updated user:', updatedUser);
+    res.json(updatedUser);
+
+  } catch (error) {
+    console.error(`Error updating user ${id}:`, error);
+    if (error.code === '23505') return res.status(409).json({ error: 'Email or username already exists.' });
+    res.status(500).json({ error: 'Failed to update user.' });
+  }
+});
+
+// GET /api/users - List all users (Admin Only)
+app.get('/api/users', authenticate, requireAdmin, async (req, res) => {
+  console.log('--- GET /api/users ---');
+  try {
+    // Select user details and join with roles to get the role name
+    const result = await pool.query(
+      `SELECT u.id, u.username, u.email, u.is_active, r.name as role_name, u.created_at, u.updated_at
+       FROM users u
+       JOIN roles r ON u.role_id = r.id
+       ORDER BY u.created_at DESC`
+    );
+    console.log(`Found ${result.rows.length} users`);
+    // Map role_name to role for consistency with frontend User type
+    const users = result.rows.map(dbUser => ({
+      id: dbUser.id,
+      username: dbUser.username,
+      email: dbUser.email,
+      role: dbUser.role_name, // Map role_name to role
+      is_active: dbUser.is_active,
+      // Include other fields if needed by the frontend, like created_at
+    }));
+    res.json(users);
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    res.status(500).json({ error: 'Failed to retrieve users' });
+  }
+});
+
+
+
 
 
 // Routes
