@@ -82,7 +82,7 @@ export interface VMPlan {
   description: string;
   specs: VMSpecs;
   icon?: string;
-  isActive: boolean;
+  is_active: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

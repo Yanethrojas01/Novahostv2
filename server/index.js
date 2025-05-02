@@ -631,13 +631,13 @@ app.get('/api/hypervisors/:id/templates', authenticate, async (req, res) => {
 
 // GET /api/hypervisors - List all hypervisors
 app.get('/api/hypervisors', authenticate, async (req, res) => {
-  console.log('--- Received GET /api/hypervisors ---');
+ // console.log('--- Received GET /api/hypervisors ---');
   try {
     // Select all relevant fields, excluding sensitive ones like password or full token details
     const result = await pool.query(
       'SELECT id, name, type, host, username, status, last_sync, created_at, updated_at FROM hypervisors ORDER BY created_at DESC'
     );
-    console.log(`Found ${result.rows.length} hypervisors`);
+    //console.log(`Found ${result.rows.length} hypervisors`);
     res.json(result.rows);
   } catch (err) {
     console.error('Error fetching hypervisors from DB:', err);
@@ -646,9 +646,8 @@ app.get('/api/hypervisors', authenticate, async (req, res) => {
 });
 // POST /api/hypervisors - Create new hyperviso
 app.post('/api/hypervisors', authenticate, async (req, res) => {
-  console.log('--- Received POST /api/hypervisors ---'); // <-- Añade esta línea
-  //console.log('Request Body:', req.body);
-  const { type, host, username, password, apiToken, tokenName } = req.body;
+  //console.log('--- Received POST /api/hypervisors ---'); // <-- Añade esta línea
+    const { type, host, username, password, apiToken, tokenName } = req.body;
 
   // Validación mejorada
   const validationErrors = [];
@@ -665,27 +664,27 @@ app.post('/api/hypervisors', authenticate, async (req, res) => {
       
       if (!hasToken && !hasPassword) {
           validationErrors.push('Proxmox requires either password or API token + token name');
-          console.log('Proxmox requires either password or API token + token name');
+          //console.log('Proxmox requires either password or API token + token name');
       }
       
       if (apiToken && !tokenName) {
           validationErrors.push('Token name is required when using API token');
-          console.log('Token name is required when using API token');
+          //console.log('Token name is required when using API token');
       }
       
       if (tokenName && !apiToken) {
           validationErrors.push('API token secret is required when using token name');
-          console.log('API token secret is required when using token name');
+          //console.log('API token secret is required when using token name');
       }
       
       if (!/^https?:\/\/[\w.-]+(:\d+)?$/.test(host)) {
           validationErrors.push('Invalid host format. Use http(s)://hostname[:port]');
-          console.log('Invalid host format. Use http(s)://hostname[:port]');
+          //console.log('Invalid host format. Use http(s)://hostname[:port]');
       }
   }
 
   if (validationErrors.length > 0) {
-    console.log('Validation errors:', validationErrors);  
+    //console.log('Validation errors:', validationErrors);  
     return res.status(400).json({
           error: 'Validation failed',
           details: validationErrors
@@ -741,7 +740,7 @@ app.post('/api/hypervisors', authenticate, async (req, res) => {
           // Verificar nodos usando endpoint /nodes
           try {
             const nodesResponse = await proxmox.nodes.$get(); // Ya funciona correctamente
-            console.log('Proxmox nodes:', nodesResponse);
+            
             
             if (!nodesResponse?.length) {
                 throw new Error('No nodes found in cluster');
@@ -752,13 +751,13 @@ app.post('/api/hypervisors', authenticate, async (req, res) => {
 
             //const nodeName = proxmox.nodesResponse.$(nodesResponse[0].node);//prueba
             const nodeName = nodesResponse[0].node;
-            console.log('Using node:', nodeName)
+          
             
             const versionResponse = await proxmox.nodes.$(nodeName).version.$get(); // Método específico según la biblioteca
-            console.log('Proxmox version:', versionResponse);
+            
     
             const pveVersion = versionResponse?.version;
-            console.log('Proxmox version:', pveVersion);
+            
             if (!pveVersion) {
                 throw new Error('Invalid Proxmox version response');
             }
@@ -1084,7 +1083,7 @@ app.get('/api/vm-plans', authenticate, async (req, res) => {
 // POST /api/vm-plans - Create a new VM plan
 app.post('/api/vm-plans', authenticate, async (req, res) => {
   console.log('--- POST /api/vm-plans --- Body:', req.body);
-  const { name, description, specs, icon, isActive = true } = req.body;
+  const { name, description, specs, icon, is_active = true } = req.body;
 
   // Basic Validation
   if (!name || !description || !specs || !specs.cpu || !specs.memory || !specs.disk) {
@@ -1096,7 +1095,7 @@ app.post('/api/vm-plans', authenticate, async (req, res) => {
       `INSERT INTO vm_plans (name, description, specs, icon, is_active) 
        VALUES ($1, $2, $3, $4, $5) 
        RETURNING id, name, description, specs, icon, is_active, created_at, updated_at`,
-      [name, description, JSON.stringify(specs), icon || null, isActive]
+      [name, description, JSON.stringify(specs), icon || null, is_active]
     );
     console.log('Created new VM plan:', result.rows[0]);
     res.status(201).json(result.rows[0]);
@@ -1109,17 +1108,17 @@ app.post('/api/vm-plans', authenticate, async (req, res) => {
 // PUT /api/vm-plans/:id - Update a VM plan (specifically isActive status)
 app.put('/api/vm-plans/:id', authenticate, async (req, res) => {
   const { id } = req.params;
-  const { isActive } = req.body;
+  const { is_active } = req.body;
   console.log(`--- PUT /api/vm-plans/${id} --- Body:`, req.body);
 
-  if (typeof isActive !== 'boolean') {
+  if (typeof is_active !== 'boolean') {
     return res.status(400).json({ error: 'Invalid request body: isActive (boolean) is required.' });
   }
 
   try {
     const result = await pool.query(
       'UPDATE vm_plans SET is_active = $1, updated_at = now() WHERE id = $2 RETURNING id, name, description, specs, icon, is_active, created_at, updated_at',
-      [isActive, id]
+      [is_active, id]
     );
 
     if (result.rows.length > 0) {

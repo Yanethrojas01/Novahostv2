@@ -24,7 +24,7 @@ export default function Settings() {
       memory: 1024,
       disk: 20
     },
-    isActive: true
+    is_active: true
   });
   
   useEffect(() => {
@@ -43,6 +43,7 @@ export default function Settings() {
         throw new Error('Failed to fetch plans');
       }
       const data = await response.json();
+      console.log(data)
       setPlans(data || []);
     } catch (error) {
       console.error('Error fetching plans:', error);
@@ -66,7 +67,7 @@ export default function Settings() {
           name: newPlan.name,
           description: newPlan.description,
           specs: newPlan.specs,
-          isActive: true
+          is_active: true
         }),
       });
 
@@ -81,7 +82,7 @@ export default function Settings() {
           memory: 1024,
           disk: 20
         },
-        isActive: true
+        is_active: true
       });
       toast.success('VM Plan added successfully!');
     } catch (error) {
@@ -117,7 +118,7 @@ export default function Settings() {
     }
   };
 
-  const handleTogglePlan = async (id: string, isActive: boolean) => {
+  const handleTogglePlan = async (id: string, is_active: boolean) => {
     try {
       const response = await fetch(`${API_BASE_URL}/vm-plans/${id}`, {
         method: 'PUT',
@@ -125,12 +126,12 @@ export default function Settings() {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer MOCK_TOKEN', // Replace with actual token logic
         },
-        body: JSON.stringify({ isActive }),
+        body: JSON.stringify({ is_active }),
       });
       if (!response.ok) throw new Error('Failed to update plan status');
       const updatedPlan = await response.json();
       setPlans(plans.map(plan => (plan.id === id ? updatedPlan : plan)));
-      toast.success(`Plan ${isActive ? 'activated' : 'deactivated'}.`);
+      toast.success(`Plan ${is_active ? 'activated' : 'deactivated'}.`);
     } catch (error) {
       console.error('Error updating plan:', error);
       toast.error('Failed to update plan status.');
@@ -277,7 +278,7 @@ export default function Settings() {
                               type="checkbox"
                               id={`active-${plan.id}`}
                               className="form-checkbox"
-                              checked={plan.isActive}
+                              checked={plan.is_active}
                               onChange={(e) => handleTogglePlan(plan.id, e.target.checked)}
                             />
                             <label htmlFor={`active-${plan.id}`} className="ml-2 text-sm text-slate-700 dark:text-slate-300">

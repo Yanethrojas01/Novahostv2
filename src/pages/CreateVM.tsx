@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Server, Cpu, MemoryStick as Memory } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { VMCreateParams, VMTemplate } from '../types/vm'; // Use VMTemplate from vm.ts
+import { VMCreateParams, VMTemplate, VMPlan } from '../types/vm'; // Import VMPlan
 import { Hypervisor } from '../types/hypervisor'; // Import Hypervisor type
 // import { supabase } from '../lib/supabase'; // Remove direct Supabase usage
 import { toast } from 'react-hot-toast';
@@ -15,8 +15,11 @@ export default function CreateVM() {
   const [isLoading, setIsLoading] = useState(false); // General loading state for create action
   const [isFetchingHypervisors, setIsFetchingHypervisors] = useState(true);
   const [isFetchingTemplates, setIsFetchingTemplates] = useState(false);
+  const [isFetchingPlans, setIsFetchingPlans] = useState(false); // State for fetching plans
   const [availableHypervisors, setAvailableHypervisors] = useState<Hypervisor[]>([]);
   const [templates, setTemplates] = useState<VMTemplate[]>([]); // Use VMTemplate type
+  const [availablePlans, setAvailablePlans] = useState<VMPlan[]>([]); // State for VM Plans
+  const [configMode, setConfigMode] = useState<'plan' | 'custom'>('plan'); // 'plan' or 'custom'
 
   const [vmParams, setVmParams] = useState<VMCreateParams>({
     name: '',
@@ -29,7 +32,7 @@ export default function CreateVM() {
       // os: '', // We'll use templateId instead
     },
     start: true,
-    tags: [],
+    tags: [], // Initialize tags as empty array
     templateId: undefined, // Initialize templateId
   });
 
@@ -54,6 +57,28 @@ export default function CreateVM() {
       }
     };
     fetchHypervisors();
+  }, []);
+
+  // Fetch active VM plans on mount
+  useEffect(() => {
+    const fetchPlans = async () => {
+      setIsFetchingPlans(true);
+      try {
+        // Assuming the backend filters active plans or we filter here
+        const response = await fetch(`${API_BASE_URL}/vm-plans`, {
+          headers: { 'Authorization': 'Bearer MOCK_TOKEN' }, // Replace with actual token logic
+        });
+        if (!response.ok) throw new Error('Failed to fetch VM plans');
+        const data: VMPlan[] = await response.json();
+        setAvailablePlans(data.filter(plan => plan.is_active)); // Filter for active plans
+      } catch (error) {
+        console.error('Error fetching VM plans:', error);
+        toast.error('Could not load VM plans.');
+      } finally {
+        setIsFetchingPlans(false);
+      }
+    };
+    fetchPlans();
   }, []);
 
   // Fetch templates when hypervisor changes
@@ -113,6 +138,26 @@ export default function CreateVM() {
     }));
   };
 
+  // Handle Plan Selection
+  const handlePlanSelect = (planId: string) => {
+    const selectedPlan = availablePlans.find(p => p.id === planId);
+    if (selectedPlan) {
+      setVmParams(prev => ({
+        ...prev,
+        planId: selectedPlan.id,
+        specs: { // Update specs based on the selected plan
+          ...prev.specs, // Keep existing network/os if needed
+          cpu: selectedPlan.specs.cpu,
+          memory: selectedPlan.specs.memory,
+          disk: selectedPlan.specs.disk,
+        }
+      }));
+    } else {
+      // Clear planId and potentially reset specs if plan is deselected or not found
+      setVmParams(prev => ({ ...prev, planId: undefined }));
+    }
+  };
+
   const handleCreate = async () => {
     setIsLoading(true);
     try {
@@ -154,7 +199,10 @@ export default function CreateVM() {
       return !vmParams.name || !vmParams.hypervisorId;
     }
     if (currentStep === 2) {
-      return !vmParams.templateId; // Check if a template is selected
+      // If plan mode, need template and plan. If custom mode, need template.
+      return !vmParams.templateId || (configMode === 'plan' && !vmParams.planId);
+    }
+    if (currentStep === 3 && configMode === 'plan') { // No validation needed in step 3 if using a plan
     }
     return false;
   };
@@ -199,7 +247,7 @@ export default function CreateVM() {
               2
             </div>
             <div className="ml-2 text-sm font-medium text-slate-900 dark:text-white">
-              OS & Storage
+              Configuration
             </div>
           </div>
           <div className={`flex-1 h-0.5 mx-4 ${
@@ -329,9 +377,66 @@ export default function CreateVM() {
             exit={{ opacity: 0, x: -20 }}
             className="p-6"
           >
-            <h2 className="text-lg font-medium text-slate-900 dark:text-white mb-6">Operating System & Storage</h2>
+            <h2 className="text-lg font-medium text-slate-900 dark:text-white mb-6">Configuration</h2>
 
             <div className="space-y-6">
+              {/* Configuration Mode Toggle */}
+              <div className="flex items-center space-x-4">
+                <label className="form-label mb-0">Configuration Type:</label>
+                <div className="flex items-center">
+                  <input
+                    type="radio"
+                    id="config-plan"
+                    name="configMode"
+                    value="plan"
+                    checked={configMode === 'plan'}
+                    onChange={() => {
+                      setConfigMode('plan');
+                      // Reset custom specs if switching to plan mode? Optional.
+                      // Or apply first available plan's specs?
+                      if (availablePlans.length > 0) {
+                        handlePlanSelect(availablePlans[0].id); // Select first plan by default
+                      } else {
+                         setVmParams(prev => ({ ...prev, planId: undefined }));
+                      }
+                    }}
+                    className="form-radio"
+                  />
+                  <label htmlFor="config-plan" className="ml-2 text-sm">Use VM Plan</label>
+                </div>
+                <div className="flex items-center">
+                  <input
+                    type="radio"
+                    id="config-custom"
+                    name="configMode"
+                    value="custom"
+                    checked={configMode === 'custom'}
+                    onChange={() => {
+                      setConfigMode('custom');
+                      setVmParams(prev => ({ ...prev, planId: undefined })); // Clear planId when switching to custom
+                      // Reset specs to default custom values?
+                      // setVmParams(prev => ({ ...prev, specs: { cpu: 1, memory: 1024, disk: 20 }}));
+                    }}
+                    className="form-radio"
+                  />
+                  <label htmlFor="config-custom" className="ml-2 text-sm">Custom Specs</label>
+                </div>
+              </div>
+
+              {/* VM Plan Selection (only if configMode is 'plan') */}
+              {configMode === 'plan' && (
+                <div>
+                  <label htmlFor="vm-plan" className="form-label">Select VM Plan</label>
+                  <select id="vm-plan" className="form-select" value={vmParams.planId || ''} onChange={(e) => handlePlanSelect(e.target.value)} disabled={isFetchingPlans || availablePlans.length === 0}>
+                    <option value="" disabled>{isFetchingPlans ? 'Loading plans...' : (availablePlans.length === 0 ? 'No active plans found' : 'Select a plan')}</option>
+                    {availablePlans.map(plan => (
+                      <option key={plan.id} value={plan.id}>{plan.name} ({plan.specs.cpu} CPU, {plan.specs.memory >= 1024 ? `${plan.specs.memory / 1024}GB` : `${plan.specs.memory}MB`} RAM, {plan.specs.disk}GB Disk)</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Template Selection (always shown) */}
               <div>
                 <label className="form-label">Available Templates</label>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -375,7 +480,9 @@ export default function CreateVM() {
                 </div>
               </div>
 
-              <div>
+              {/* Disk Size Slider (only if configMode is 'custom') */}
+              {configMode === 'custom' && (
+                <div>
                 <label htmlFor="disk" className="form-label">Disk Size (GB)</label>
                 <div className="flex items-center">
                   <input
@@ -403,6 +510,7 @@ export default function CreateVM() {
                   <span>500 GB</span>
                 </div>
               </div>
+              )}
             </div>
           </motion.div>
         )}
@@ -418,7 +526,8 @@ export default function CreateVM() {
             <h2 className="text-lg font-medium text-slate-900 dark:text-white mb-6">Resources</h2>
 
             <div className="space-y-6">
-              <div>
+              {/* Only show CPU slider if configMode is 'custom' */}
+              {configMode === 'custom' && (<>
                 <div className="flex items-center justify-between mb-2">
                   <label htmlFor="cpu" className="form-label mb-0">CPU Cores</label>
                   <div className="flex items-center gap-2">
@@ -474,9 +583,10 @@ export default function CreateVM() {
                   <span>1 core</span>
                   <span>16 cores</span>
                 </div>
-              </div>
+              </>)}
 
-              <div>
+              {/* Only show Memory slider if configMode is 'custom' */}
+              {configMode === 'custom' && (<>
                 <div className="flex items-center justify-between mb-2">
                   <label htmlFor="memory" className="form-label mb-0">Memory (MB)</label>
                   <div className="text-slate-700 dark:text-slate-300">
@@ -508,7 +618,7 @@ export default function CreateVM() {
                   <span>512 MB</span>
                   <span>32 GB</span>
                 </div>
-              </div>
+              </>)}
 
               <div className="pt-4 border-t border-slate-200 dark:border-slate-700">
                 <div className="flex items-center">
@@ -531,6 +641,10 @@ export default function CreateVM() {
                   <div className="sm:col-span-2">
                     <dt className="text-slate-500 dark:text-slate-400">Name</dt>
                     <dd className="text-slate-900 dark:text-white mt-0.5">{vmParams.name || '-'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-slate-500 dark:text-slate-400">Configuration</dt>
+                    <dd className="text-slate-900 dark:text-white mt-0.5">{configMode === 'plan' ? (availablePlans.find(p => p.id === vmParams.planId)?.name || 'Plan Selected') : 'Custom Specs'}</dd>
                   </div>
                   <div>
                     <dt className="text-slate-500 dark:text-slate-400">Operating System</dt>
