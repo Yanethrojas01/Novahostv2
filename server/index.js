@@ -165,14 +165,114 @@ app.get('/api/vsphere/vms', authenticate, (req, res) => {
   ]);
 });
 
-// VM management routes (would be implemented for both Proxmox and vSphere)
-app.post('/api/vms/create', authenticate, (req, res) => {
-  // This would create a VM via the appropriate API
-  res.status(202).json({
-    id: `new-vm-${Date.now()}`,
-    status: 'creating',
-    message: 'VM creation started',
-  });
+// POST /api/vms - Create a new VM
+app.post('/api/vms', authenticate, async (req, res) => {
+  // Cast the body to the expected type (ensure VMCreateParams is imported or defined if needed)
+  const params = req.body; // as VMCreateParams; 
+  console.log('--- Received POST /api/vms --- Params:', params);
+
+  // Basic Validation - Check templateId instead of specs.os for template selection
+  if (!params.name || !params.hypervisorId || !params.specs?.cpu || !params.specs?.memory || !params.specs?.disk || !params.templateId) {
+    return res.status(400).json({ error: 'Missing required VM parameters (name, hypervisorId, specs, templateId).' });
+  }
+
+  try {
+    // 1. Get Hypervisor Details
+    const { rows: [hypervisor] } = await pool.query(
+      `SELECT id, type, host, username, api_token, token_name, status 
+       FROM hypervisors WHERE id = $1`,
+      [params.hypervisorId]
+    );
+
+    if (!hypervisor) {
+      return res.status(404).json({ error: 'Target hypervisor not found' });
+    }
+    if (hypervisor.status !== 'connected') {
+      return res.status(409).json({ error: 'Target hypervisor is not connected' });
+    }
+
+    let creationResult = null;
+    let newVmId = null;
+
+    if (hypervisor.type === 'proxmox') {
+      // Connect to Proxmox
+      const [dbHost, dbPortStr] = hypervisor.host.split(':');
+      const port = dbPortStr ? parseInt(dbPortStr, 10) : 8006;
+      const cleanHost = dbHost;
+
+      const proxmoxConfig = {
+        host: cleanHost, port: port, username: hypervisor.username,
+        tokenID: `${hypervisor.username}!${hypervisor.token_name}`,
+        tokenSecret: hypervisor.api_token, timeout: 30000, rejectUnauthorized: false // Longer timeout for creation
+      };
+      const proxmox = proxmoxApi(proxmoxConfig);
+
+      // Determine target node (needs to be provided or chosen)
+      // For now, let's assume the frontend sends nodeName or we pick the first available node
+      let targetNode = params.nodeName;
+      if (!targetNode) {
+        const nodes = await proxmox.nodes.$get();
+        if (!nodes || nodes.length === 0) throw new Error('No nodes found on hypervisor');
+        targetNode = nodes[0].node; // Default to first node
+        console.log(`No node specified, defaulting to first node: ${targetNode}`);
+      }
+
+      // Get next available VMID
+      const nextIdResult = await proxmox.cluster.nextid.$get();
+      newVmId = nextIdResult.toString(); // Ensure it's a string
+
+      // Prepare Proxmox VM creation parameters (Simplified Example)
+      // This needs significant expansion based on template type (ISO vs Template VM)
+      // We'll assume templateId is in the format "storage:volid" and points to a template VM to clone
+      const [templateStorage, templateVolId] = params.templateId.split(':');
+      // Find the template VM's ID if templateVolId refers to a template VM name/path
+      // This part is complex and depends on how templates are set up.
+      // For now, let's assume params.templateId IS the VMID of the template to clone.
+      // A more robust solution would look up the template VM based on the volid.
+      const templateVmIdToClone = params.templateId; // Placeholder - needs proper lookup logic
+
+      const proxmoxVmParams = {
+        newid: newVmId, // ID for the new VM
+        name: params.name,
+        // Cloning parameters
+        full: 1, // Full clone
+        // target: targetNode, // Target node for the clone
+        // storage: 'local-lvm', // Target storage for the clone disk (example)
+        // Optional overrides for the clone:
+        cores: params.specs.cpu,
+        memory: params.specs.memory,
+        description: params.description || '',
+        tags: params.tags?.join(';') || '',
+      };
+
+      console.log(`Attempting to clone template VM ${templateVmIdToClone} to new VM ${newVmId} on node ${targetNode} with params:`, proxmoxVmParams);
+      // The endpoint to clone is /nodes/{node}/qemu/{vmid}/clone
+      creationResult = await proxmox.nodes.$(targetNode).qemu.$(templateVmIdToClone).clone.$post(proxmoxVmParams);
+
+      // Optionally start the VM if requested and clone was successful
+      if (params.start && creationResult) {
+        console.log(`Starting VM ${newVmId}...`);
+        await proxmox.nodes.$(targetNode).qemu.$(newVmId).status.start.$post();
+      }
+    } // Add else if for vSphere later
+
+    // Respond with success (including the new VM ID and task ID)
+    res.status(202).json({ // 202 Accepted
+      id: newVmId,
+      status: 'creating',
+      message: `VM creation initiated for ${params.name} (ID: ${newVmId}). Task ID: ${creationResult}`,
+      taskId: creationResult
+    });
+
+  } catch (error) {
+    console.error('Error creating VM:', error);
+    const errorDetails = getProxmoxError(error);
+    res.status(errorDetails.code || 500).json({
+      error: 'Failed to create VM.',
+      details: errorDetails.message,
+      suggestion: errorDetails.suggestion
+    });
+  }
 });
 
 // POST /api/vms/:id/action - Implement real actions
