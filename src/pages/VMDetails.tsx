@@ -1,22 +1,37 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Server, Cpu, MemoryStick as Memory, HardDrive, Power, Activity } from 'lucide-react';
-import type { VirtualMachine } from '../types/vm';
-import { mockVMs } from '../utils/mockData';
+import { Server, Cpu, MemoryStick as Memory, HardDrive, Power } from 'lucide-react';
+import type { VM } from '../types/vm'; // Use the correct VM type
+import { toast } from 'react-hot-toast';
+
+const API_BASE_URL = 'http://localhost:3001/api'; // Define the base URL
 
 export default function VMDetails() {
   const { id } = useParams();
-  const [vm, setVM] = useState<VirtualMachine | null>(null);
+  const [vm, setVM] = useState<VM | null>(null); // Use VM type
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Simulate API call to fetch VM details
-    const fetchVM = () => {
+    const fetchVM = async () => {
       setLoading(true);
-      // Find VM in mock data - in production, this would be an API call
-      const foundVM = mockVMs.find(vm => vm.id === id);
-      setVM(foundVM || null);
-      setLoading(false);
+      try {
+        const response = await fetch(`${API_BASE_URL}/vms/${id}`, {
+          headers: {
+            'Authorization': 'Bearer MOCK_TOKEN', // Replace with actual token logic
+          },
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data: VM = await response.json();
+        setVM(data);
+      } catch (error) {
+        console.error('Error fetching VM details:', error);
+        toast.error('Failed to load VM details.');
+        setVM(null); // Ensure VM is null on error
+      } finally {
+        setLoading(false);
+      }
     };
 
     fetchVM();
@@ -24,7 +39,7 @@ export default function VMDetails() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
       </div>
     );
@@ -32,7 +47,7 @@ export default function VMDetails() {
 
   if (!vm) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen">
+      <div className="flex flex-col items-center justify-center h-64">
         <Server className="w-16 h-16 text-gray-400 mb-4" />
         <h2 className="text-2xl font-semibold text-gray-700">Virtual Machine Not Found</h2>
         <p className="text-gray-500 mt-2">The requested VM could not be found.</p>
@@ -42,7 +57,7 @@ export default function VMDetails() {
 
   return (
     <div className="container mx-auto px-4 py-8">
-      <div className="bg-white rounded-lg shadow-lg overflow-hidden">
+      <div className="bg-white dark:bg-slate-800 rounded-lg shadow-lg overflow-hidden">
         {/* Header */}
         <div className="bg-gradient-to-r from-blue-600 to-blue-800 px-6 py-4">
           <div className="flex items-center space-x-4">
@@ -53,9 +68,9 @@ export default function VMDetails() {
             </div>
             <div className="ml-auto flex items-center space-x-2">
               <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
-                vm.status === 'running' ? 'bg-green-100 text-green-800' : 
-                vm.status === 'stopped' ? 'bg-red-100 text-red-800' : 
-                'bg-yellow-100 text-yellow-800'
+                vm.status === 'running' ? 'bg-success-100 text-success-800 dark:bg-success-900 dark:text-success-200' :
+                vm.status === 'stopped' ? 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200' :
+                'bg-warning-100 text-warning-800 dark:bg-warning-900 dark:text-warning-200' // Example for other statuses
               }`}>
                 <Power className="w-4 h-4 mr-1" />
                 {vm.status.charAt(0).toUpperCase() + vm.status.slice(1)}
@@ -67,78 +82,35 @@ export default function VMDetails() {
         {/* Details Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 p-6">
           {/* CPU Info */}
-          <div className="bg-gray-50 rounded-lg p-4">
+          <div className="bg-slate-50 dark:bg-slate-700 rounded-lg p-4">
             <div className="flex items-center space-x-3 mb-3">
               <Cpu className="w-6 h-6 text-blue-600" />
-              <h3 className="text-lg font-semibold text-gray-700">CPU</h3>
+              <h3 className="text-lg font-semibold text-slate-700 dark:text-slate-200">CPU</h3>
             </div>
-            <p className="text-gray-600">{vm.cpu} vCPUs</p>
+            <p className="text-slate-600 dark:text-slate-300">{vm.specs.cpu} vCPUs</p>
           </div>
 
           {/* Memory Info */}
-          <div className="bg-gray-50 rounded-lg p-4">
+          <div className="bg-slate-50 dark:bg-slate-700 rounded-lg p-4">
             <div className="flex items-center space-x-3 mb-3">
               <Memory className="w-6 h-6 text-blue-600" />
-              <h3 className="text-lg font-semibold text-gray-700">Memory</h3>
+              <h3 className="text-lg font-semibold text-slate-700 dark:text-slate-200">Memory</h3>
             </div>
-            <p className="text-gray-600">{vm.memory} GB RAM</p>
+            <p className="text-slate-600 dark:text-slate-300">{vm.specs.memory >= 1024 ? `${(vm.specs.memory / 1024).toFixed(1)} GB` : `${vm.specs.memory} MB`} RAM</p>
           </div>
 
           {/* Storage Info */}
-          <div className="bg-gray-50 rounded-lg p-4">
+          <div className="bg-slate-50 dark:bg-slate-700 rounded-lg p-4">
             <div className="flex items-center space-x-3 mb-3">
               <HardDrive className="w-6 h-6 text-blue-600" />
-              <h3 className="text-lg font-semibold text-gray-700">Storage</h3>
+              <h3 className="text-lg font-semibold text-slate-700 dark:text-slate-200">Storage</h3>
             </div>
-            <p className="text-gray-600">{vm.storage} GB</p>
+            <p className="text-slate-600 dark:text-slate-300">{vm.specs.disk} GB</p>
           </div>
         </div>
 
         {/* Performance Metrics */}
-        <div className="border-t border-gray-200 p-6">
-          <div className="flex items-center space-x-2 mb-4">
-            <Activity className="w-5 h-5 text-blue-600" />
-            <h3 className="text-lg font-semibold text-gray-700">Performance Metrics</h3>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-gray-50 rounded-lg p-4">
-              <p className="text-sm text-gray-500">CPU Usage</p>
-              <div className="mt-2 flex items-center">
-                <div className="flex-1 bg-gray-200 rounded-full h-2">
-                  <div 
-                    className="bg-blue-600 h-2 rounded-full" 
-                    style={{ width: `${vm.metrics?.cpuUsage || 0}%` }}
-                  ></div>
-                </div>
-                <span className="ml-2 text-sm text-gray-600">{vm.metrics?.cpuUsage || 0}%</span>
-              </div>
-            </div>
-            <div className="bg-gray-50 rounded-lg p-4">
-              <p className="text-sm text-gray-500">Memory Usage</p>
-              <div className="mt-2 flex items-center">
-                <div className="flex-1 bg-gray-200 rounded-full h-2">
-                  <div 
-                    className="bg-blue-600 h-2 rounded-full" 
-                    style={{ width: `${vm.metrics?.memoryUsage || 0}%` }}
-                  ></div>
-                </div>
-                <span className="ml-2 text-sm text-gray-600">{vm.metrics?.memoryUsage || 0}%</span>
-              </div>
-            </div>
-            <div className="bg-gray-50 rounded-lg p-4">
-              <p className="text-sm text-gray-500">Disk Usage</p>
-              <div className="mt-2 flex items-center">
-                <div className="flex-1 bg-gray-200 rounded-full h-2">
-                  <div 
-                    className="bg-blue-600 h-2 rounded-full" 
-                    style={{ width: `${vm.metrics?.diskUsage || 0}%` }}
-                  ></div>
-                </div>
-                <span className="ml-2 text-sm text-gray-600">{vm.metrics?.diskUsage || 0}%</span>
-              </div>
-            </div>
-          </div>
-        </div>
+        {/* Performance Metrics Section Removed - Backend does not provide this data yet */}
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import { VMSpecs } from './vm';
+
 
 export type HypervisorType = 'proxmox' | 'vsphere';
 

@@ -320,7 +320,7 @@ app.get('/api/vms', authenticate, async (req, res) => {
 
           // Get all VM resources from the cluster
           const vmResources = await proxmox.cluster.resources.$get({ type: 'vm' });
-          console.log(`Got ${vmResources.length} VM resources from ${hypervisor.host}`);
+          //console.log(`Got ${vmResources.length} VM resources from ${hypervisor.host}`);
 
           // Map Proxmox data to our common VM structure
           const proxmoxVms = vmResources.map((vm) => ({
@@ -362,6 +362,95 @@ app.get('/api/vms', authenticate, async (req, res) => {
   }
 });
 
+// GET /api/vms/:id - Get details for a single VM
+app.get('/api/vms/:id', authenticate, async (req, res) => {
+  const { id: vmId } = req.params;
+  console.log(`--- Received GET /api/vms/${vmId} ---`);
+
+  try {
+    // --- Step 1: Find the VM's Hypervisor and Node ---
+    const { rows: connectedHypervisors } = await pool.query(
+      `SELECT id, type, host, username, api_token, token_name 
+       FROM hypervisors WHERE status = 'connected'`
+    );
+
+    let targetHypervisor = null;
+    let targetNode = null;
+    let proxmoxClient = null;
+    let foundVmResource = null; // Store the resource info
+
+    for (const hypervisor of connectedHypervisors) {
+      if (hypervisor.type === 'proxmox') {
+        const [dbHost, dbPortStr] = hypervisor.host.split(':');
+        const port = dbPortStr ? parseInt(dbPortStr, 10) : 8006;
+        const cleanHost = dbHost;
+
+        const proxmoxConfig = {
+          host: cleanHost, port: port, username: hypervisor.username,
+          tokenID: `${hypervisor.username}!${hypervisor.token_name}`,
+          tokenSecret: hypervisor.api_token, timeout: 10000, rejectUnauthorized: false
+        };
+        const proxmox = proxmoxApi(proxmoxConfig);
+
+        try {
+          const vmResources = await proxmox.cluster.resources.$get({ type: 'vm' });
+          const foundVm = vmResources.find(vm => vm.vmid.toString() === vmId);
+
+          if (foundVm) {
+            targetHypervisor = hypervisor;
+            targetNode = foundVm.node;
+            proxmoxClient = proxmox;
+            foundVmResource = foundVm; // Save resource data
+            console.log(`Found VM ${vmId} on node ${targetNode} of hypervisor ${hypervisor.id}`);
+            break;
+          }
+        } catch (findError) {
+          console.warn(`Could not check hypervisor ${hypervisor.id} for VM ${vmId}:`, findError.message);
+        }
+      }
+      // TODO: Add vSphere logic here if needed
+    }
+
+    if (!targetHypervisor || !targetNode || !proxmoxClient || !foundVmResource) {
+      return res.status(404).json({ error: `VM ${vmId} not found on any connected Proxmox hypervisor.` });
+    }
+
+    // --- Step 2: Get VM Config and Current Status ---
+    const vmConfig = await proxmoxClient.nodes.$(targetNode).qemu.$(vmId).config.$get();
+    const vmStatus = await proxmoxClient.nodes.$(targetNode).qemu.$(vmId).status.current.$get();
+
+    // --- Step 3: Map data to our VM type ---
+    const vmDetails = {
+      id: vmId,
+      name: vmConfig.name || foundVmResource.name, // Prefer config name, fallback to resource name
+      description: vmConfig.description || '',
+      hypervisorId: targetHypervisor.id,
+      hypervisorType: 'proxmox',
+      nodeName: targetNode,
+      status: vmStatus.status, // 'running', 'stopped', etc.
+      specs: {
+        cpu: vmConfig.cores * (vmConfig.sockets || 1), // Calculate total cores
+        memory: Math.round(vmConfig.memory || foundVmResource.maxmem / (1024 * 1024)), // Prefer config memory (MB), fallback to resource
+        disk: Math.round(foundVmResource.maxdisk / (1024 * 1024 * 1024)), // Disk size usually comes from resources (GB)
+        // os: vmConfig.ostype, // Map os type if needed
+      },
+      createdAt: new Date(vmStatus.uptime ? Date.now() - (vmStatus.uptime * 1000) : Date.now()), // Estimate create time from uptime or use now
+      // tags: vmConfig.tags ? vmConfig.tags.split(';') : [], // Parse tags if needed
+      // ipAddresses: [], // Getting IPs often requires the guest agent
+    };
+
+    res.json(vmDetails);
+
+  } catch (error) {
+    console.error(`Error fetching details for VM ${vmId}:`, error);
+    const errorDetails = getProxmoxError(error);
+    res.status(errorDetails.code || 500).json({
+      error: `Failed to retrieve details for VM ${vmId}.`,
+      details: errorDetails.message,
+      suggestion: errorDetails.suggestion
+    });
+  }
+});
 
 // --- End VM Listing API ---
 
