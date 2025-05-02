@@ -38,13 +38,13 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
   const getStatusText = (status: string) => {
     switch (status) {
       case 'connected':
-        return 'Connected';
+        return 'Conectado';
       case 'disconnected':
-        return 'Disconnected';
+        return 'Desconectado';
       case 'error':
         return 'Error';
       default:
-        return 'Unknown';
+        return 'Desconocido';
     }
   };
 
@@ -82,7 +82,7 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
 
     } catch (error) {
       console.error('Failed to fetch hypervisor details:', error);
-      toast.error('Could not load hypervisor details.');
+      toast.error('No se pudieron cargar los detalles del hipervisor.');
     } finally {
       setIsLoadingDetails(false);
     }
@@ -90,7 +90,7 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
 
   const handleConnectionAttempt = async () => {
     setIsConnecting(true);
-    const toastId = toast.loading('Attempting connection...');
+    const toastId = toast.loading('Intentando conexión...');
 
     try {
       const response = await fetch(`${API_BASE_URL}/hypervisors/${hypervisor.id}/connect`, {
@@ -118,7 +118,7 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
         updatedAt: new Date(), // Assume update time is now
       };
 
-      toast.success(`Connection ${formattedHypervisor.status}!`, { id: toastId });
+      toast.success(`¡Conexión ${getStatusText(formattedHypervisor.status)}!`, { id: toastId }); // Use translated status
       onConnectionChange(formattedHypervisor); // Notify parent component
 
       // If connection is successful, fetch details
@@ -129,7 +129,7 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
     } catch (error: unknown) {
       console.error('Connection attempt failed:', error);
       const message = error instanceof Error ? error.message : 'Unknown error';
-      toast.error(`Connection failed: ${message}`, { id: toastId });
+      toast.error(`Conexión fallida: ${message}`, { id: toastId });
     } finally {
       setIsConnecting(false);
     }
@@ -212,7 +212,7 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
             <div className="flex items-center space-x-2">
               <Clock className="h-4 w-4 text-slate-400" />
               <span className="text-sm text-slate-600 dark:text-slate-300">
-                Synced {formatDistanceToNow(hypervisor.lastSync, { addSuffix: true })}
+                Sincronizado {formatDistanceToNow(hypervisor.lastSync, { addSuffix: true })}
               </span>
             </div>
           ) : null /* Or render placeholder text like "Never synced" */}
@@ -221,7 +221,7 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
             <div className="flex items-center space-x-2">
               <AlertCircle className="h-4 w-4 text-danger-500" />
               <span className="text-sm text-danger-500">
-                Connection error
+                Error de conexión
               </span>
             </div>
           )}
@@ -230,14 +230,14 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
         {/* Detailed Resource Section */}
         {hypervisor.status === 'connected' && (
           <div className="border-t border-slate-200 dark:border-slate-700 pt-3 mt-3 text-xs text-slate-600 dark:text-slate-400 space-y-2">
-            {isLoadingDetails && <div className="text-center text-slate-500">Loading details...</div>}
+            {isLoadingDetails && <div className="text-center text-slate-500">Cargando detalles...</div>}
             {!isLoadingDetails && nodes !== null && storage !== null && templates !== null && (
               <>
                 {/* Node Summary */}
                 <div className="flex items-center space-x-2">
                   <Servers className="h-3.5 w-3.5 flex-shrink-0" />
                   <span>
-                    Nodes: {nodes.length} ({nodes.filter(n => n.status === 'online').length} online)
+                    Nodos: {nodes.length} ({nodes.filter(n => n.status === 'online').length} en línea)
                   </span>
                 </div>
 
@@ -250,21 +250,21 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
                       <div className="flex items-center space-x-2">
                         <Cpu className="h-3.5 w-3.5 flex-shrink-0" />
                         <span>
-                          CPU: {stats.avgCpuUsage.toFixed(1)}% used ({stats.totalCores} Cores)
+                          CPU: {stats.avgCpuUsage.toFixed(1)}% usada ({stats.totalCores} Núcleos)
                         </span>
                       </div>
                       {/* Memory */}
                       <div className="flex items-center space-x-2">
                         <MemoryStick className="h-3.5 w-3.5 flex-shrink-0" />
                         <span>
-                          Memory: {formatBytes(stats.usedMemory)} / {formatBytes(stats.totalMemory)} used
+                          Memoria: {formatBytes(stats.usedMemory)} / {formatBytes(stats.totalMemory)} usada
                         </span>
                       </div>
                       {/* Disk */}
                       <div className="flex items-center space-x-2">
                         <Database className="h-3.5 w-3.5 flex-shrink-0" />
                         <span>
-                          Disk: {formatBytes(stats.usedDisk)} / {formatBytes(stats.totalDisk)} used ({storage?.length || 0} Pools)
+                          Disco: {formatBytes(stats.usedDisk)} / {formatBytes(stats.totalDisk)} usado ({storage?.length || 0} Pools)
                         </span>
                       </div>
                     </>
@@ -275,13 +275,13 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
                 <div className="flex items-center space-x-2">
                   <Layers className="h-3.5 w-3.5 flex-shrink-0" />
                   <span>
-                    Templates/ISOs: {templates.length}
+                    Plantillas/ISOs: {templates.length}
                   </span>
                 </div>
               </>
             )}
             {!isLoadingDetails && (nodes === null || storage === null || templates === null) && (
-              <div className="text-center text-slate-500">Could not load details.</div>
+              <div className="text-center text-slate-500">No se pudieron cargar los detalles.</div>
             )}
           </div>
         )}
@@ -294,7 +294,7 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
               className="btn btn-primary text-xs"
               disabled={isConnecting}
             >
-              {isConnecting ? 'Connecting...' : 'Connect'}
+              {isConnecting ? 'Conectando...' : 'Conectar'}
             </button>
           ) : (
             <button
@@ -302,14 +302,14 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
               className="btn btn-outline text-xs"
               disabled={isConnecting}
             >
-              {isConnecting ? 'Testing...' : 'Test Connection'}
+              {isConnecting ? 'Probando...' : 'Probar Conexión'}
             </button>
           )}
           <button
             onClick={() => onDelete(hypervisor.id)}
             className="btn btn-danger text-xs"
           >
-            Remove
+            Eliminar
           </button>
         </div>
       </div>

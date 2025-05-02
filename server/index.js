@@ -122,7 +122,7 @@ app.post('/api/vms', authenticate, async (req, res) => {
        FROM hypervisors WHERE id = $1`,
       [params.hypervisorId]
     );
-
+console.log(hypervisor)
     if (!hypervisor) {
       return res.status(404).json({ error: 'Target hypervisor not found' });
     }

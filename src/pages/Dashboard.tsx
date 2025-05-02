@@ -113,7 +113,7 @@ export default function Dashboard() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Dashboard</h1>
         <p className="text-slate-500 dark:text-slate-400 mt-1">
-          Manage and monitor your virtual machines
+          Maneje y monitoree lass maquinas virtual
         </p>
       </div>
 
@@ -124,7 +124,7 @@ export default function Dashboard() {
           </div>
           <input
             type="text"
-            placeholder="Search VMs..."
+            placeholder="Busque VMs..."
             className="form-input pl-10"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -137,7 +137,7 @@ export default function Dashboard() {
               className={`px-3 py-2 text-sm font-medium ${filter === 'all' ? 'bg-primary-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300'} border border-slate-300 dark:border-slate-700 border-r-0 rounded-l-md`}
               onClick={() => setFilter('all')}
             >
-              All
+              Todas
             </button>
             <button
               className={`px-3 py-2 text-sm font-medium ${filter === 'running' ? 'bg-primary-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300'} border border-slate-300 dark:border-slate-700 border-r-0`}
@@ -149,7 +149,7 @@ export default function Dashboard() {
               className={`px-3 py-2 text-sm font-medium ${filter === 'stopped' ? 'bg-primary-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300'} border border-slate-300 dark:border-slate-700 border-r-0`}
               onClick={() => setFilter('stopped')}
             >
-              Stopped
+              Detenidas
             </button>
             <button
               className={`px-3 py-2 text-sm font-medium ${filter === 'proxmox' ? 'bg-primary-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300'} border border-slate-300 dark:border-slate-700 border-r-0`}
@@ -176,7 +176,7 @@ export default function Dashboard() {
             
             <Link to="/create-vm" className="btn btn-primary">
               <Plus className="h-4 w-4 mr-2" />
-              New VM
+              Nueva VM
             </Link>
           </div>
         </div>
@@ -219,14 +219,14 @@ export default function Dashboard() {
           <div className="mx-auto h-12 w-12 text-slate-400">
             <Search className="h-full w-full" />
           </div>
-          <h3 className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">No VMs found</h3>
+          <h3 className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">No se encontraron VMs</h3>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
             {searchTerm ? 'Try a different search term or filter.' : 'Start by creating a new virtual machine.'}
           </p>
           <div className="mt-6">
             <Link to="/create-vm" className="btn btn-primary">
               <Plus className="h-4 w-4 mr-2" />
-              New VM
+              Nueva VM
             </Link>
           </div>
         </div>

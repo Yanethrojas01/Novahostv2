@@ -1,6 +1,6 @@
-# VMForge
+# Novahost
 
-VMForge is a modern web application for managing virtual machines across Proxmox and vSphere environments. It provides a unified interface for creating, monitoring, and managing VMs across different hypervisor platforms.
+Novahost is a modern web application for managing virtual machines across Proxmox and vSphere environments. It provides a unified interface for creating, monitoring, and managing VMs across different hypervisor platforms.
 
 ## Features
 

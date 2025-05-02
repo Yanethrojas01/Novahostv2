@@ -13,6 +13,7 @@ const VMDetails = lazy(() => import('./pages/VMDetails'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Hypervisors = lazy(() => import('./pages/Hypervisors'));
 const NotFound = lazy(() => import('./pages/NotFound'));
+const Profile = lazy(() => import('./pages/Profile'));
 
 function App() {
   const { isAuthenticated } = useAuth();
@@ -52,7 +53,16 @@ function App() {
               <Settings />
             </ProtectedRoute>
           } />
+
+          <Route path="/profile" element={
+            <ProtectedRoute>
+              <Profile />
+            </ProtectedRoute>
+          } />
+
         </Route>
+
+        
         
         <Route path="*" element={<NotFound />} />
       </Routes>

@@ -44,7 +44,7 @@ export default function Hypervisors() {
       setHypervisors(formattedData);
     } catch (error) {
       console.error('Error fetching hypervisors:', error);
-      toast.error('Failed to load hypervisors.'); // User feedback
+      toast.error('Error al cargar los hipervisores.'); // User feedback
     } finally {
       setIsLoading(false);
     }
@@ -76,13 +76,13 @@ export default function Hypervisors() {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      toast.success('Hypervisor deleted successfully.');
+      toast.success('Hipervisor eliminado correctamente.');
       // Re-fetch the list to ensure consistency
       fetchHypervisors();
 
     } catch (error) {
       console.error('Error deleting hypervisor:', error);
-      toast.error('Failed to delete hypervisor.');
+      toast.error('Error al eliminar el hipervisor.');
       // Ensure state is correct if optimistic update was used and failed
       // fetchHypervisors(); // Or revert as shown above
     }
@@ -115,7 +115,7 @@ export default function Hypervisors() {
         }
 
         // const addedHypervisor = await response.json(); // Use if needed
-        toast.success('Hypervisor added successfully.');
+        toast.success('Hipervisor añadido correctamente.');
 
         // Reset form and close
         setNewHypervisor({
@@ -134,16 +134,16 @@ export default function Hypervisors() {
       } catch (error: unknown) { // Changed 'any' to 'unknown'
         console.error('Error adding hypervisor:', error);
         // Type check before accessing properties
-        let errorMessage = 'Failed to add hypervisor.';
+        let errorMessage = 'Error al añadir el hipervisor.';
         if (error instanceof Error) {
-          errorMessage = `Failed to add hypervisor: ${error.message}`;
+          errorMessage = `Error al añadir el hipervisor: ${error.message}`;
         }
         toast.error(errorMessage);
         setIsLoading(false); // Stop loading indicator on error
       }
       // setIsLoading(false); // Already handled in fetchHypervisors finally block
     } else {
-      toast.error('Please fill Host, Username, and either Password OR API Token + Token Name.');
+      toast.error('Por favor, rellena Host, Usuario y Contraseña O Token API + Nombre del Token.');
     }
   };
 
@@ -173,9 +173,9 @@ export default function Hypervisors() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Hypervisors</h1>
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Hipervisores</h1>
         <p className="text-slate-500 dark:text-slate-400 mt-1">
-          Manage your Proxmox and vSphere connections
+          Gestiona tus conexiones de Proxmox y vSphere
         </p>
       </div>
 
@@ -186,7 +186,7 @@ export default function Hypervisors() {
           </div>
           <input
             type="text"
-            placeholder="Search hypervisors..."
+            placeholder="Buscar hipervisores..."
             className="form-input pl-10 w-full sm:w-auto"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -200,7 +200,7 @@ export default function Hypervisors() {
             disabled={isLoading} // Disable while loading
           >
             <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-            Refresh
+            Actualizar
           </button>
 
           <button
@@ -208,7 +208,7 @@ export default function Hypervisors() {
             className="btn btn-primary"
           >
             <Plus className="h-4 w-4 mr-2" />
-            Add Hypervisor
+            Añadir Hipervisor
           </button>
         </div>
       </div>
@@ -219,11 +219,11 @@ export default function Hypervisors() {
           animate={{ opacity: 1, y: 0 }}
           className="mb-6 p-6 bg-white dark:bg-slate-800 rounded-lg shadow border border-slate-200 dark:border-slate-700"
         >
-          <h2 className="text-lg font-medium mb-4 text-slate-900 dark:text-white">Add New Hypervisor</h2>
+          <h2 className="text-lg font-medium mb-4 text-slate-900 dark:text-white">Añadir Nuevo Hipervisor</h2>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <label className="form-label">Type</label>
+              <label className="form-label">Tipo</label>
               <select
                 className="form-select"
                 value={newHypervisor.type}
@@ -246,7 +246,7 @@ export default function Hypervisors() {
             </div>
 
             <div>
-              <label className="form-label">Username</label>
+              <label className="form-label">Usuario</label>
               <input
                 type="text"
                 className="form-input"
@@ -257,7 +257,7 @@ export default function Hypervisors() {
             </div>
 
             <div>
-              <label className="form-label">Password</label>
+              <label className="form-label">Contraseña</label>
               <input
                 type="password"
                 className="form-input"
@@ -269,7 +269,7 @@ export default function Hypervisors() {
             {newHypervisor.type === 'proxmox' && (
               <>
                 <div className="sm:col-span-1">
-                  <label className="form-label">Token Name (Optional)</label>
+                  <label className="form-label">Nombre del Token (Opcional)</label>
                   <input
                     type="text"
                     className="form-input"
@@ -279,7 +279,7 @@ export default function Hypervisors() {
                   />
                 </div>
                 <div className="sm:col-span-1">
-                  <label className="form-label">API Token Secret (Optional)</label>
+                  <label className="form-label">Secreto del Token API (Opcional)</label>
                   <input
                     type="text"
                     className="form-input"
@@ -299,7 +299,7 @@ export default function Hypervisors() {
               onClick={() => setIsAddingNew(false)}
               disabled={isLoading} // Disable while add is in progress
             >
-              Cancel
+              Cancelar
             </button>
             <button
               type="button"
@@ -307,7 +307,7 @@ export default function Hypervisors() {
               onClick={handleAddNew}
               disabled={!isConnectButtonEnabled || isLoading}
             >
-              {isLoading ? 'Connecting...' : 'Connect'}
+              {isLoading ? 'Conectando...' : 'Conectar'}
             </button>
           </div>
         </motion.div>
@@ -353,15 +353,15 @@ export default function Hypervisors() {
             {/* Use a different icon or keep Search */}
             <Search className="h-full w-full" />
           </div>
-          <h3 className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">No hypervisors found</h3>
+          <h3 className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">No se encontraron hipervisores</h3>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            {searchTerm ? 'Try adjusting your search.' : 'Start by adding a hypervisor connection.'}
+            {searchTerm ? 'Intenta ajustar tu búsqueda.' : 'Empieza añadiendo una conexión de hipervisor.'}
           </p>
           {!searchTerm && ( // Only show button if not searching
             <div className="mt-6">
               <button
                 type="button"
-                className="btn btn-primary"
+                className="btn btn-primary" // Asegúrate de que esta clase exista y funcione
                 onClick={() => setIsAddingNew(true)}
               >
                 <Plus className="h-4 w-4 mr-2" />

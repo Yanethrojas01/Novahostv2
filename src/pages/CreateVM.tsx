@@ -217,10 +217,10 @@ export default function CreateVM() {
           >
             <ArrowLeft className="h-5 w-5 text-slate-600 dark:text-slate-400" />
           </button>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Create Virtual Machine</h1>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Crear Maquina Virtual</h1>
         </div>
         <p className="text-slate-500 dark:text-slate-400 mt-1 ml-10">
-          Configure and deploy a new virtual machine
+          Configure y despliegue una nueva maquina virtual
         </p>
       </div>
 
@@ -234,7 +234,7 @@ export default function CreateVM() {
               1
             </div>
             <div className="ml-2 text-sm font-medium text-slate-900 dark:text-white">
-              Basic Info
+              Información Básica
             </div>
           </div>
           <div className={`flex-1 h-0.5 mx-4 ${
@@ -247,7 +247,7 @@ export default function CreateVM() {
               2
             </div>
             <div className="ml-2 text-sm font-medium text-slate-900 dark:text-white">
-              Configuration
+              Configuración
             </div>
           </div>
           <div className={`flex-1 h-0.5 mx-4 ${
@@ -260,7 +260,7 @@ export default function CreateVM() {
               3
             </div>
             <div className="ml-2 text-sm font-medium text-slate-900 dark:text-white">
-              Resources
+              Recursos
             </div>
           </div>
         </div>
@@ -275,28 +275,28 @@ export default function CreateVM() {
             exit={{ opacity: 0, x: 20 }}
             className="p-6"
           >
-            <h2 className="text-lg font-medium text-slate-900 dark:text-white mb-6">Basic Information</h2>
+            <h2 className="text-lg font-medium text-slate-900 dark:text-white mb-6">Información Básica </h2>
 
             <div className="space-y-4">
               <div>
-                <label htmlFor="name" className="form-label">VM Name</label>
+                <label htmlFor="name" className="form-label">Nombre VM</label>
                 <input
                   type="text"
                   id="name"
                   className="form-input"
-                  placeholder="e.g., web-server-1"
+                  placeholder="ej., web-server-1"
                   value={vmParams.name}
                   onChange={(e) => setVmParams(prev => ({ ...prev, name: e.target.value }))}
                 />
               </div>
 
               <div>
-                <label htmlFor="description" className="form-label">Description</label>
+                <label htmlFor="description" className="form-label">Descripción</label>
                 <textarea
                   id="description"
                   rows={3}
                   className="form-input"
-                  placeholder="What is this VM for?"
+                  placeholder="Para que es esta VM?"
                   value={vmParams.description}
                   onChange={(e) => setVmParams(prev => ({ ...prev, description: e.target.value }))}
                 ></textarea>
@@ -311,7 +311,7 @@ export default function CreateVM() {
                   onChange={(e) => setVmParams(prev => ({ ...prev, hypervisorId: e.target.value }))}
                   disabled={isFetchingHypervisors}
                 >
-                  <option value="">{isFetchingHypervisors ? 'Loading...' : 'Select a connected hypervisor'}</option>
+                  <option value="">{isFetchingHypervisors ? 'Loading...' : 'Selecciona un hypervisor conectado'}</option>
                   {availableHypervisors.map(h => (
                     <option key={h.id} value={h.id}>
                       {h.name} ({h.type})
@@ -327,7 +327,7 @@ export default function CreateVM() {
                     type="text"
                     id="tags"
                     className="form-input flex-1"
-                    placeholder="Add a tag..."
+                    placeholder="Agrega un tag..."
                     value={tagInput}
                     onChange={(e) => setTagInput(e.target.value)}
                     onKeyDown={(e) => {
@@ -342,7 +342,7 @@ export default function CreateVM() {
                     onClick={addTag}
                     className="btn btn-secondary"
                   >
-                    Add
+                    Agrega
                   </button>
                 </div>
                 {vmParams.tags && vmParams.tags.length > 0 && (
@@ -377,12 +377,12 @@ export default function CreateVM() {
             exit={{ opacity: 0, x: -20 }}
             className="p-6"
           >
-            <h2 className="text-lg font-medium text-slate-900 dark:text-white mb-6">Configuration</h2>
+            <h2 className="text-lg font-medium text-slate-900 dark:text-white mb-6">Configuración</h2>
 
             <div className="space-y-6">
               {/* Configuration Mode Toggle */}
               <div className="flex items-center space-x-4">
-                <label className="form-label mb-0">Configuration Type:</label>
+                <label className="form-label mb-0">Tipo de Configuración:</label>
                 <div className="flex items-center">
                   <input
                     type="radio"
@@ -402,7 +402,7 @@ export default function CreateVM() {
                     }}
                     className="form-radio"
                   />
-                  <label htmlFor="config-plan" className="ml-2 text-sm">Use VM Plan</label>
+                  <label htmlFor="config-plan" className="ml-2 text-sm">Use un Plan</label>
                 </div>
                 <div className="flex items-center">
                   <input
@@ -419,16 +419,16 @@ export default function CreateVM() {
                     }}
                     className="form-radio"
                   />
-                  <label htmlFor="config-custom" className="ml-2 text-sm">Custom Specs</label>
+                  <label htmlFor="config-custom" className="ml-2 text-sm">Especificaciones a medida</label>
                 </div>
               </div>
 
               {/* VM Plan Selection (only if configMode is 'plan') */}
               {configMode === 'plan' && (
                 <div>
-                  <label htmlFor="vm-plan" className="form-label">Select VM Plan</label>
+                  <label htmlFor="vm-plan" className="form-label">Seleccione un Plan VM</label>
                   <select id="vm-plan" className="form-select" value={vmParams.planId || ''} onChange={(e) => handlePlanSelect(e.target.value)} disabled={isFetchingPlans || availablePlans.length === 0}>
-                    <option value="" disabled>{isFetchingPlans ? 'Loading plans...' : (availablePlans.length === 0 ? 'No active plans found' : 'Select a plan')}</option>
+                    <option value="" disabled>{isFetchingPlans ? 'Loading planes...' : (availablePlans.length === 0 ? 'No planes activos' : 'Seleccione un plan')}</option>
                     {availablePlans.map(plan => (
                       <option key={plan.id} value={plan.id}>{plan.name} ({plan.specs.cpu} CPU, {plan.specs.memory >= 1024 ? `${plan.specs.memory / 1024}GB` : `${plan.specs.memory}MB`} RAM, {plan.specs.disk}GB Disk)</option>
                     ))}
@@ -438,7 +438,7 @@ export default function CreateVM() {
 
               {/* Template Selection (always shown) */}
               <div>
-                <label className="form-label">Available Templates</label>
+                <label className="form-label">Plantillas Disponibles</label>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                   {isFetchingTemplates ? (
                     // Loading skeleton
@@ -475,7 +475,7 @@ export default function CreateVM() {
                       </button>
                     ))
                   ) : (
-                    <p className="col-span-full text-slate-500 dark:text-slate-400 text-sm">No templates found or hypervisor not selected.</p>
+                    <p className="col-span-full text-slate-500 dark:text-slate-400 text-sm">No se selecciono plantillas o hypervisor no seleccionado.</p>
                   )}
                 </div>
               </div>
@@ -483,7 +483,7 @@ export default function CreateVM() {
               {/* Disk Size Slider (only if configMode is 'custom') */}
               {configMode === 'custom' && (
                 <div>
-                <label htmlFor="disk" className="form-label">Disk Size (GB)</label>
+                <label htmlFor="disk" className="form-label">Tamaño del Disco (GB)</label>
                 <div className="flex items-center">
                   <input
                     type="range"
@@ -523,7 +523,7 @@ export default function CreateVM() {
             exit={{ opacity: 0, x: -20 }}
             className="p-6"
           >
-            <h2 className="text-lg font-medium text-slate-900 dark:text-white mb-6">Resources</h2>
+            <h2 className="text-lg font-medium text-slate-900 dark:text-white mb-6">Recursos</h2>
 
             <div className="space-y-6">
               {/* Only show CPU slider if configMode is 'custom' */}
@@ -588,7 +588,7 @@ export default function CreateVM() {
               {/* Only show Memory slider if configMode is 'custom' */}
               {configMode === 'custom' && (<>
                 <div className="flex items-center justify-between mb-2">
-                  <label htmlFor="memory" className="form-label mb-0">Memory (MB)</label>
+                  <label htmlFor="memory" className="form-label mb-0">Memoria (MB)</label>
                   <div className="text-slate-700 dark:text-slate-300">
                     {vmParams.specs.memory >= 1024
                       ? `${(vmParams.specs.memory / 1024).toFixed(1)} GB`
@@ -630,24 +630,24 @@ export default function CreateVM() {
                     onChange={(e) => setVmParams(prev => ({ ...prev, start: e.target.checked }))}
                   />
                   <label htmlFor="start" className="ml-2 text-sm text-slate-700 dark:text-slate-300">
-                    Start VM after creation
+                    arrancar la VM luego de creada
                   </label>
                 </div>
               </div>
 
               <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg border border-slate-200 dark:border-slate-700">
-                <h3 className="text-sm font-medium text-slate-900 dark:text-white mb-2">Summary</h3>
+                <h3 className="text-sm font-medium text-slate-900 dark:text-white mb-2">Resumen</h3>
                 <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-sm">
                   <div className="sm:col-span-2">
-                    <dt className="text-slate-500 dark:text-slate-400">Name</dt>
+                    <dt className="text-slate-500 dark:text-slate-400">Nombre</dt>
                     <dd className="text-slate-900 dark:text-white mt-0.5">{vmParams.name || '-'}</dd>
                   </div>
                   <div>
-                    <dt className="text-slate-500 dark:text-slate-400">Configuration</dt>
-                    <dd className="text-slate-900 dark:text-white mt-0.5">{configMode === 'plan' ? (availablePlans.find(p => p.id === vmParams.planId)?.name || 'Plan Selected') : 'Custom Specs'}</dd>
+                    <dt className="text-slate-500 dark:text-slate-400">Configuración</dt>
+                    <dd className="text-slate-900 dark:text-white mt-0.5">{configMode === 'plan' ? (availablePlans.find(p => p.id === vmParams.planId)?.name || 'Plan Selecccionado') : 'Especificaciones a Medida'}</dd>
                   </div>
                   <div>
-                    <dt className="text-slate-500 dark:text-slate-400">Operating System</dt>
+                    <dt className="text-slate-500 dark:text-slate-400">Sistema Operativo</dt>
                     <dd className="text-slate-900 dark:text-white mt-0.5">{templates.find(t => t.id === vmParams.templateId)?.name || '-'}</dd>
                   </div>
                   <div>
@@ -664,7 +664,7 @@ export default function CreateVM() {
                     <dd className="text-slate-900 dark:text-white mt-0.5">{vmParams.specs.cpu} cores</dd>
                   </div>
                   <div>
-                    <dt className="text-slate-500 dark:text-slate-400">Memory</dt>
+                    <dt className="text-slate-500 dark:text-slate-400">Memoria</dt>
                     <dd className="text-slate-900 dark:text-white mt-0.5">
                       {vmParams.specs.memory >= 1024
                         ? `${(vmParams.specs.memory / 1024).toFixed(1)} GB`
@@ -672,7 +672,7 @@ export default function CreateVM() {
                     </dd>
                   </div>
                   <div>
-                    <dt className="text-slate-500 dark:text-slate-400">Disk</dt>
+                    <dt className="text-slate-500 dark:text-slate-400">Disco</dt>
                     <dd className="text-slate-900 dark:text-white mt-0.5">{vmParams.specs.disk} GB</dd>
                   </div>
                 </dl>
@@ -689,7 +689,7 @@ export default function CreateVM() {
             disabled={currentStep === 1}
             className="btn btn-secondary"
           >
-            Back
+            Atras
           </button>
           <button
             type="button"
@@ -703,9 +703,9 @@ export default function CreateVM() {
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
-                Creating VM...
+                Creando VM...
               </span>
-            ) : currentStep < 3 ? 'Next' : 'Create VM'}
+            ) : currentStep < 3 ? 'Siguiente' : 'Creando VM'}
           </button>
         </div>
       </div>

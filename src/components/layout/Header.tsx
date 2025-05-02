@@ -37,11 +37,11 @@ export default function Header({ onMenuClick }: HeaderProps) {
               className="p-2 rounded-md text-slate-500 dark:text-slate-400 lg:hidden focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary-500"
               onClick={onMenuClick}
             >
-              <span className="sr-only">Open sidebar</span>
+              <span className="sr-only">Sidebar</span>
               <Menu className="h-6 w-6" aria-hidden="true" />
             </button>
             <div className="lg:hidden ml-2 font-semibold text-lg text-primary-600 dark:text-primary-400">
-              VMForge
+              Novahost
             </div>
           </div>
           
@@ -51,7 +51,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
               onClick={toggleTheme}
               className="p-2 rounded-md text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
-              <span className="sr-only">Toggle theme</span>
+              <span className="sr-only">Tema</span>
               {theme === 'dark' ? (
                 <Sun className="h-5 w-5" aria-hidden="true" />
               ) : (
@@ -100,11 +100,11 @@ export default function Header({ onMenuClick }: HeaderProps) {
                   
                   <div className="py-1" role="none">
                     <a
-                      href="#"
+                      href="/profile"
                       className="block px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
                       role="menuitem"
                     >
-                      Your Profile
+                      Tu Perfil
                     </a>
                     <a
                       href="#"

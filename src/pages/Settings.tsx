@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import {  Moon, Sun, User, Shield, Key, Globe, Database, Server, Plus, Trash2 } from 'lucide-react';
+import {  Moon, Sun, Globe, Database, Server, Plus, Trash2, User, Shield } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 // import { supabase } from '../lib/supabase'; // No longer needed
 import { toast } from 'react-hot-toast'; // Import toast for feedback
@@ -165,7 +165,7 @@ export default function Settings() {
           <div className="p-6">
             <h2 className="text-lg font-medium text-slate-900 dark:text-white mb-4 flex items-center">
               <Server className="h-5 w-5 mr-2 text-primary-600 dark:text-primary-400" />
-              VM Plans
+              Planes Preestablecidos
             </h2>
             
             <div className="space-y-6">
@@ -306,7 +306,7 @@ export default function Settings() {
         </motion.section>
 
         {/* Account Settings */}
-        <motion.section
+        {/* <motion.section
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           className="card"
@@ -345,10 +345,10 @@ export default function Settings() {
               </div>
             </div>
           </div>
-        </motion.section>
+        </motion.section> */}
         
         {/* Security Settings */}
-        <motion.section
+        {/* <motion.section
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
@@ -395,7 +395,7 @@ export default function Settings() {
               </div>
             </div>
           </div>
-        </motion.section>
+        </motion.section> */}
         
         {/* API Settings */}
         {/* <motion.section

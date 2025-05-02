@@ -13,9 +13,9 @@ export default function Sidebar({ mobile = false, onClose }: SidebarProps) {
   
   const navigation = [
     { name: 'Dashboard', href: '/', icon: Home },
-    { name: 'Create VM', href: '/create-vm', icon: Plus },
-    { name: 'Hypervisors', href: '/hypervisors', icon: Cloud },
-    { name: 'Settings', href: '/settings', icon: Cog },
+    { name: 'Crear VM', href: '/create-vm', icon: Plus },
+    { name: 'Hypervisores', href: '/hypervisors', icon: Cloud },
+    { name: 'Configuración', href: '/settings', icon: Cog },
   ];
 
   return (
@@ -25,7 +25,7 @@ export default function Sidebar({ mobile = false, onClose }: SidebarProps) {
           <div className="flex items-center space-x-2">
             <Servers className="h-6 w-6 text-primary-600 dark:text-primary-400" />
             <span className="text-lg font-semibold text-primary-600 dark:text-primary-400">
-              VMForge
+              Novahost
             </span>
           </div>
           <button
@@ -44,7 +44,7 @@ export default function Sidebar({ mobile = false, onClose }: SidebarProps) {
           <div className="flex items-center space-x-2">
             <Servers className="h-6 w-6 text-primary-600 dark:text-primary-400" />
             <span className="text-lg font-semibold text-primary-600 dark:text-primary-400">
-              VMForge
+              Novahost
             </span>
           </div>
         )}
@@ -99,11 +99,11 @@ export default function Sidebar({ mobile = false, onClose }: SidebarProps) {
           </div>
           <div className="ml-3">
             <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
-              System Status
+              Estatus del Sistema
             </p>
             <div className="flex items-center mt-1">
               <div className="h-2 w-2 rounded-full bg-success-500 mr-2"></div>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Operational</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Operacional</p>
             </div>
           </div>
         </div>
