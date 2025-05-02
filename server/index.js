@@ -133,11 +133,13 @@ app.post('/api/vms', authenticate, async (req, res) => {
     let creationResult = null;
     let newVmId = null;
 
+    // --- Proxmox VM Creation Logic ---
     if (hypervisor.type === 'proxmox') {
       // Connect to Proxmox
       const [dbHost, dbPortStr] = hypervisor.host.split(':');
       const port = dbPortStr ? parseInt(dbPortStr, 10) : 8006;
       const cleanHost = dbHost;
+      const isIso = params.templateId.includes(':iso/'); // Simple check if it's an ISO
 
       const proxmoxConfig = {
         host: cleanHost, port: port, username: hypervisor.username,
@@ -161,32 +163,53 @@ app.post('/api/vms', authenticate, async (req, res) => {
       newVmId = nextIdResult.toString(); // Ensure it's a string
 
       // Prepare Proxmox VM creation parameters (Simplified Example)
-      // This needs significant expansion based on template type (ISO vs Template VM)
-      // We'll assume templateId is in the format "storage:volid" and points to a template VM to clone
-      const [templateStorage, templateVolId] = params.templateId.split(':');
-      // Find the template VM's ID if templateVolId refers to a template VM name/path
-      // This part is complex and depends on how templates are set up.
-      // For now, let's assume params.templateId IS the VMID of the template to clone.
-      // A more robust solution would look up the template VM based on the volid.
-      const templateVmIdToClone = params.templateId; // Placeholder - needs proper lookup logic
+      if (isIso) {
+        // --- Create VM from ISO ---
+        const sanitizedName = params.name.replace(/\s+/g, '-'); // Replace spaces with hyphens
+        const createParams = {
+          vmid: newVmId,
+          node: targetNode, // Specify the node
+          name: sanitizedName,
+          cores: params.specs.cpu,
+          memory: params.specs.memory,
+          description: params.description || '',
+          tags: params.tags?.join(';') || '',
+          // Define storage for the main disk (example: using 'local-lvm' storage)
+          // You might need to make storage selection dynamic
+          scsi0: `local-lvm:${params.specs.disk}`, // Disk on local-lvm storage (Removed format=qcow2 for LVM-Thin)
+          // Attach the ISO image
+          ide2: `${params.templateId},media=cdrom`,
+          // Set boot order to boot from CD-ROM first
+          boot: 'order=ide2;scsi0',
+          // Define network (example: using vmbr0 bridge)
+          // You might need to make network selection dynamic
+          net0: 'virtio,bridge=vmbr0',
+          // Other common settings
+          scsihw: 'virtio-scsi-pci', // Recommended SCSI controller
+          ostype: 'l26', // Example: Linux 2.6 - 6.x Kernel (adjust as needed)
+        };
+        console.log(`Attempting to create VM ${newVmId} ('${sanitizedName}') from ISO on node ${targetNode} with params:`, createParams);
+        creationResult = await proxmox.nodes.$(targetNode).qemu.$post(createParams);
 
-      const proxmoxVmParams = {
-        newid: newVmId, // ID for the new VM
-        name: params.name,
-        // Cloning parameters
-        full: 1, // Full clone
-        // target: targetNode, // Target node for the clone
-        // storage: 'local-lvm', // Target storage for the clone disk (example)
-        // Optional overrides for the clone:
-        cores: params.specs.cpu,
-        memory: params.specs.memory,
-        description: params.description || '',
-        tags: params.tags?.join(';') || '',
-      };
-
-      console.log(`Attempting to clone template VM ${templateVmIdToClone} to new VM ${newVmId} on node ${targetNode} with params:`, proxmoxVmParams);
-      // The endpoint to clone is /nodes/{node}/qemu/{vmid}/clone
-      creationResult = await proxmox.nodes.$(targetNode).qemu.$(templateVmIdToClone).clone.$post(proxmoxVmParams);
+      } else {
+        // --- Clone VM from Template ---
+        // IMPORTANT: Assumes params.templateId is the *numeric VMID* of the template.
+        // This requires the frontend/template fetching to provide the correct numeric ID.
+        const templateVmIdToClone = params.templateId;
+        const sanitizedName = params.name.replace(/\s+/g, '-'); // Replace spaces with hyphens
+        const cloneParams = {
+          newid: newVmId, // ID for the new VM
+          name: sanitizedName,
+          full: 1, // Full clone is generally recommended
+          // Optional overrides (Proxmox might ignore some if cloning a full template)
+          cores: params.specs.cpu,
+          memory: params.specs.memory,
+          description: params.description || '',
+          tags: params.tags?.join(';') || '',
+        };
+        console.log(`Attempting to clone template VM ${templateVmIdToClone} to new VM ${newVmId} ('${sanitizedName}') on node ${targetNode} with params:`, cloneParams);
+        creationResult = await proxmox.nodes.$(targetNode).qemu.$(templateVmIdToClone).clone.$post(cloneParams);
+      }
 
       // Optionally start the VM if requested and clone was successful
       if (params.start && creationResult) {
@@ -194,7 +217,7 @@ app.post('/api/vms', authenticate, async (req, res) => {
         await proxmox.nodes.$(targetNode).qemu.$(newVmId).status.start.$post();
       }
     } // Add else if for vSphere later
-
+    // --- End Proxmox Logic ---
     // Respond with success (including the new VM ID and task ID)
     res.status(202).json({ // 202 Accepted
       id: newVmId,
