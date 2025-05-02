@@ -56,7 +56,6 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
     setNodes(null); // Clear previous details
     setStorage(null);
     setTemplates(null);
-    console.log(`Fetching details for ${hypervisor.id}`);
 
     try {
       const headers = { 'Authorization': 'Bearer MOCK_TOKEN' }; // Replace with actual token logic
@@ -72,13 +71,14 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
       }
 
       const nodesData = await nodesRes.json();
+      
       const storageData = await storageRes.json();
       const templatesData = await templatesRes.json();
 
       setNodes(nodesData);
       setStorage(storageData);
       setTemplates(templatesData);
-      console.log('Details fetched:', { nodesData, storageData, templatesData });
+      
 
     } catch (error) {
       console.error('Failed to fetch hypervisor details:', error);
@@ -87,7 +87,7 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
       setIsLoadingDetails(false);
     }
   };
-
+  
   const handleConnectionAttempt = async () => {
     setIsConnecting(true);
     const toastId = toast.loading('Intentando conexión...');
@@ -191,10 +191,16 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
             )}
             <div>
               <h3 className="font-medium text-lg text-slate-900 dark:text-white">
-                {hypervisor.name}
+                {hypervisor.type}
               </h3>
+              <p className="text-sm text-slate-500 dark:text-slate-400">{hypervisor.host}</p>
               <p className="text-sm text-slate-500 dark:text-slate-400">
-                {hypervisor.host}
+                {nodes && nodes.length > 0 && (
+                  <span className="mr-2">
+                   {nodes.map(node => node.name).join(', ')}
+                  </span>
+                )}
+                
               </p>
             </div>
           </div>

@@ -660,7 +660,7 @@ app.get('/api/hypervisors', authenticate, async (req, res) => {
     const result = await pool.query(
       'SELECT id, name, type, host, username, status, last_sync, created_at, updated_at FROM hypervisors ORDER BY created_at DESC'
     );
-    //console.log(`Found ${result.rows.length} hypervisors`);
+    
     res.json(result.rows);
   } catch (err) {
     console.error('Error fetching hypervisors from DB:', err);
