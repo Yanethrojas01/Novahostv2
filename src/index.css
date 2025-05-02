@@ -1,0 +1,98 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  
+  body {
+    @apply min-h-screen bg-slate-50 dark:bg-slate-900;
+  }
+
+  /* Improve default focus styles */
+  :focus-visible {
+    @apply outline-none ring-2 ring-primary-500 ring-offset-2 ring-offset-white dark:ring-offset-slate-900;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    @apply w-2 h-2;
+  }
+  
+  ::-webkit-scrollbar-track {
+    @apply bg-slate-200 dark:bg-slate-800;
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    @apply bg-slate-400 dark:bg-slate-600 rounded-full;
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-slate-500 dark:bg-slate-500;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none;
+  }
+  
+  .btn-primary {
+    @apply bg-primary-600 text-white hover:bg-primary-700 dark:bg-primary-700 dark:hover:bg-primary-600;
+  }
+  
+  .btn-secondary {
+    @apply bg-slate-200 text-slate-900 hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-50 dark:hover:bg-slate-700;
+  }
+  
+  .btn-success {
+    @apply bg-success-500 text-white hover:bg-success-600;
+  }
+  
+  .btn-danger {
+    @apply bg-danger-500 text-white hover:bg-danger-600;
+  }
+  
+  .btn-outline {
+    @apply border border-slate-300 dark:border-slate-700 bg-transparent hover:bg-slate-100 dark:hover:bg-slate-800;
+  }
+  
+  .card {
+    @apply bg-white dark:bg-slate-800 rounded-lg shadow-card border border-slate-200 dark:border-slate-700 overflow-hidden transition-shadow hover:shadow-card-hover;
+  }
+  
+  .form-input {
+    @apply block w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  
+  .form-select {
+    @apply form-input appearance-none bg-no-repeat bg-[right_0.5rem_center] bg-[length:1.5em_1.5em];
+  }
+  
+  .form-checkbox {
+    @apply h-4 w-4 rounded border-slate-300 dark:border-slate-700 text-primary-600 dark:text-primary-500 focus:ring-primary-500 dark:focus:ring-primary-400;
+  }
+  
+  .form-label {
+    @apply block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1;
+  }
+}
+
+/* Transitions */
+.fade-enter {
+  opacity: 0;
+}
+.fade-enter-active {
+  opacity: 1;
+  transition: opacity 200ms;
+}
+.fade-exit {
+  opacity: 1;
+}
+.fade-exit-active {
+  opacity: 0;
+  transition: opacity 200ms;
+}

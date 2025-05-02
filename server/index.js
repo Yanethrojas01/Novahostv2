@@ -1,0 +1,815 @@
+import express from 'express';
+import cors from 'cors';
+import pg from 'pg';
+import dotenv from 'dotenv';
+import Proxmox, { proxmoxApi } from 'proxmox-api'; // Import the proxmox library
+
+// Load environment variables from .env file
+dotenv.config();
+
+const app = express();
+const port = process.env.PORT || 3001;
+// --- Database Setup ---
+const { Pool } = pg;
+const pool = new Pool({
+  connectionString: `postgres://${process.env.VITE_POSTGRES_USER}:${process.env.VITE_POSTGRES_PASSWORD}@${process.env.VITE_POSTGRES_HOST}:${process.env.VITE_POSTGRES_PORT}/${process.env.VITE_POSTGRES_DB}`,
+});
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+//bypass del certificado ssl
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
+
+// Mock authentication middleware - would be replaced with real auth in production
+const authenticate = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  // In a real implementation, validate the token here
+  next();
+};
+
+// Routes
+// Health check
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
+// Proxmox API routes
+app.get('/api/proxmox/nodes', authenticate, (req, res) => {
+  // This would make a request to the Proxmox API
+  res.json([
+    { id: 'pve-1', name: 'pve-node1', status: 'online' },
+    { id: 'pve-2', name: 'pve-node2', status: 'online' },
+    { id: 'pve-3', name: 'pve-node3', status: 'maintenance' },
+  ]);
+});
+
+app.get('/api/proxmox/templates', authenticate, (req, res) => {
+  // This would fetch templates from Proxmox storage
+  res.json([
+    {
+      id: 'local:iso/ubuntu-22.04-server-amd64.iso',
+      name: 'Ubuntu 22.04 LTS',
+      description: 'Ubuntu Server 22.04 LTS (Jammy Jellyfish)',
+      size: 1.2 * 1024 * 1024 * 1024, // 1.2GB
+      path: 'local:iso/ubuntu-22.04-server-amd64.iso',
+      type: 'iso',
+      version: '22.04 LTS',
+      storage: 'local'
+    },
+    {
+      id: 'local:vztmpl/debian-11-standard_11.3-1_amd64.tar.gz',
+      name: 'Debian 11',
+      description: 'Debian 11 (Bullseye) Standard',
+      size: 0.8 * 1024 * 1024 * 1024, // 800MB
+      path: 'local:vztmpl/debian-11-standard_11.3-1_amd64.tar.gz',
+      type: 'template',
+      version: '11',
+      storage: 'local'
+    }
+  ]);
+});
+
+app.get('/api/vsphere/templates', authenticate, (req, res) => {
+  // This would fetch templates from vSphere template library
+  res.json([
+    {
+      id: 'vm-template-101',
+      name: 'Windows Server 2022',
+      description: 'Windows Server 2022 Standard',
+      size: 20 * 1024 * 1024 * 1024, // 20GB
+      path: '[datastore1] templates/windows-2022.vmdk',
+      type: 'template',
+      version: '2022',
+      storage: 'datastore1'
+    },
+    {
+      id: 'vm-template-102',
+      name: 'Ubuntu 22.04',
+      description: 'Ubuntu Server 22.04 LTS',
+      size: 10 * 1024 * 1024 * 1024, // 10GB
+      path: '[datastore1] templates/ubuntu-22.04.vmdk',
+      type: 'template',
+      version: '22.04 LTS',
+      storage: 'datastore1'
+    }
+  ]);
+});
+
+app.get('/api/proxmox/vms', authenticate, (req, res) => {
+  // This would make a request to the Proxmox API
+  res.json([
+    {
+      id: '100',
+      name: 'web-server-1',
+      status: 'running',
+      node: 'pve-node1',
+      cpu: 2,
+      memory: 2048,
+      disk: 32,
+    },
+    {
+      id: '101',
+      name: 'db-server',
+      status: 'running',
+      node: 'pve-node1',
+      cpu: 4,
+      memory: 8192,
+      disk: 100,
+    },
+    {
+      id: '102',
+      name: 'test-server',
+      status: 'stopped',
+      node: 'pve-node2',
+      cpu: 1,
+      memory: 1024,
+      disk: 20,
+    },
+  ]);
+});
+
+// vSphere API routes
+app.get('/api/vsphere/datacenters', authenticate, (req, res) => {
+  // This would make a request to the vSphere API
+  res.json([
+    { id: 'datacenter-1', name: 'Main Datacenter' }
+  ]);
+});
+
+app.get('/api/vsphere/vms', authenticate, (req, res) => {
+  // This would make a request to the vSphere API
+  res.json([
+    {
+      id: 'vm-101',
+      name: 'windows-server',
+      status: 'poweredOn',
+      datacenter: 'datacenter-1',
+      cpu: 2,
+      memory: 4096,
+      disk: 80,
+    },
+    {
+      id: 'vm-102',
+      name: 'monitoring',
+      status: 'poweredOn',
+      datacenter: 'datacenter-1',
+      cpu: 2,
+      memory: 4096,
+      disk: 60,
+    },
+  ]);
+});
+
+// VM management routes (would be implemented for both Proxmox and vSphere)
+app.post('/api/vms/create', authenticate, (req, res) => {
+  // This would create a VM via the appropriate API
+  res.status(202).json({
+    id: `new-vm-${Date.now()}`,
+    status: 'creating',
+    message: 'VM creation started',
+  });
+});
+
+// POST /api/vms/:id/action - Implement real actions
+app.post('/api/vms/:id/action', authenticate, async (req, res) => { // Make it async
+  const { id: vmId } = req.params; // Rename id to vmId for clarity
+  const { action } = req.body; // 'start', 'stop', 'restart'
+
+  console.log(`--- Received POST /api/vms/${vmId}/action --- Action: ${action}`);
+
+  if (!['start', 'stop', 'restart'].includes(action)) {
+    return res.status(400).json({ error: 'Invalid action specified.' });
+  }
+
+  try {
+    // --- Step 1: Find the VM's Hypervisor and Node ---
+    // This is the complex part. We need to know which hypervisor and node hosts the VM.
+    // Option A: Query all connected hypervisors (inefficient but works for now)
+    // Option B: Frontend sends hypervisorId/nodeName in request body (better)
+    // Option C: Have a persistent mapping of vmId -> hypervisorId/nodeName (best)
+
+    // Let's try Option A for demonstration:
+    const { rows: connectedHypervisors } = await pool.query(
+      `SELECT id, type, host, username, api_token, token_name 
+       FROM hypervisors WHERE status = 'connected'`
+    );
+
+    let targetHypervisor = null;
+    let targetNode = null;
+    let proxmoxClient = null;
+
+    for (const hypervisor of connectedHypervisors) {
+      if (hypervisor.type === 'proxmox') {
+        const [dbHost, dbPortStr] = hypervisor.host.split(':');
+        const port = dbPortStr ? parseInt(dbPortStr, 10) : 8006;
+        const cleanHost = dbHost;
+
+        const proxmoxConfig = {
+          host: cleanHost, port: port, username: hypervisor.username,
+          tokenID: `${hypervisor.username}!${hypervisor.token_name}`,
+          tokenSecret: hypervisor.api_token, timeout: 10000, rejectUnauthorized: false
+        };
+        const proxmox = proxmoxApi(proxmoxConfig);
+
+        try {
+          // Use /cluster/resources to find the VM and its node
+          const vmResources = await proxmox.cluster.resources.$get({ type: 'vm' });
+          const foundVm = vmResources.find(vm => vm.vmid.toString() === vmId);
+
+          if (foundVm) {
+            targetHypervisor = hypervisor;
+            targetNode = foundVm.node;
+            proxmoxClient = proxmox;
+            console.log(`Found VM ${vmId} on node ${targetNode} of hypervisor ${hypervisor.id}`);
+            break; // Stop searching once found
+          }
+        } catch (findError) {
+          console.warn(`Could not check hypervisor ${hypervisor.id} for VM ${vmId}:`, findError.message);
+          // Continue to the next hypervisor
+        }
+      }
+      // TODO: Add vSphere logic here if needed
+    }
+
+    if (!targetHypervisor || !targetNode || !proxmoxClient) {
+      return res.status(404).json({ error: `VM ${vmId} not found on any connected Proxmox hypervisor.` });
+    }
+
+    // --- Step 2: Perform the action ---
+    let result;
+    const vmPath = proxmoxClient.nodes.$(targetNode).qemu.$(vmId).status;
+
+    console.log(`Performing action '${action}' on VM ${vmId} at ${targetNode}...`);
+
+    switch (action) {
+      case 'start':
+        result = await vmPath.start.$post();
+        break;
+      case 'stop':
+        result = await vmPath.stop.$post();
+        break;
+      case 'restart':
+        // Proxmox often uses 'reboot' for restart
+        result = await vmPath.reboot.$post();
+        break;
+      default:
+        throw new Error('Invalid action'); // Should be caught earlier
+    }
+
+    console.log(`Action '${action}' result for VM ${vmId}:`, result); // result is often the task ID
+
+    // Respond optimistically
+    res.json({
+      id: vmId,
+      status: 'pending', // Indicate the action is initiated
+      message: `Action '${action}' initiated for VM ${vmId}. Task ID: ${result}`,
+      taskId: result // Send back the Proxmox task ID
+    });
+
+  } catch (error) {
+    console.error(`Error performing action '${action}' on VM ${vmId}:`, error);
+    const errorDetails = getProxmoxError(error); // Use existing error handler
+    res.status(errorDetails.code || 500).json({
+      error: `Failed to perform action '${action}' on VM ${vmId}.`,
+      details: errorDetails.message,
+      suggestion: errorDetails.suggestion
+    });
+  }
+});
+
+// --- VM Listing API ---
+
+// GET /api/vms - List VMs from all connected hypervisors
+app.get('/api/vms', authenticate, async (req, res) => {
+  console.log('--- Received GET /api/vms ---');
+  let allVms = [];
+
+  try {
+    // 1. Get all connected hypervisors from DB
+    const { rows: connectedHypervisors } = await pool.query(
+      `SELECT id, type, host, username, api_token, token_name 
+       FROM hypervisors WHERE status = 'connected'`
+    );
+    console.log(`Found ${connectedHypervisors.length} connected hypervisors.`);
+
+    // 2. Iterate and fetch VMs for each
+    for (const hypervisor of connectedHypervisors) {
+      console.log(`Fetching VMs from ${hypervisor.type} hypervisor: ${hypervisor.host} (ID: ${hypervisor.id})`);
+      try {
+        if (hypervisor.type === 'proxmox') {
+          // Connect to Proxmox (similar logic to /connect route)
+          const [dbHost, dbPortStr] = hypervisor.host.split(':');
+          const port = dbPortStr ? parseInt(dbPortStr, 10) : 8006;
+          const cleanHost = dbHost;
+
+          const proxmoxConfig = {
+            host: cleanHost,
+            port: port,
+            username: hypervisor.username,
+            tokenID: `${hypervisor.username}!${hypervisor.token_name}`,
+            tokenSecret: hypervisor.api_token,
+            timeout: 10000, // Shorter timeout for listing might be okay
+            rejectUnauthorized: false
+          };
+          const proxmox = proxmoxApi(proxmoxConfig);
+
+          // Get all VM resources from the cluster
+          const vmResources = await proxmox.cluster.resources.$get({ type: 'vm' });
+          console.log(`Got ${vmResources.length} VM resources from ${hypervisor.host}`);
+
+          // Map Proxmox data to our common VM structure
+          const proxmoxVms = vmResources.map((vm) => ({
+            id: vm.vmid.toString(), // Ensure ID is a string
+            name: vm.name,
+            status: vm.status, // e.g., 'running', 'stopped'
+            nodeName: vm.node, // Change 'node' to 'nodeName'
+            specs: { // Nest specs
+              cpu: vm.maxcpu,
+              memory: Math.round(vm.maxmem / (1024 * 1024)), // Convert bytes to MB
+              disk: Math.round(vm.maxdisk / (1024 * 1024 * 1024)), // Convert bytes to GB
+              // template, os, network would need more specific API calls if required
+            },
+            hypervisorType: 'proxmox',
+            hypervisorId: hypervisor.id, // Link back to the hypervisor
+            createdAt: new Date(), // Add placeholder createdAt
+            // Add other fields as needed, e.g., uptime, template status
+          }));
+
+          allVms = allVms.concat(proxmoxVms);
+
+        } else if (hypervisor.type === 'vsphere') {
+          // TODO: Implement vSphere VM fetching logic here
+          console.log(`vSphere VM fetching not yet implemented for ${hypervisor.host}`);
+        }
+      } catch (hypervisorError) {
+        // Log error for this specific hypervisor but continue with others
+        console.error(`Error fetching VMs from hypervisor ${hypervisor.id} (${hypervisor.host}):`, getProxmoxError(hypervisorError));
+        // Optionally, you could add a placeholder VM indicating an error for this source
+      }
+    }
+
+    console.log(`Total VMs fetched: ${allVms.length}`);
+    res.json(allVms);
+
+  } catch (dbError) {
+    console.error('Error retrieving connected hypervisors from DB:', dbError);
+    res.status(500).json({ error: 'Failed to retrieve hypervisor list' });
+  }
+});
+
+
+// --- End VM Listing API ---
+
+// --- Hypervisor CRUD API Routes ---
+
+// GET /api/hypervisors - List all hypervisors
+app.get('/api/hypervisors', authenticate, async (req, res) => {
+  console.log('--- Received GET /api/hypervisors ---');
+  try {
+    // Select all relevant fields, excluding sensitive ones like password or full token details
+    const result = await pool.query(
+      'SELECT id, name, type, host, username, status, last_sync, created_at, updated_at FROM hypervisors ORDER BY created_at DESC'
+    );
+    console.log(`Found ${result.rows.length} hypervisors`);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error fetching hypervisors from DB:', err);
+    res.status(500).json({ error: 'Failed to retrieve hypervisors' });
+  }
+});
+// POST /api/hypervisors - Create new hyperviso
+app.post('/api/hypervisors', authenticate, async (req, res) => {
+  console.log('--- Received POST /api/hypervisors ---'); // <-- Añade esta línea
+  //console.log('Request Body:', req.body);
+  const { type, host, username, password, apiToken, tokenName } = req.body;
+
+  // Validación mejorada
+  const validationErrors = [];
+  
+  // Validaciones base
+  if (!type) validationErrors.push('Type is required');
+  if (!host) validationErrors.push('Host is required');
+  if (!username) validationErrors.push('Username is required');
+  
+  // Validaciones específicas para Proxmox
+  if (type === 'proxmox') {
+      const hasToken = apiToken && tokenName;
+      const hasPassword = !!password;
+      
+      if (!hasToken && !hasPassword) {
+          validationErrors.push('Proxmox requires either password or API token + token name');
+          console.log('Proxmox requires either password or API token + token name');
+      }
+      
+      if (apiToken && !tokenName) {
+          validationErrors.push('Token name is required when using API token');
+          console.log('Token name is required when using API token');
+      }
+      
+      if (tokenName && !apiToken) {
+          validationErrors.push('API token secret is required when using token name');
+          console.log('API token secret is required when using token name');
+      }
+      
+      if (!/^https?:\/\/[\w.-]+(:\d+)?$/.test(host)) {
+          validationErrors.push('Invalid host format. Use http(s)://hostname[:port]');
+          console.log('Invalid host format. Use http(s)://hostname[:port]');
+      }
+  }
+
+  if (validationErrors.length > 0) {
+    console.log('Validation errors:', validationErrors);  
+    return res.status(400).json({
+          error: 'Validation failed',
+          details: validationErrors
+      });
+      
+  }
+
+  // Variables de procesamiento
+  let status = 'disconnected';
+  let lastSync = null;
+  let cleanHost = host;
+  const name = host.replace(/^https?:\/\//, '').split(/[/:]/)[0].replace(/[^\w-]/g, '-').substring(0, 50);
+
+  try {
+      if (type === 'proxmox') {
+          // Parsear host y puerto
+          const urlParts = new URL(host.includes('://') ? host : `https://${host}`);
+          cleanHost = urlParts.hostname;
+          const port = urlParts.port || 8006;
+
+          // Configuración según documentación oficial
+          const proxmoxConfig = {
+              host: cleanHost,
+              port: port,
+              username: username,
+              timeout: 15000,
+              rejectUnauthorized: false,
+              //ignoreUnauthorized: true,
+              //rejectUnauthorized: process.env.NODE_ENV === 'production'
+          };
+
+          // Configurar autenticación
+          if (apiToken && tokenName) {
+              proxmoxConfig.tokenID = `${username}!${tokenName}`;  // Formato user@realm!tokenname
+              proxmoxConfig.tokenSecret = apiToken;
+          } else {
+              proxmoxConfig.password = password;
+          }
+
+          // Crear cliente Proxmox
+         // const proxmox = new Proxmox(proxmoxConfig); 
+          const proxmox = proxmoxApi(proxmoxConfig);//prueba
+
+          // Probar conexión usando endpoint /version
+          // Corrección: Usar el método request genérico para /version
+          // const versionResponse = await proxmox.request('GET', '/version');
+          // // Ajuste: La respuesta de la API de Proxmox suele estar en response.data.data
+          // const pveVersion = versionResponse?.data?.data?.version;
+          // if (!pveVersion) {
+          //     throw new Error('Invalid Proxmox version response');
+          // }
+
+          // Verificar nodos usando endpoint /nodes
+          try {
+            const nodesResponse = await proxmox.nodes.$get(); // Ya funciona correctamente
+            console.log('Proxmox nodes:', nodesResponse);
+            
+            if (!nodesResponse?.length) {
+                throw new Error('No nodes found in cluster');
+            }
+    
+            // Obtener la versión desde el primer nodo
+            //const nodeName = nodesResponse.data[0].node;
+
+            //const nodeName = proxmox.nodesResponse.$(nodesResponse[0].node);//prueba
+            const nodeName = nodesResponse[0].node;
+            console.log('Using node:', nodeName)
+            
+            const versionResponse = await proxmox.nodes.$(nodeName).version.$get(); // Método específico según la biblioteca
+            console.log('Proxmox version:', versionResponse);
+    
+            const pveVersion = versionResponse?.version;
+            console.log('Proxmox version:', pveVersion);
+            if (!pveVersion) {
+                throw new Error('Invalid Proxmox version response');
+            }
+    
+            status = 'connected';
+            lastSync = new Date();
+            console.log(`Connected to Proxmox ${pveVersion} at ${cleanHost}:${port}`);
+        } catch (error) {
+            // Manejo de errores específico para Proxmox
+            throw error;
+        }
+
+      } else if (type === 'vsphere') {
+          // Implementación para vSphere...
+          status = 'unsupported';
+      }
+
+      // Insertar en base de datos
+      const dbResult = await pool.query(
+          `INSERT INTO hypervisors (
+              name, type, host, username, 
+              api_token, token_name, status, last_sync
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           RETURNING id, name, type, host, username, status, last_sync, created_at`,
+          [
+              name,
+              type,
+              // Corrección: Guardar siempre con el puerto estándar de Proxmox (8006)
+              `${cleanHost}:8006`,
+              username,
+              apiToken || null,
+              tokenName || null,
+              status,
+              lastSync
+          ]
+      );
+
+      // Preparar respuesta sin datos sensibles
+      const response = dbResult.rows[0];
+      delete response.api_token;
+      delete response.token_name;
+
+      res.status(201).json(response);
+
+  } catch (error) {
+      // Manejo detallado de errores
+      console.error('Error creating hypervisor:', error);
+
+      const errorInfo = {
+          code: 500,
+          message: 'Proxmox API Error',
+          suggestion: 'Check connection details and credentials'
+      };
+
+      // Manejar errores de la API de Proxmox
+      if (error.response) {
+          errorInfo.code = error.response.status;
+          errorInfo.message = error.response.data?.errors?.join(', ') || error.message;
+          
+          // Errores comunes
+          if (errorInfo.code === 401) {
+              errorInfo.suggestion = 'Verify token/user permissions in Proxmox';
+          } else if (errorInfo.code === 403) {
+              errorInfo.suggestion = 'Check user role privileges';
+          } else if (errorInfo.code === 595) {
+              errorInfo.suggestion = process.env.NODE_ENV === 'production' 
+                  ? 'Install valid SSL certificate' 
+                  : 'Set NODE_ENV=development to allow self-signed certs';
+          }
+      } 
+      // Errores de conexión
+      else if (error.code === 'ECONNREFUSED') {
+          errorInfo.code = 503;
+          errorInfo.message = 'Connection refused';
+          errorInfo.suggestion = 'Check Proxmox service and firewall rules';
+      }
+
+      console.error(`Hypervisor creation failed: ${errorInfo.message}`, {
+          type,
+          host: cleanHost,
+          username,
+          authMethod: apiToken ? 'token' : 'password',
+          error: error.stack
+      });
+
+      res.status(errorInfo.code).json(errorInfo);
+  }
+});
+
+// GET /api/hypervisors/:id - Get a single hypervisor by ID
+app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
+  const { id } = req.params;
+  console.log(`GET /api/hypervisors/${id} called`);
+  try {
+    const result = await pool.query('SELECT id, name, type, host, username, status, last_sync, created_at, updated_at FROM hypervisors WHERE id = $1', [id]);
+    if (result.rows.length > 0) {
+      res.json(result.rows[0]);
+    } else {
+      res.status(404).json({ error: 'Hypervisor not found' });
+    }
+  } catch (err) {
+    console.error(`Error fetching hypervisor ${id}:`, err);
+    res.status(500).json({ error: 'Failed to retrieve hypervisor' });
+ 
+  }
+});
+
+// Función mejorada de manejo de errores
+function getProxmoxError(error) {
+  const response = {
+      message: 'Proxmox API Error',
+      code: 500,
+      suggestion: 'Check network connection and credentials'
+  };
+
+  if (error.response) {
+      // Manejar errores de la API de Proxmox
+      response.code = error.response.status;
+      
+      if (error.response.data?.errors) {
+          response.message = error.response.data.errors
+              .map(err => err.message || err)
+              .join(', ');
+      }
+      
+      // Manejar códigos comunes
+      if (response.code === 401) {
+          response.message = 'Authentication failed';
+          response.suggestion = 'Verify credentials/token permissions';
+      }
+      if (response.code === 403) {
+          response.message = 'Permission denied';
+          response.suggestion = 'Check user role privileges';
+      }
+      if (response.code === 595) {
+          response.message = 'SSL certificate verification failed';
+          response.suggestion = process.env.NODE_ENV === 'production' 
+              ? 'Use valid SSL certificate' 
+              : 'Set NODE_ENV=development to allow self-signed certs';
+      }
+  } else if (error.code === 'ECONNREFUSED') {
+      response.message = 'Connection refused';
+      response.code = 503;
+      response.suggestion = 'Check if Proxmox is running and port is accessible';
+  } else if (error.message) {
+      response.message = error.message;
+  }
+
+  return response;
+}
+
+// PUT /api/hypervisors/:id - Update an existing hypervisor (example, frontend doesn't use this yet for general edits)
+// Let's update it to allow changing name, host, username, api_token
+app.put('/api/hypervisors/:id', authenticate, async (req, res) => {
+  const { id } = req.params;
+  console.log(`PUT /api/hypervisors/${id} called with body:`, req.body);
+  const { name, host, username, apiToken } = req.body; // Only allow updating these fields for now
+
+  // Basic validation
+  if (!name || !host || !username) {
+      return res.status(400).json({ error: 'Missing required fields: name, host, username' });
+  }
+
+  try {
+      const result = await pool.query(
+          'UPDATE hypervisors SET name = $1, host = $2, username = $3, api_token = $4, updated_at = now() WHERE id = $5 RETURNING id, name, type, host, username, status, last_sync, created_at, updated_at',
+          [name, host, username, apiToken || null, id]
+      );
+
+      if (result.rows.length > 0) {
+          const updatedHypervisor = result.rows[0];
+          console.log('Updated hypervisor in DB:', updatedHypervisor);
+          res.json(updatedHypervisor);
+      } else {
+          res.status(404).json({ error: 'Hypervisor not found' });
+      }
+  } catch (err) {
+      console.error(`Error updating hypervisor ${id} in DB:`, err);
+      res.status(500).json({ error: 'Failed to update hypervisor' });
+ 
+  }
+});
+
+// DELETE /api/hypervisors/:id - Delete a hypervisor
+app.delete('/api/hypervisors/:id', authenticate, async (req, res) => {
+  const { id } = req.params;
+  console.log(`DELETE /api/hypervisors/${id} called`);
+  try {
+    const result = await pool.query('DELETE FROM hypervisors WHERE id = $1 RETURNING id', [id]);
+    if (result.rowCount > 0) {
+      console.log(`Deleted hypervisor with id: ${id} from DB`);
+      res.status(204).send(); // No Content success status
+    } else {
+      res.status(404).json({ error: 'Hypervisor not found' });
+    }
+  } catch (err) {
+    console.error(`Error deleting hypervisor ${id} from DB:`, err);
+    res.status(500).json({ error: 'Failed to delete hypervisor' });
+  
+  }
+});
+
+// --- End Hypervisor CRUD API Routes ---
+// --- Hypervisor Connection Logic ---
+
+// POST /api/hypervisors/:id/connect - Versión Corregida
+// Connect to hypervisor
+app.post('/api/hypervisors/:id/connect', authenticate, async (req, res) => {
+  const { id } = req.params;
+  console.log(`POST /api/hypervisors/${id}/connect called`);
+  try {
+    const { rows: [hypervisor] } = await pool.query(
+      `SELECT id, type, host, username, api_token, token_name 
+       FROM hypervisors WHERE id = $1`,
+      [id]
+    );
+
+    if (!hypervisor) return res.status(404).json({ error: 'Hypervisor not found' });
+
+    let newStatus = 'error';
+    let lastSync = null;
+    console.log('Hypervisor:', hypervisor);
+
+
+    if (hypervisor.type === 'proxmox') {
+      // Parsear host y puerto desde la base de datos (asumiendo formato hostname:port)
+      const [dbHost, dbPortStr] = hypervisor.host.split(':');
+      const port = dbPortStr ? parseInt(dbPortStr, 10) : 8006; // Default a 8006 si no hay puerto
+      const cleanHost = dbHost;
+      console.log(`Attempting Proxmox connection to: ${cleanHost}:${port} (from DB value: ${hypervisor.host})`); // Add this log
+
+      // Configuración del cliente Proxmox (similar a la ruta de creación)
+      const proxmoxConfig = {
+        host: cleanHost,
+        port: port,
+        username: hypervisor.username, // Necesario para el tokenID
+        tokenID: `${hypervisor.username}!${hypervisor.token_name}`,
+        tokenSecret: hypervisor.api_token,
+        timeout: 15000,
+        rejectUnauthorized: false // Mantener consistencia con la ruta de creación
+      };
+
+      // Crear cliente Proxmox usando proxmoxApi
+      const proxmox = proxmoxApi(proxmoxConfig);
+
+      // Verificar versión y permisos
+      const versionResponse = await proxmox.version.$get();
+      const pveVersion = versionResponse?.version; // Acceso directo basado en hallazgos anteriores
+      console.log('Proxmox Version Check:', pveVersion);
+      if (!pveVersion) {
+        throw new Error('Failed to retrieve Proxmox version during connection test.');
+      }
+
+      // Verificar permisos del token
+      // URL-encode username y token name para la ruta de la API
+      const encodedUsername = encodeURIComponent(hypervisor.username);
+      console.log('Encoded Username:', encodedUsername);
+      const encodedTokenName = encodeURIComponent(hypervisor.token_name);
+      console.log('Encoded Token Name:', encodedTokenName);
+      console.log('Attempting to get token info...'); // Log antes de la llamada
+      
+      // Corrección: Usar /access/permissions para obtener los permisos del token actual
+      // Esto evita necesitar permisos específicos sobre el usuario/token y solo requiere
+      // que el token sea válido para consultar sus propios permisos.
+      const permissionsInfo = await proxmox.access.permissions.$get();
+      console.log('Successfully got permissions info:', permissionsInfo); // Log para verificar estructura
+
+      // Ajustar la verificación de privilegios según la estructura real de tokenInfo
+      // La respuesta de /access/permissions es un objeto donde las claves son rutas
+      // y los valores son arrays de privilegios. Necesitamos verificar si 'VM.Allocate'
+      // existe como *clave* en alguno de los objetos de permisos asociados a las rutas.
+      const hasRequiredPrivilege = Object.values(permissionsInfo || {}).some(
+          // Corrección: Verificar si el objeto de permisos tiene la clave 'VM.Allocate'
+          (privsObject) => typeof privsObject === 'object' && privsObject !== null && privsObject.hasOwnProperty('VM.Allocate')
+      );
+console.log('Has VM.Allocate privilege:', hasRequiredPrivilege); // Log para verificar privilegios
+      if (!hasRequiredPrivilege) {
+        console.warn('Permissions structure:', permissionsInfo); // Log si la estructura es inesperada o falta el permiso
+        throw new Error('Token lacks required VM.Allocate privilege or privileges could not be verified.');
+      }
+      
+      newStatus = 'connected';
+      lastSync = new Date();
+      console.log(`Successfully connected and verified permissions for ${hypervisor.username} on ${cleanHost}:${port}`);
+    }
+
+    // Actualizar estado
+    const { rows: [updatedHypervisor] } = await pool.query(
+      `UPDATE hypervisors 
+       SET status = $1, last_sync = $2, updated_at = NOW() 
+       WHERE id = $3 RETURNING *`,
+      [newStatus, lastSync, id]
+    );
+
+    res.json({ status: newStatus, lastSync });
+    console.log(`Updated hypervisor ${id} status to ${newStatus}`);
+
+  } catch (err) {
+    const errorDetails = getProxmoxError(err);
+    console.error(`Connection attempt failed for hypervisor ${id}: ${errorDetails.message}`, { stack: err.stack });
+    res.status(500).json({
+      error: errorDetails.message,
+      code: errorDetails.code,
+      suggestion: errorDetails.suggestion
+    });
+  }
+});
+
+// Error handler
+
+
+
+// Start the server
+app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
+});

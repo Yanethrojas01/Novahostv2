@@ -1,0 +1,376 @@
+import { useState, useEffect } from 'react';
+import { Plus, RefreshCw, Search } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { toast } from 'react-hot-toast'; // Assuming you have react-hot-toast or similar
+import HypervisorCard from '../components/hypervisors/HypervisorCard';
+import { Hypervisor, HypervisorCredentials } from '../types/hypervisor';
+// import { mockHypervisors } from '../utils/mockData'; // No longer needed
+
+const API_BASE_URL = 'http://localhost:3001/api'; // Adjust if your server runs elsewhere
+export default function Hypervisors() {
+  const [hypervisors, setHypervisors] = useState<Hypervisor[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
+  const [isAddingNew, setIsAddingNew] = useState(false);
+  const [newHypervisor, setNewHypervisor] = useState<HypervisorCredentials>({
+    type: 'proxmox',
+    host: '',
+    username: '',
+    password: '',
+    tokenName: '', // Initialize tokenName
+  });
+
+  // Function to fetch hypervisors from the API
+  const fetchHypervisors = async () => {
+    setIsLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/hypervisors`, {
+        headers: {
+          // Include auth header if needed by your backend middleware
+          'Authorization': 'Bearer MOCK_TOKEN', // Replace with actual token logic later
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data: Hypervisor[] = await response.json();
+      // Convert date strings to Date objects if necessary
+      const formattedData = data.map(h => ({
+        ...h,
+        lastSync: h.lastSync ? new Date(h.lastSync) : null,
+        createdAt: h.createdAt ? new Date(h.createdAt) : undefined, // Convert createdAt
+        updatedAt: h.updatedAt ? new Date(h.updatedAt) : undefined, // Convert updatedAt
+      }));
+      setHypervisors(formattedData);
+    } catch (error) {
+      console.error('Error fetching hypervisors:', error);
+      toast.error('Failed to load hypervisors.'); // User feedback
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchHypervisors();
+  }, []);
+
+  // Removed handleConnect as status should be determined by backend
+  // const handleConnect = (id: string) => { ... };
+
+  const handleDelete = async (id: string) => {
+    // Optimistic UI update (optional)
+    // const originalHypervisors = [...hypervisors];
+    // setHypervisors(prev => prev.filter(h => h.id !== id));
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/hypervisors/${id}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': 'Bearer MOCK_TOKEN', // Replace with actual token logic
+        },
+      });
+
+      if (!response.ok) {
+        // Revert optimistic update if failed
+        // setHypervisors(originalHypervisors);
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      toast.success('Hypervisor deleted successfully.');
+      // Re-fetch the list to ensure consistency
+      fetchHypervisors();
+
+    } catch (error) {
+      console.error('Error deleting hypervisor:', error);
+      toast.error('Failed to delete hypervisor.');
+      // Ensure state is correct if optimistic update was used and failed
+      // fetchHypervisors(); // Or revert as shown above
+    }
+  };
+
+  const handleAddNew = async () => {
+    // Validation logic for enabling the button
+    const isPasswordAuthValid = !!newHypervisor.password;
+    const isTokenAuthValid = newHypervisor.type === 'proxmox' && !!newHypervisor.apiToken && !!newHypervisor.tokenName;
+    const isFormValid = newHypervisor.host && newHypervisor.username && (isPasswordAuthValid || isTokenAuthValid);
+
+    if (isFormValid) {
+      // Clear password if using token auth for security (optional, backend should prioritize token anyway)
+      const payload = isTokenAuthValid ? { ...newHypervisor, password: '' } : newHypervisor;
+      console.log('Payload to send:', payload); // Debugging line
+      setIsLoading(true); // Indicate activity
+      try {
+        const response = await fetch(`${API_BASE_URL}/hypervisors`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer MOCK_TOKEN', // Replace with actual token logic
+          },
+          body: JSON.stringify(payload), // Send potentially modified payload
+        });
+
+        if (!response.ok) {
+           const errorData = await response.json().catch(() => ({ error: 'Failed to parse error response' }));
+           throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+        }
+
+        // const addedHypervisor = await response.json(); // Use if needed
+        toast.success('Hypervisor added successfully.');
+
+        // Reset form and close
+        setNewHypervisor({
+          type: 'proxmox',
+          host: '',
+          username: '',
+          password: '',
+          apiToken: '', // Reset token field too
+          tokenName: '', // Reset token name field
+        });
+        setIsAddingNew(false);
+
+        // Refresh the list
+        fetchHypervisors();
+
+      } catch (error: unknown) { // Changed 'any' to 'unknown'
+        console.error('Error adding hypervisor:', error);
+        // Type check before accessing properties
+        let errorMessage = 'Failed to add hypervisor.';
+        if (error instanceof Error) {
+          errorMessage = `Failed to add hypervisor: ${error.message}`;
+        }
+        toast.error(errorMessage);
+        setIsLoading(false); // Stop loading indicator on error
+      }
+      // setIsLoading(false); // Already handled in fetchHypervisors finally block
+    } else {
+      toast.error('Please fill Host, Username, and either Password OR API Token + Token Name.');
+    }
+  };
+
+  const handleRefresh = () => {
+    fetchHypervisors();
+  };
+
+  // Determine if the connect button should be enabled
+  const isConnectButtonEnabled = newHypervisor.host && newHypervisor.username &&
+                                (!!newHypervisor.password || (newHypervisor.type === 'proxmox' && !!newHypervisor.apiToken && !!newHypervisor.tokenName));
+
+  // Callback function for HypervisorCard to update state
+  const handleConnectionChange = (updatedHypervisor: Hypervisor) => {
+    setHypervisors(prevHypervisors =>
+      prevHypervisors.map(h =>
+        h.id === updatedHypervisor.id ? updatedHypervisor : h
+      )
+    );
+  };
+
+  const filteredHypervisors = hypervisors.filter(h =>
+    (h.name?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+    (h.host?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+    (h.type?.toLowerCase() || '').includes(searchTerm.toLowerCase())
+  );
+
+  return (
+    <div>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Hypervisors</h1>
+        <p className="text-slate-500 dark:text-slate-400 mt-1">
+          Manage your Proxmox and vSphere connections
+        </p>
+      </div>
+
+      <div className="flex flex-col sm:flex-row gap-4 mb-6 justify-between">
+        <div className="relative">
+          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+            <Search className="h-5 w-5 text-slate-400" />
+          </div>
+          <input
+            type="text"
+            placeholder="Search hypervisors..."
+            className="form-input pl-10 w-full sm:w-auto"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            onClick={handleRefresh}
+            className="btn btn-secondary"
+            disabled={isLoading} // Disable while loading
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+
+          <button
+            onClick={() => setIsAddingNew(true)}
+            className="btn btn-primary"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Add Hypervisor
+          </button>
+        </div>
+      </div>
+
+      {isAddingNew && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-6 p-6 bg-white dark:bg-slate-800 rounded-lg shadow border border-slate-200 dark:border-slate-700"
+        >
+          <h2 className="text-lg font-medium mb-4 text-slate-900 dark:text-white">Add New Hypervisor</h2>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className="form-label">Type</label>
+              <select
+                className="form-select"
+                value={newHypervisor.type}
+                onChange={(e) => setNewHypervisor(prev => ({ ...prev, type: e.target.value as 'proxmox' | 'vsphere' }))}
+              >
+                <option value="proxmox">Proxmox</option>
+                <option value="vsphere">vSphere</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="form-label">Host</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="hostname.example.com"
+                value={newHypervisor.host}
+                onChange={(e) => setNewHypervisor(prev => ({ ...prev, host: e.target.value }))}
+              />
+            </div>
+
+            <div>
+              <label className="form-label">Username</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder={newHypervisor.type === 'proxmox' ? 'root@pam' : 'administrator@vsphere.local'}
+                value={newHypervisor.username}
+                onChange={(e) => setNewHypervisor(prev => ({ ...prev, username: e.target.value }))}
+              />
+            </div>
+
+            <div>
+              <label className="form-label">Password</label>
+              <input
+                type="password"
+                className="form-input"
+                value={newHypervisor.password}
+                onChange={(e) => setNewHypervisor(prev => ({ ...prev, password: e.target.value }))}
+              />
+            </div>
+
+            {newHypervisor.type === 'proxmox' && (
+              <>
+                <div className="sm:col-span-1">
+                  <label className="form-label">Token Name (Optional)</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    placeholder="mytoken"
+                    value={newHypervisor.tokenName || ''}
+                    onChange={(e) => setNewHypervisor(prev => ({ ...prev, tokenName: e.target.value }))}
+                  />
+                </div>
+                <div className="sm:col-span-1">
+                  <label className="form-label">API Token Secret (Optional)</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                    value={newHypervisor.apiToken || ''}
+                    onChange={(e) => setNewHypervisor(prev => ({ ...prev, apiToken: e.target.value }))}
+                  />
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="mt-6 flex justify-end space-x-3">
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setIsAddingNew(false)}
+              disabled={isLoading} // Disable while add is in progress
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={handleAddNew}
+              disabled={!isConnectButtonEnabled || isLoading}
+            >
+              {isLoading ? 'Connecting...' : 'Connect'}
+            </button>
+          </div>
+        </motion.div>
+      )}
+
+      {isLoading && hypervisors.length === 0 ? ( // Show skeleton only on initial load
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="card">
+              <div className="p-4 animate-pulse">
+                <div className="flex justify-between mb-4">
+                  <div className="h-10 bg-slate-200 dark:bg-slate-700 rounded w-1/2"></div>
+                  <div className="h-6 bg-slate-200 dark:bg-slate-700 rounded w-1/4"></div>
+                </div>
+                <div className="space-y-3">
+                  <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-full"></div>
+                  <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-full"></div>
+                  <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-3/4"></div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : filteredHypervisors.length > 0 ? (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.1 }}
+          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
+        >
+          {filteredHypervisors.map(hypervisor => (
+            <HypervisorCard
+              key={hypervisor.id}
+              hypervisor={hypervisor}
+              onConnectionChange={handleConnectionChange} // Pass the callback function
+              onDelete={handleDelete}
+            />
+          ))}
+        </motion.div>
+      ) : (
+        <div className="text-center py-10">
+          <div className="mx-auto h-12 w-12 text-slate-400">
+            {/* Use a different icon or keep Search */}
+            <Search className="h-full w-full" />
+          </div>
+          <h3 className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">No hypervisors found</h3>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            {searchTerm ? 'Try adjusting your search.' : 'Start by adding a hypervisor connection.'}
+          </p>
+          {!searchTerm && ( // Only show button if not searching
+            <div className="mt-6">
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => setIsAddingNew(true)}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Add Hypervisor
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
