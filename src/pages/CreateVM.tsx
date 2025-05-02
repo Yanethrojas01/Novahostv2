@@ -2,17 +2,22 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Server, HardDrive, Cpu, MemoryStick as Memory } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { VMCreateParams } from '../types/vm';
-import { mockHypervisors } from '../utils/mockData';
-import { OSTemplate } from '../types/hypervisor';
-import { supabase } from '../lib/supabase';
+import { VMCreateParams, VMTemplate } from '../types/vm'; // Use VMTemplate from vm.ts
+import { Hypervisor } from '../types/hypervisor'; // Import Hypervisor type
+// import { supabase } from '../lib/supabase'; // Remove direct Supabase usage
+import { toast } from 'react-hot-toast';
+
+const API_BASE_URL = 'http://localhost:3001/api'; // Define API base URL
 
 export default function CreateVM() {
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(1);
-  const [isLoading, setIsLoading] = useState(true);
-  const [templates, setTemplates] = useState<OSTemplate[]>([]);
-  
+  const [isLoading, setIsLoading] = useState(false); // General loading state for create action
+  const [isFetchingHypervisors, setIsFetchingHypervisors] = useState(true);
+  const [isFetchingTemplates, setIsFetchingTemplates] = useState(false);
+  const [availableHypervisors, setAvailableHypervisors] = useState<Hypervisor[]>([]);
+  const [templates, setTemplates] = useState<VMTemplate[]>([]); // Use VMTemplate type
+
   const [vmParams, setVmParams] = useState<VMCreateParams>({
     name: '',
     description: '',
@@ -21,44 +26,62 @@ export default function CreateVM() {
       cpu: 1,
       memory: 1024,
       disk: 20,
-      os: '',
+      // os: '', // We'll use templateId instead
     },
     start: true,
     tags: [],
+    templateId: undefined, // Initialize templateId
   });
 
   const [tagInput, setTagInput] = useState('');
 
+  // Fetch hypervisors on mount
   useEffect(() => {
-    if (vmParams.hypervisorId) {
-      const hypervisor = mockHypervisors.find(h => h.id === vmParams.hypervisorId);
-      if (hypervisor) {
-        // Fetch templates based on hypervisor type
-        const fetchTemplates = async () => {
-          setIsLoading(true);
-          try {
-            const response = await fetch(
-              `/api/${hypervisor.type}/templates`,
-              {
-                headers: {
-                  'Authorization': 'Bearer mock-token',
-                }
-              }
-            );
-            const data = await response.json();
-            setTemplates(data);
-          } catch (error) {
-            console.error('Error fetching templates:', error);
-          } finally {
-            setIsLoading(false);
-          }
-        };
-
-        fetchTemplates();
+    const fetchHypervisors = async () => {
+      setIsFetchingHypervisors(true);
+      try {
+        const response = await fetch(`${API_BASE_URL}/hypervisors`, {
+          headers: { 'Authorization': 'Bearer MOCK_TOKEN' }, // Replace with actual token logic
+        });
+        if (!response.ok) throw new Error('Failed to fetch hypervisors');
+        const data: Hypervisor[] = await response.json();
+        setAvailableHypervisors(data.filter(h => h.status === 'connected')); // Only show connected ones
+      } catch (error) {
+        console.error('Error fetching hypervisors:', error);
+        toast.error('Could not load hypervisors.');
+      } finally {
+        setIsFetchingHypervisors(false);
       }
+    };
+    fetchHypervisors();
+  }, []);
+
+  // Fetch templates when hypervisor changes
+  useEffect(() => {
+    setTemplates([]); // Clear previous templates
+    setVmParams(prev => ({ ...prev, templateId: undefined })); // Clear selected template
+
+    if (vmParams.hypervisorId) {
+      const fetchTemplates = async () => {
+        setIsFetchingTemplates(true);
+        try {
+          const response = await fetch(`${API_BASE_URL}/hypervisors/${vmParams.hypervisorId}/templates`, {
+            headers: { 'Authorization': 'Bearer MOCK_TOKEN' }, // Replace with actual token logic
+          });
+          if (!response.ok) throw new Error('Failed to fetch templates');
+          const data: VMTemplate[] = await response.json();
+          setTemplates(data);
+        } catch (error) {
+          console.error('Error fetching templates:', error);
+          toast.error('Could not load templates for the selected hypervisor.');
+        } finally {
+          setIsFetchingTemplates(false);
+        }
+      };
+      fetchTemplates();
     }
   }, [vmParams.hypervisorId]);
-  
+
   const handleNext = () => {
     if (currentStep < 3) {
       setCurrentStep(currentStep + 1);
@@ -66,13 +89,13 @@ export default function CreateVM() {
       handleCreate();
     }
   };
-  
+
   const handleBack = () => {
     if (currentStep > 1) {
       setCurrentStep(currentStep - 1);
     }
   };
-  
+
   const addTag = () => {
     if (tagInput && !vmParams.tags?.includes(tagInput)) {
       setVmParams(prev => ({
@@ -82,68 +105,60 @@ export default function CreateVM() {
       setTagInput('');
     }
   };
-  
+
   const removeTag = (tag: string) => {
     setVmParams(prev => ({
       ...prev,
       tags: prev.tags?.filter(t => t !== tag),
     }));
   };
-  
+
   const handleCreate = async () => {
     setIsLoading(true);
-    
     try {
-      // Create VM in database
-      const { data, error } = await supabase
-        .from('virtual_machines')
-        .insert([
-          {
-            name: vmParams.name,
-            description: vmParams.description,
-            hypervisor_id: vmParams.hypervisorId,
-            cpu_cores: vmParams.specs.cpu,
-            memory_mb: vmParams.specs.memory,
-            disk_gb: vmParams.specs.disk,
-            os: vmParams.specs.os,
-          }
-        ])
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      // Create VM on hypervisor
-      const response = await fetch('/api/vms/create', {
+      // Call the backend API to create the VM
+      const response = await fetch(`${API_BASE_URL}/vms`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': 'Bearer mock-token',
+          'Authorization': 'Bearer MOCK_TOKEN', // Use actual token
         },
         body: JSON.stringify(vmParams),
       });
 
-      if (!response.ok) throw new Error('Failed to create VM');
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Failed to parse error response' }));
+        throw new Error(errorData.error || `Failed to initiate VM creation (status: ${response.status})`);
+      }
 
+      const result = await response.json();
+      toast.success(result.message || 'VM creation initiated successfully!');
+
+      // Remove Supabase call from frontend
       // Redirect to the dashboard
       navigate('/');
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error creating VM:', error);
+      let errorMessage = 'Failed to create VM.';
+      if (error instanceof Error) {
+        errorMessage = `Failed to create VM: ${error.message}`;
+      }
+      toast.error(errorMessage);
     } finally {
       setIsLoading(false);
     }
   };
-  
+
   const isNextDisabled = () => {
     if (currentStep === 1) {
       return !vmParams.name || !vmParams.hypervisorId;
     }
     if (currentStep === 2) {
-      return !vmParams.specs.os;
+      return !vmParams.templateId; // Check if a template is selected
     }
     return false;
   };
-  
+
   return (
     <div>
       <div className="mb-6">
@@ -160,7 +175,7 @@ export default function CreateVM() {
           Configure and deploy a new virtual machine
         </p>
       </div>
-      
+
       {/* Stepper */}
       <div className="mb-8">
         <div className="flex items-center">
@@ -202,7 +217,7 @@ export default function CreateVM() {
           </div>
         </div>
       </div>
-      
+
       <div className="bg-white dark:bg-slate-800 shadow rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
         {/* Step 1: Basic Info */}
         {currentStep === 1 && (
@@ -213,7 +228,7 @@ export default function CreateVM() {
             className="p-6"
           >
             <h2 className="text-lg font-medium text-slate-900 dark:text-white mb-6">Basic Information</h2>
-            
+
             <div className="space-y-4">
               <div>
                 <label htmlFor="name" className="form-label">VM Name</label>
@@ -226,7 +241,7 @@ export default function CreateVM() {
                   onChange={(e) => setVmParams(prev => ({ ...prev, name: e.target.value }))}
                 />
               </div>
-              
+
               <div>
                 <label htmlFor="description" className="form-label">Description</label>
                 <textarea
@@ -238,7 +253,7 @@ export default function CreateVM() {
                   onChange={(e) => setVmParams(prev => ({ ...prev, description: e.target.value }))}
                 ></textarea>
               </div>
-              
+
               <div>
                 <label htmlFor="hypervisor" className="form-label">Hypervisor</label>
                 <select
@@ -246,16 +261,17 @@ export default function CreateVM() {
                   className="form-select"
                   value={vmParams.hypervisorId}
                   onChange={(e) => setVmParams(prev => ({ ...prev, hypervisorId: e.target.value }))}
+                  disabled={isFetchingHypervisors}
                 >
-                  <option value="">Select a hypervisor</option>
-                  {mockHypervisors.map(h => (
+                  <option value="">{isFetchingHypervisors ? 'Loading...' : 'Select a connected hypervisor'}</option>
+                  {availableHypervisors.map(h => (
                     <option key={h.id} value={h.id}>
                       {h.name} ({h.type})
                     </option>
                   ))}
                 </select>
               </div>
-              
+
               <div>
                 <label htmlFor="tags" className="form-label">Tags</label>
                 <div className="flex space-x-2">
@@ -304,7 +320,7 @@ export default function CreateVM() {
             </div>
           </motion.div>
         )}
-        
+
         {/* Step 2: OS & Storage */}
         {currentStep === 2 && (
           <motion.div
@@ -314,34 +330,31 @@ export default function CreateVM() {
             className="p-6"
           >
             <h2 className="text-lg font-medium text-slate-900 dark:text-white mb-6">Operating System & Storage</h2>
-            
+
             <div className="space-y-6">
               <div>
                 <label className="form-label">Available Templates</label>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                  {isLoading ? (
+                  {isFetchingTemplates ? (
                     // Loading skeleton
                     Array.from({ length: 4 }).map((_, i) => (
                       <div key={i} className="animate-pulse">
                         <div className="h-32 bg-slate-200 dark:bg-slate-700 rounded-lg"></div>
                       </div>
                     ))
-                  ) : (
+                  ) : templates.length > 0 ? (
                     templates.map(template => (
                       <button
                         key={template.id}
                         type="button"
                         className={`p-4 border rounded-lg text-center hover:border-primary-500 dark:hover:border-primary-400 ${
-                          vmParams.specs.os === template.name
-                            ? 'border-primary-500 dark:border-primary-400 bg-primary-50 dark:bg-primary-900/20'
+                          vmParams.templateId === template.id // Check templateId
+                            ? 'border-primary-500 dark:border-primary-400 bg-primary-50 dark:bg-primary-900/20 ring-2 ring-primary-300'
                             : 'border-slate-200 dark:border-slate-700'
                         }`}
                         onClick={() => setVmParams(prev => ({
                           ...prev,
-                          specs: {
-                            ...prev.specs,
-                            os: template.name
-                          }
+                          templateId: template.id // Set templateId
                         }))}
                       >
                         <Server className="h-8 w-8 mx-auto mb-2 text-slate-500 dark:text-slate-400" />
@@ -356,10 +369,12 @@ export default function CreateVM() {
                         </div>
                       </button>
                     ))
+                  ) : (
+                    <p className="col-span-full text-slate-500 dark:text-slate-400 text-sm">No templates found or hypervisor not selected.</p>
                   )}
                 </div>
               </div>
-              
+
               <div>
                 <label htmlFor="disk" className="form-label">Disk Size (GB)</label>
                 <div className="flex items-center">
@@ -391,7 +406,7 @@ export default function CreateVM() {
             </div>
           </motion.div>
         )}
-        
+
         {/* Step 3: Resources */}
         {currentStep === 3 && (
           <motion.div
@@ -401,7 +416,7 @@ export default function CreateVM() {
             className="p-6"
           >
             <h2 className="text-lg font-medium text-slate-900 dark:text-white mb-6">Resources</h2>
-            
+
             <div className="space-y-6">
               <div>
                 <div className="flex items-center justify-between mb-2">
@@ -460,13 +475,13 @@ export default function CreateVM() {
                   <span>16 cores</span>
                 </div>
               </div>
-              
+
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <label htmlFor="memory" className="form-label mb-0">Memory (MB)</label>
                   <div className="text-slate-700 dark:text-slate-300">
-                    {vmParams.specs.memory >= 1024 
-                      ? `${(vmParams.specs.memory / 1024).toFixed(1)} GB` 
+                    {vmParams.specs.memory >= 1024
+                      ? `${(vmParams.specs.memory / 1024).toFixed(1)} GB`
                       : `${vmParams.specs.memory} MB`}
                   </div>
                 </div>
@@ -494,7 +509,7 @@ export default function CreateVM() {
                   <span>32 GB</span>
                 </div>
               </div>
-              
+
               <div className="pt-4 border-t border-slate-200 dark:border-slate-700">
                 <div className="flex items-center">
                   <input
@@ -509,7 +524,7 @@ export default function CreateVM() {
                   </label>
                 </div>
               </div>
-              
+
               <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg border border-slate-200 dark:border-slate-700">
                 <h3 className="text-sm font-medium text-slate-900 dark:text-white mb-2">Summary</h3>
                 <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-sm">
@@ -519,13 +534,13 @@ export default function CreateVM() {
                   </div>
                   <div>
                     <dt className="text-slate-500 dark:text-slate-400">Operating System</dt>
-                    <dd className="text-slate-900 dark:text-white mt-0.5">{vmParams.specs.os || '-'}</dd>
+                    <dd className="text-slate-900 dark:text-white mt-0.5">{templates.find(t => t.id === vmParams.templateId)?.name || '-'}</dd>
                   </div>
                   <div>
                     <dt className="text-slate-500 dark:text-slate-400">Hypervisor</dt>
                     <dd className="text-slate-900 dark:text-white mt-0.5">
-                      {vmParams.hypervisorId 
-                        ? mockHypervisors.find(h => h.id === vmParams.hypervisorId)?.name 
+                      {vmParams.hypervisorId
+                        ? availableHypervisors.find(h => h.id === vmParams.hypervisorId)?.name
                         : '-'
                       }
                     </dd>
@@ -537,8 +552,8 @@ export default function CreateVM() {
                   <div>
                     <dt className="text-slate-500 dark:text-slate-400">Memory</dt>
                     <dd className="text-slate-900 dark:text-white mt-0.5">
-                      {vmParams.specs.memory >= 1024 
-                        ? `${(vmParams.specs.memory / 1024).toFixed(1)} GB` 
+                      {vmParams.specs.memory >= 1024
+                        ? `${(vmParams.specs.memory / 1024).toFixed(1)} GB`
                         : `${vmParams.specs.memory} MB`}
                     </dd>
                   </div>
@@ -551,7 +566,7 @@ export default function CreateVM() {
             </div>
           </motion.div>
         )}
-        
+
         {/* Navigation */}
         <div className="px-6 py-4 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-200 dark:border-slate-700 flex justify-between">
           <button

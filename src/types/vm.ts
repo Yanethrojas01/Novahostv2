@@ -70,6 +70,7 @@ export interface VMCreateParams {
   nodeName?: string;
   specs: VMSpecs;
   start?: boolean;
+  templateId?: string;
   tags?: string[];
   planId?: string;
 }
