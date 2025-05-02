@@ -132,6 +132,10 @@ CREATE TABLE users (
 CREATE TRIGGER update_roles_updated_at BEFORE UPDATE ON roles FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
+-- Insert default roles (if needed)
+INSERT INTO roles (name, description) VALUES ('admin', 'Administrator role with full access') ON CONFLICT (name) DO NOTHING;
+INSERT INTO roles (name, description) VALUES ('user', 'Standard user role') ON CONFLICT (name) DO NOTHING;
+
 
 -- Enable RLS
 ALTER TABLE hypervisors ENABLE ROW LEVEL SECURITY;
@@ -163,6 +167,16 @@ CREATE POLICY "Allow postgres user to manage hypervisors"
   TO postgres -- Grant specifically to the 'postgres' user
   USING (true); -- Allow all rows for this user
 
+-- Insert default admin user (Run AFTER roles are inserted)
+-- Replace 'YOUR_BCRYPT_HASH_HERE' with the actual hash generated for your default password
+INSERT INTO users (username, email, password_hash, role_id, is_active)
+VALUES (
+  'admin',
+  'admin@example.com',
+  '$2b$10$YOUR_BCRYPT_HASH_HERE', -- <-- PUT YOUR GENERATED HASH HERE
+  (SELECT id FROM roles WHERE name = 'admin'),
+  true
+) ON CONFLICT (email) DO NOTHING; -- Avoid error if user already exists
 -- Force RLS for new tables
 ALTER TABLE roles FORCE ROW LEVEL SECURITY;
 ALTER TABLE users FORCE ROW LEVEL SECURITY;

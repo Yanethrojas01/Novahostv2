@@ -4,38 +4,62 @@ import { Server as Servers, EyeOff, Eye } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { motion } from 'framer-motion';
 
+const API_BASE_URL = 'http://localhost:3001/api'; // Define API base URL
+
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  
-  const { login } = useAuth();
+
+  const { login } = useAuth(); // Keep using the context's login function to store state
   const navigate = useNavigate();
-  
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!email || !password) {
       setError('Please enter both email and password');
       return;
     }
-    
+
     setError('');
     setIsLoading(true);
-    
+
     try {
-      await login(email, password);
+      // Call the backend API instead of the mock context function directly
+      const response = await fetch(`${API_BASE_URL}/auth/login`, { // Use your API base URL
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Login failed');
+      }
+
+      // If login is successful, call the context's login function with the received data
+      // The context function should handle storing the token and user info
+      login(data.accessToken, data.user); // Pass token and user info to context
+
       navigate('/');
-    } catch (error) {
-      console.error('Login error:', error);
-      setError('Invalid email or password');
+    } catch (err) { // Catch specific error type if possible
+      console.error('Login error:', err);
+      if (err instanceof Error) {
+        setError(err.message || 'Invalid email or password'); // Display error from backend or generic one
+      } else {
+        setError('An unexpected error occurred'); // Fallback for unknown error types
+      }
     } finally {
       setIsLoading(false);
     }
   };
-  
+
   return (
     <div className="min-h-screen flex flex-col justify-center py-12 sm:px-6 lg:px-8 bg-slate-100 dark:bg-slate-900">
       <motion.div
@@ -70,7 +94,7 @@ export default function Login() {
                 {error}
               </div>
             )}
-            
+
             <div>
               <label htmlFor="email" className="form-label">
                 Email address
