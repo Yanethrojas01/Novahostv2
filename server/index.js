@@ -61,6 +61,57 @@ const requireAdmin = (req, res, next) => {
   next();
 };
 
+// --- Authentication Routes ---
+app.post('/api/auth/login', async (req, res) => {
+  console.log('--- HIT /api/auth/login ---'); // <-- Add this log
+  const { email, password } = req.body;
+  console.log(`Login attempt for email: ${email}`);
+
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required' });
+  }
+
+  try {
+    // Find user by email, join with roles table to get role name
+    const userResult = await pool.query(
+      `SELECT u.id, u.email, u.password_hash, u.is_active, r.name as role_name
+       FROM users u
+       JOIN roles r ON u.role_id = r.id
+       WHERE u.email = $1`,
+      [email]
+    );
+
+    const user = userResult.rows[0];
+
+    if (!user) {
+      console.log(`Login failed: User not found for email ${email}`);
+      return res.status(401).json({ error: 'Invalid email or password' }); // Generic error
+    }
+
+    if (!user.is_active) {
+      console.log(`Login failed: User ${email} is inactive`);
+      return res.status(403).json({ error: 'Account is inactive' });
+    }
+
+    // Compare provided password with the stored hash
+    const match = await bcrypt.compare(password, user.password_hash);
+
+    if (!match) {
+      console.log(`Login failed: Incorrect password for email ${email}`);
+      return res.status(401).json({ error: 'Invalid email or password' }); // Generic error
+    }
+
+    // Generate JWT
+    const accessToken = jwt.sign({ userId: user.id, email: user.email, role: user.role_name }, process.env.JWT_SECRET, { expiresIn: '1h' }); // Add role to payload
+    console.log(`Login successful for ${email}. Role: ${user.role_name}`);
+    res.json({ accessToken, user: { id: user.id, email: user.email, role: user.role_name } }); // Send token and basic user info
+
+  } catch (error) {
+    console.error('Login process error:', error);
+    res.status(500).json({ error: 'Internal server error during login' });
+  }
+});
+
 // --- User Management Routes (Admin Only) ---
 
 // POST /api/users - Create a new user
