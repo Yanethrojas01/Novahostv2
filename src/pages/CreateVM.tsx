@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Server, HardDrive, Cpu, MemoryStick as Memory } from 'lucide-react';
+import { ArrowLeft, Server, Cpu, MemoryStick as Memory } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { VMCreateParams, VMTemplate } from '../types/vm'; // Use VMTemplate from vm.ts
 import { Hypervisor } from '../types/hypervisor'; // Import Hypervisor type
@@ -359,9 +359,9 @@ export default function CreateVM() {
                       >
                         <Server className="h-8 w-8 mx-auto mb-2 text-slate-500 dark:text-slate-400" />
                         <div className="text-sm font-medium">{template.name}</div>
-                        {template.version && (
+                        {template.osVersion && (
                           <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                            {template.version}
+                            {template.osVersion}
                           </div>
                         )}
                         <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">

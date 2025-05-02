@@ -38,67 +38,6 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-// Proxmox API routes
-app.get('/api/proxmox/nodes', authenticate, (req, res) => {
-  // This would make a request to the Proxmox API
-  res.json([
-    { id: 'pve-1', name: 'pve-node1', status: 'online' },
-    { id: 'pve-2', name: 'pve-node2', status: 'online' },
-    { id: 'pve-3', name: 'pve-node3', status: 'maintenance' },
-  ]);
-});
-
-app.get('/api/proxmox/templates', authenticate, (req, res) => {
-  // This would fetch templates from Proxmox storage
-  res.json([
-    {
-      id: 'local:iso/ubuntu-22.04-server-amd64.iso',
-      name: 'Ubuntu 22.04 LTS',
-      description: 'Ubuntu Server 22.04 LTS (Jammy Jellyfish)',
-      size: 1.2 * 1024 * 1024 * 1024, // 1.2GB
-      path: 'local:iso/ubuntu-22.04-server-amd64.iso',
-      type: 'iso',
-      version: '22.04 LTS',
-      storage: 'local'
-    },
-    {
-      id: 'local:vztmpl/debian-11-standard_11.3-1_amd64.tar.gz',
-      name: 'Debian 11',
-      description: 'Debian 11 (Bullseye) Standard',
-      size: 0.8 * 1024 * 1024 * 1024, // 800MB
-      path: 'local:vztmpl/debian-11-standard_11.3-1_amd64.tar.gz',
-      type: 'template',
-      version: '11',
-      storage: 'local'
-    }
-  ]);
-});
-
-app.get('/api/vsphere/templates', authenticate, (req, res) => {
-  // This would fetch templates from vSphere template library
-  res.json([
-    {
-      id: 'vm-template-101',
-      name: 'Windows Server 2022',
-      description: 'Windows Server 2022 Standard',
-      size: 20 * 1024 * 1024 * 1024, // 20GB
-      path: '[datastore1] templates/windows-2022.vmdk',
-      type: 'template',
-      version: '2022',
-      storage: 'datastore1'
-    },
-    {
-      id: 'vm-template-102',
-      name: 'Ubuntu 22.04',
-      description: 'Ubuntu Server 22.04 LTS',
-      size: 10 * 1024 * 1024 * 1024, // 10GB
-      path: '[datastore1] templates/ubuntu-22.04.vmdk',
-      type: 'template',
-      version: '22.04 LTS',
-      storage: 'datastore1'
-    }
-  ]);
-});
 
 app.get('/api/proxmox/vms', authenticate, (req, res) => {
   // This would make a request to the Proxmox API
@@ -554,6 +493,140 @@ app.get('/api/vms/:id', authenticate, async (req, res) => {
 
 // --- End VM Listing API ---
 
+// Helper function to get authenticated proxmox client
+async function getProxmoxClient(hypervisorId) {
+  const { rows: [hypervisor] } = await pool.query(
+    `SELECT id, type, host, username, api_token, token_name, status 
+     FROM hypervisors WHERE id = $1`,
+    [hypervisorId]
+  );
+
+  if (!hypervisor) throw new Error('Hypervisor not found');
+  if (hypervisor.status !== 'connected') throw new Error('Hypervisor not connected');
+  if (hypervisor.type !== 'proxmox') throw new Error('Not a Proxmox hypervisor');
+
+  const [dbHost, dbPortStr] = hypervisor.host.split(':');
+  const port = dbPortStr ? parseInt(dbPortStr, 10) : 8006;
+  const cleanHost = dbHost;
+
+  const proxmoxConfig = {
+    host: cleanHost, port: port, username: hypervisor.username,
+    tokenID: `${hypervisor.username}!${hypervisor.token_name}`,
+    tokenSecret: hypervisor.api_token, timeout: 10000, rejectUnauthorized: false
+  };
+  return proxmoxApi(proxmoxConfig);
+}
+
+// GET /api/hypervisors/:id/nodes
+app.get('/api/hypervisors/:id/nodes', authenticate, async (req, res) => {
+  const { id } = req.params;
+  console.log(`--- GET /api/hypervisors/${id}/nodes ---`);
+  try {
+    const proxmox = await getProxmoxClient(id);
+    const nodes = await proxmox.nodes.$get(); // Fetch nodes from Proxmox
+
+    // --- Map Proxmox node data to NodeResource[] ---
+    // This requires fetching more details per node (status, cpu, mem)
+    // Example structure (needs actual API calls for details):
+    const formattedNodes = await Promise.all(nodes.map(async (node) => {
+       // Fetch detailed status for each node (e.g., using nodes.<nodeName>.status.$get())
+       // This is a simplified example; you'll need more calls for CPU/Mem usage
+       const nodeStatus = await proxmox.nodes.$(node.node).status.$get();
+       return {
+         id: node.node,
+         name: node.node,
+         status: node.status, // 'online', 'offline'
+         cpu: { cores: nodeStatus.cpuinfo?.cores || 0, usage: nodeStatus.cpu || 0 },
+         memory: {
+           total: nodeStatus.memory?.total || 0,
+           used: nodeStatus.memory?.used || 0,
+           free: nodeStatus.memory?.free || 0,
+         },
+         storage: [], // Fetching storage per node would be another call
+       };
+    }));
+    // --- End Mapping ---
+
+    res.json(formattedNodes);
+  } catch (error) {
+    console.error(`Error fetching nodes for hypervisor ${id}:`, error);
+    const errorDetails = getProxmoxError(error);
+    res.status(errorDetails.code || 500).json({ error: 'Failed to retrieve nodes', details: errorDetails.message });
+  }
+});
+
+// GET /api/hypervisors/:id/storage
+app.get('/api/hypervisors/:id/storage', authenticate, async (req, res) => {
+  const { id } = req.params;
+  console.log(`--- GET /api/hypervisors/${id}/storage ---`);
+  try {
+    const proxmox = await getProxmoxClient(id);
+    // Fetch storage across the cluster or per node
+    // Example: Get storage defined at the cluster level
+    const storageResources = await proxmox.storage.$get();
+
+    // --- Map Proxmox storage data to StorageResource[] ---
+    const formattedStorage = storageResources.map(storage => ({
+      id: storage.storage, // The storage ID/name
+      name: storage.storage,
+      type: storage.type, // e.g., 'lvm', 'nfs', 'dir'
+      size: storage.total || 0,
+      used: storage.used || 0,
+      available: storage.avail || 0,
+      path: storage.path, // May not always be present
+    }));
+    // --- End Mapping ---
+
+    res.json(formattedStorage);
+  } catch (error) {
+    console.error(`Error fetching storage for hypervisor ${id}:`, error);
+    const errorDetails = getProxmoxError(error);
+    res.status(errorDetails.code || 500).json({ error: 'Failed to retrieve storage', details: errorDetails.message });
+  }
+});
+
+// GET /api/hypervisors/:id/templates
+app.get('/api/hypervisors/:id/templates', authenticate, async (req, res) => {
+  const { id } = req.params;
+  console.log(`--- GET /api/hypervisors/${id}/templates ---`);
+  try {
+    const proxmox = await getProxmoxClient(id);
+    let allTemplates = [];
+
+    // Need to iterate through nodes and their storage to find templates/isos
+    const nodes = await proxmox.nodes.$get();
+    for (const node of nodes) {
+      const storageList = await proxmox.nodes.$(node.node).storage.$get();
+      for (const storage of storageList) {
+        // Only check storage types that can contain templates/ISOs
+        if (storage.content.includes('iso') || storage.content.includes('vztmpl')) {
+          const content = await proxmox.nodes.$(node.node).storage.$(storage.storage).content.$get();
+          const templates = content
+            .filter(item => item.content === 'iso' || item.content === 'vztmpl')
+            .map(item => ({
+              id: item.volid, // e.g., local:iso/ubuntu.iso
+              name: item.volid.split('/')[1] || item.volid, // Basic name extraction
+              description: item.volid, // Use volid as description for now
+              size: item.size,
+              path: item.volid,
+              type: item.content === 'iso' ? 'iso' : 'template',
+              version: item.format, // e.g., 'raw', 'qcow2' - might need better version logic
+              storage: storage.storage,
+            }));
+          allTemplates = allTemplates.concat(templates);
+        }
+      }
+    }
+
+    res.json(allTemplates);
+  } catch (error) {
+    console.error(`Error fetching templates for hypervisor ${id}:`, error);
+    const errorDetails = getProxmoxError(error);
+    res.status(errorDetails.code || 500).json({ error: 'Failed to retrieve templates', details: errorDetails.message });
+  }
+});
+
+
 // --- Hypervisor CRUD API Routes ---
 
 // GET /api/hypervisors - List all hypervisors
@@ -888,9 +961,6 @@ app.delete('/api/hypervisors/:id', authenticate, async (req, res) => {
   }
 });
 
-// --- End Hypervisor CRUD API Routes ---
-// --- Hypervisor Connection Logic ---
-
 // POST /api/hypervisors/:id/connect - Versión Corregida
 // Connect to hypervisor
 app.post('/api/hypervisors/:id/connect', authenticate, async (req, res) => {
@@ -994,7 +1064,6 @@ console.log('Has VM.Allocate privilege:', hasRequiredPrivilege); // Log para ver
   }
 });
 
-// Error handler
 
 
 

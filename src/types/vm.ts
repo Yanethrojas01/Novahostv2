@@ -59,6 +59,7 @@ export interface VMTemplate {
   description?: string;
   hypervisorType: HypervisorType;
   os: string;
+  size: number; // In GB
   osVersion?: string;
   specs: VMSpecs;
 }
