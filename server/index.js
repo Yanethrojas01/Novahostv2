@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import pg from 'pg';
+import https from 'https'; // Needed for custom agent
 import dotenv from 'dotenv';
 import Proxmox, { proxmoxApi } from 'proxmox-api'; // Import the proxmox library
 
@@ -705,6 +706,16 @@ app.post('/api/hypervisors', authenticate, async (req, res) => {
           //console.log('Invalid host format. Use http(s)://hostname[:port]');
       }
   }
+  // Validaciones específicas para vSphere
+  else if (type === 'vsphere') {
+      if (!password) {
+          validationErrors.push('Password is required for vSphere connection');
+      }
+      // Podríamos añadir una validación de formato de host más simple si es necesario
+      // if (!/^[\w.-]+$/.test(host) && !/^https?:\/\/[\w.-]+$/.test(host)) {
+      //     validationErrors.push('Invalid host format for vSphere. Use hostname or https://hostname');
+      // }
+  }
 
   if (validationErrors.length > 0) {
     //console.log('Validation errors:', validationErrors);  
@@ -794,8 +805,94 @@ app.post('/api/hypervisors', authenticate, async (req, res) => {
         }
 
       } else if (type === 'vsphere') {
-          // Implementación para vSphere...
-          status = 'unsupported';
+          // --- Lógica de Conexión a vSphere (REST API) ---
+          console.log(`Attempting vSphere REST API connection to: ${host} with user: ${username}`);
+          // Ensure host starts with https://, default port is 443
+          const vsphereApiUrl = host.startsWith('http') ? host.replace(/^http:/, 'https:') : `https://${host}`;
+          cleanHost = new URL(vsphereApiUrl).hostname; // Update cleanHost for DB saving
+
+          // Agent to allow self-signed certificates (USE WITH CAUTION IN PRODUCTION)
+          const agent = new https.Agent({
+            rejectUnauthorized: process.env.NODE_ENV === 'production' // Only allow in dev/test
+          });
+
+          let sessionId = null;
+
+          try {
+              // 1. Authenticate via REST API to get session token
+              console.log(`Authenticating to ${vsphereApiUrl}/rest/com/vmware/cis/session`);
+              const authResponse = await fetch(`${vsphereApiUrl}/rest/com/vmware/cis/session`, {
+                  method: 'POST',
+                  headers: {
+                      'Authorization': `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`,
+                      'Accept': 'application/json'
+                  },
+                  agent: agent // Use the custom agent
+              });
+              console.log("authrespons",authResponse)
+
+              if (!authResponse.ok) {
+                  let errorBody = `Authentication failed (${authResponse.status})`;
+                  try {
+                      const errorJson = await authResponse.json();
+                      errorBody = errorJson.value?.messages?.[0]?.default_message || errorBody;
+                  } catch (parseError) { /* Ignore if body isn't JSON */ }
+                  console.error('vSphere authentication error:', errorBody);
+                  throw new Error(errorBody);
+              }
+
+              const sessionData = await authResponse.json();
+              sessionId = sessionData.value; // The session token
+
+              if (!sessionId) {
+                  console.error('vSphere session ID not found in response:', sessionData);
+                  throw new Error('Session ID not received from vSphere');
+              }
+              console.log(`vSphere session obtained: ${sessionId.substring(0, 10)}...`);
+
+              // 2. Test the connection by making a simple API call (e.g., list hosts)
+              console.log(`Testing connection by listing hosts: ${vsphereApiUrl}/rest/vcenter/host`);
+              const hostListResponse = await fetch(`${vsphereApiUrl}/rest/vcenter/host`, {
+                  method: 'GET',
+                  headers: {
+                      'vmware-api-session-id': sessionId,
+                      'Accept': 'application/json'
+                  },
+                  agent: agent // Use the custom agent
+              });
+
+              if (!hostListResponse.ok) {
+                  throw new Error(`Failed to list vSphere hosts (${hostListResponse.status}) after login`);
+              }
+
+              const hostListData = await hostListResponse.json();
+              console.log(`Successfully listed ${hostListData.value?.length || 0} hosts from vSphere.`);
+
+              // If both steps succeeded:
+              status = 'connected';
+              lastSync = new Date();
+              console.log(`Successfully connected to vSphere REST API at ${vsphereApiUrl}`);
+
+          } catch (vsphereError) {
+              console.error(`vSphere REST API connection failed for ${vsphereApiUrl}:`, vsphereError.message);
+              status = 'error'; // Mantener 'error' si la conexión falla
+              // Podrías lanzar el error para que sea capturado por el catch general
+              // throw vsphereError; // Descomenta si quieres que el error detenga la inserción
+          } finally {
+              // 3. Logout: Always try to delete the session
+              if (sessionId) {
+                  try {
+                      console.log(`Logging out vSphere session ${sessionId.substring(0, 10)}...`);
+                      await fetch(`${vsphereApiUrl}/rest/com/vmware/cis/session`, {
+                          method: 'DELETE',
+                          headers: { 'vmware-api-session-id': sessionId },
+                          agent: agent // Use the custom agent
+                      });
+                  } catch (logoutError) {
+                      console.warn(`Failed to logout vSphere session ${sessionId.substring(0, 10)}...:`, logoutError.message);
+                  }
+              }
+          }
       }
 
       // Insertar en base de datos
@@ -809,7 +906,7 @@ app.post('/api/hypervisors', authenticate, async (req, res) => {
               name,
               type,
               // Corrección: Guardar siempre con el puerto estándar de Proxmox (8006)
-              `${cleanHost}:8006`,
+              type === 'proxmox' ? `${cleanHost}:8006` : cleanHost, // Guardar solo hostname para vSphere
               username,
               apiToken || null,
               tokenName || null,
@@ -836,7 +933,7 @@ app.post('/api/hypervisors', authenticate, async (req, res) => {
       };
 
       // Manejar errores de la API de Proxmox
-      if (error.response) {
+      if (type === 'proxmox' && error.response) {
           errorInfo.code = error.response.status;
           errorInfo.message = error.response.data?.errors?.join(', ') || error.message;
           
@@ -850,12 +947,17 @@ app.post('/api/hypervisors', authenticate, async (req, res) => {
                   ? 'Install valid SSL certificate' 
                   : 'Set NODE_ENV=development to allow self-signed certs';
           }
-      } 
+      }
       // Errores de conexión
       else if (error.code === 'ECONNREFUSED') {
           errorInfo.code = 503;
           errorInfo.message = 'Connection refused';
-          errorInfo.suggestion = 'Check Proxmox service and firewall rules';
+          errorInfo.suggestion = `Check ${type} service and firewall rules`;
+      }
+      // Otros errores (incluidos los lanzados manualmente desde vSphere try/catch)
+      else {
+          errorInfo.message = error.message || 'An unknown error occurred';
+          // Podrías intentar extraer un código si el error lo tiene
       }
 
       console.error(`Hypervisor creation failed: ${errorInfo.message}`, {
