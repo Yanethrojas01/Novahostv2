@@ -1,17 +1,19 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Bell, Moon, Sun, User, Shield, Key, Globe, Database, Server, Plus, Trash2 } from 'lucide-react';
+import {  Moon, Sun, User, Shield, Key, Globe, Database, Server, Plus, Trash2 } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
-import { supabase } from '../lib/supabase';
+// import { supabase } from '../lib/supabase'; // No longer needed
+import { toast } from 'react-hot-toast'; // Import toast for feedback
 import type { VMPlan } from '../types/vm';
 
 export default function Settings() {
+  const API_BASE_URL = 'http://localhost:3001/api'; // Define API base URL
   const { theme, toggleTheme } = useTheme();
-  const [emailNotifications, setEmailNotifications] = useState(true);
-  const [slackNotifications, setSlackNotifications] = useState(false);
-  const [autoBackups, setAutoBackups] = useState(true);
-  const [apiKey, setApiKey] = useState('');
-  const [isGeneratingKey, setIsGeneratingKey] = useState(false);
+  // const [emailNotifications, setEmailNotifications] = useState(true);
+  // const [slackNotifications, setSlackNotifications] = useState(false);
+  // const [autoBackups, setAutoBackups] = useState(true);
+  // const [apiKey, setApiKey] = useState('');
+  // const [isGeneratingKey, setIsGeneratingKey] = useState(false);
   const [plans, setPlans] = useState<VMPlan[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [newPlan, setNewPlan] = useState<Partial<VMPlan>>({
@@ -31,36 +33,46 @@ export default function Settings() {
 
   const fetchPlans = async () => {
     try {
-      const { data, error } = await supabase
-        .from('vm_plans')
-        .select('*')
-        .order('created_at', { ascending: true });
-
-      if (error) throw error;
+      setIsLoading(true);
+      const response = await fetch(`${API_BASE_URL}/vm-plans`, {
+        headers: {
+          'Authorization': 'Bearer MOCK_TOKEN', // Replace with actual token logic
+        },
+      });
+      if (!response.ok) {
+        throw new Error('Failed to fetch plans');
+      }
+      const data = await response.json();
       setPlans(data || []);
     } catch (error) {
       console.error('Error fetching plans:', error);
+      toast.error('Could not load VM plans.');
     } finally {
+      // Make sure isLoading is set to false even if there's an error
       setIsLoading(false);
     }
   };
 
   const handleAddPlan = async () => {
     try {
-      const { data, error } = await supabase
-        .from('vm_plans')
-        .insert([{
+      
+      const response = await fetch(`${API_BASE_URL}/vm-plans`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer MOCK_TOKEN', // Replace with actual token logic
+        },
+        body: JSON.stringify({
           name: newPlan.name,
           description: newPlan.description,
           specs: newPlan.specs,
           isActive: true
-        }])
-        .select()
-        .single();
+        }),
+      });
 
-      if (error) throw error;
-
-      setPlans([...plans, data]);
+      if (!response.ok) throw new Error('Failed to add plan');
+      const addedPlan = await response.json();
+      setPlans([...plans, addedPlan]);
       setNewPlan({
         name: '',
         description: '',
@@ -71,57 +83,74 @@ export default function Settings() {
         },
         isActive: true
       });
+      toast.success('VM Plan added successfully!');
     } catch (error) {
       console.error('Error adding plan:', error);
+      toast.error('Failed to add VM plan.');
     }
   };
 
   const handleDeletePlan = async (id: string) => {
     try {
-      const { error } = await supabase
-        .from('vm_plans')
-        .delete()
-        .eq('id', id);
+      const response = await fetch(`${API_BASE_URL}/vm-plans/${id}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': 'Bearer MOCK_TOKEN', // Replace with actual token logic
+        },
+      });
 
-      if (error) throw error;
+      if (!response.ok) throw new Error('Failed to delete plan');
 
+      // Check for 204 No Content status
+      if (response.status === 204) {
       setPlans(plans.filter(plan => plan.id !== id));
+        toast.success('VM Plan deleted.');
+      } else {
+        // Handle unexpected successful responses if needed
+        const data = await response.json(); // Or handle as text if no body expected
+        console.warn('Unexpected response status after delete:', response.status, data);
+        toast.error('Plan deleted, but received unexpected server response.');
+      }
     } catch (error) {
       console.error('Error deleting plan:', error);
+      toast.error('Failed to delete VM plan.');
     }
   };
 
   const handleTogglePlan = async (id: string, isActive: boolean) => {
     try {
-      const { error } = await supabase
-        .from('vm_plans')
-        .update({ isActive })
-        .eq('id', id);
-
-      if (error) throw error;
-
-      setPlans(plans.map(plan => 
-        plan.id === id ? { ...plan, isActive } : plan
-      ));
+      const response = await fetch(`${API_BASE_URL}/vm-plans/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer MOCK_TOKEN', // Replace with actual token logic
+        },
+        body: JSON.stringify({ isActive }),
+      });
+      if (!response.ok) throw new Error('Failed to update plan status');
+      const updatedPlan = await response.json();
+      setPlans(plans.map(plan => (plan.id === id ? updatedPlan : plan)));
+      toast.success(`Plan ${isActive ? 'activated' : 'deactivated'}.`);
     } catch (error) {
       console.error('Error updating plan:', error);
+      toast.error('Failed to update plan status.');
     }
   };
   
-  const handleGenerateApiKey = () => {
-    setIsGeneratingKey(true);
-    setTimeout(() => {
-      setApiKey('vmf_' + Math.random().toString(36).substring(2, 15));
-      setIsGeneratingKey(false);
-    }, 1000);
-  };
+  // const handleGenerateApiKey = () => {
+  //   setIsGeneratingKey(true);
+  //   setTimeout(() => {
+  //     setApiKey('vmf_' + Math.random().toString(36).substring(2, 15));
+  //     setIsGeneratingKey(false);
+  //   }, 1000);
+  // };
   
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Settings</h1>
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Configuración</h1>
         <p className="text-slate-500 dark:text-slate-400 mt-1">
-          Manage your account and application preferences
+        Gestione su cuenta y sus preferencias de aplicación
         </p>
       </div>
       
@@ -141,10 +170,10 @@ export default function Settings() {
             <div className="space-y-6">
               {/* Add New Plan Form */}
               <div className="border-b border-slate-200 dark:border-slate-700 pb-6">
-                <h3 className="text-sm font-medium text-slate-900 dark:text-white mb-4">Add New Plan</h3>
+                <h3 className="text-sm font-medium text-slate-900 dark:text-white mb-4">Agregar Nuevo Plan</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="form-label">Plan Name</label>
+                    <label className="form-label">Nombre del Plan</label>
                     <input
                       type="text"
                       className="form-input"
@@ -154,7 +183,7 @@ export default function Settings() {
                     />
                   </div>
                   <div>
-                    <label className="form-label">Description</label>
+                    <label className="form-label">Descripción</label>
                     <input
                       type="text"
                       className="form-input"
@@ -178,7 +207,7 @@ export default function Settings() {
                     />
                   </div>
                   <div>
-                    <label className="form-label">Memory (MB)</label>
+                    <label className="form-label">Memoria (MB)</label>
                     <input
                       type="number"
                       className="form-input"
@@ -192,7 +221,7 @@ export default function Settings() {
                     />
                   </div>
                   <div>
-                    <label className="form-label">Disk (GB)</label>
+                    <label className="form-label">Disco (GB)</label>
                     <input
                       type="number"
                       className="form-input"
@@ -211,7 +240,7 @@ export default function Settings() {
                       disabled={!newPlan.name || !newPlan.description}
                     >
                       <Plus className="h-4 w-4 mr-2" />
-                      Add Plan
+                      Agregar Plan
                     </button>
                   </div>
                 </div>
@@ -219,7 +248,7 @@ export default function Settings() {
 
               {/* Existing Plans */}
               <div>
-                <h3 className="text-sm font-medium text-slate-900 dark:text-white mb-4">Existing Plans</h3>
+                <h3 className="text-sm font-medium text-slate-900 dark:text-white mb-4">Planes Registrados</h3>
                 <div className="space-y-4">
                   {isLoading ? (
                     <div className="animate-pulse space-y-4">
@@ -239,7 +268,7 @@ export default function Settings() {
                           <div className="mt-1 flex items-center space-x-4 text-xs text-slate-500 dark:text-slate-400">
                             <span>{plan.specs.cpu} CPU</span>
                             <span>{plan.specs.memory >= 1024 ? `${plan.specs.memory / 1024}GB` : `${plan.specs.memory}MB`} RAM</span>
-                            <span>{plan.specs.disk}GB Storage</span>
+                            <span>{plan.specs.disk}GB Almacenamiento</span>
                           </div>
                         </div>
                         <div className="flex items-center space-x-2">
@@ -252,7 +281,7 @@ export default function Settings() {
                               onChange={(e) => handleTogglePlan(plan.id, e.target.checked)}
                             />
                             <label htmlFor={`active-${plan.id}`} className="ml-2 text-sm text-slate-700 dark:text-slate-300">
-                              Active
+                              Activo
                             </label>
                           </div>
                           <button
@@ -266,7 +295,7 @@ export default function Settings() {
                     ))
                   ) : (
                     <div className="text-center py-6 text-slate-500 dark:text-slate-400">
-                      No plans defined yet
+                      No hay planes definidos
                     </div>
                   )}
                 </div>
@@ -284,12 +313,12 @@ export default function Settings() {
           <div className="p-6">
             <h2 className="text-lg font-medium text-slate-900 dark:text-white mb-4 flex items-center">
               <User className="h-5 w-5 mr-2 text-primary-600 dark:text-primary-400" />
-              Account Settings
+              Ajustes de la Cuenta
             </h2>
             
             <div className="space-y-4">
               <div>
-                <label className="form-label">Email Address</label>
+                <label className="form-label">Correo</label>
                 <input
                   type="email"
                   className="form-input"
@@ -299,7 +328,7 @@ export default function Settings() {
               </div>
               
               <div>
-                <label className="form-label">Full Name</label>
+                <label className="form-label">Nombre Completo</label>
                 <input
                   type="text"
                   className="form-input"
@@ -310,7 +339,7 @@ export default function Settings() {
               
               <div>
                 <button className="btn btn-primary">
-                  Update Profile
+                  Actualizar Perfil
                 </button>
               </div>
             </div>
@@ -327,12 +356,12 @@ export default function Settings() {
           <div className="p-6">
             <h2 className="text-lg font-medium text-slate-900 dark:text-white mb-4 flex items-center">
               <Shield className="h-5 w-5 mr-2 text-primary-600 dark:text-primary-400" />
-              Security
+              Seguridad
             </h2>
             
             <div className="space-y-4">
               <div>
-                <label className="form-label">Current Password</label>
+                <label className="form-label">Actual Password</label>
                 <input
                   type="password"
                   className="form-input"
@@ -341,7 +370,7 @@ export default function Settings() {
               </div>
               
               <div>
-                <label className="form-label">New Password</label>
+                <label className="form-label">Nueva Password</label>
                 <input
                   type="password"
                   className="form-input"
@@ -350,7 +379,7 @@ export default function Settings() {
               </div>
               
               <div>
-                <label className="form-label">Confirm New Password</label>
+                <label className="form-label">Confirma nueva Password</label>
                 <input
                   type="password"
                   className="form-input"
@@ -360,7 +389,7 @@ export default function Settings() {
               
               <div>
                 <button className="btn btn-primary">
-                  Change Password
+                  Cambiar Password
                 </button>
               </div>
             </div>
@@ -368,7 +397,7 @@ export default function Settings() {
         </motion.section>
         
         {/* API Settings */}
-        <motion.section
+        {/* <motion.section
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
@@ -406,7 +435,7 @@ export default function Settings() {
               </div>
             </div>
           </div>
-        </motion.section>
+        </motion.section> */}
         
         {/* Preferences */}
         <motion.section
@@ -418,7 +447,7 @@ export default function Settings() {
           <div className="p-6">
             <h2 className="text-lg font-medium text-slate-900 dark:text-white mb-4 flex items-center">
               <Globe className="h-5 w-5 mr-2 text-primary-600 dark:text-primary-400" />
-              Preferences
+              Preferencias
             </h2>
             
             <div className="space-y-6">
@@ -429,7 +458,7 @@ export default function Settings() {
                   ) : (
                     <Sun className="h-5 w-5 text-slate-400" />
                   )}
-                  <span className="text-slate-700 dark:text-slate-300">Theme</span>
+                  <span className="text-slate-700 dark:text-slate-300">Tema</span>
                 </div>
                 <button
                   onClick={toggleTheme}
@@ -444,7 +473,7 @@ export default function Settings() {
                 </button>
               </div>
               
-              <div className="space-y-4">
+              {/* <div className="space-y-4">
                 <div className="flex items-center">
                   <input
                     type="checkbox"
@@ -470,13 +499,14 @@ export default function Settings() {
                     Slack Notifications
                   </label>
                 </div>
-              </div>
+              </div> */}
+
             </div>
           </div>
         </motion.section>
         
         {/* Backup Settings */}
-        <motion.section
+        {/* <motion.section
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4 }}
@@ -522,7 +552,7 @@ export default function Settings() {
               </div>
             </div>
           </div>
-        </motion.section>
+        </motion.section> */}
       </div>
     </div>
   );

@@ -1064,7 +1064,93 @@ console.log('Has VM.Allocate privilege:', hasRequiredPrivilege); // Log para ver
   }
 });
 
+// --- VM Plan CRUD API Routes ---
 
+// GET /api/vm-plans - List all VM plans
+app.get('/api/vm-plans', authenticate, async (req, res) => {
+  console.log('--- GET /api/vm-plans ---');
+  try {
+    const result = await pool.query(
+      'SELECT id, name, description, specs, icon, is_active, created_at, updated_at FROM vm_plans ORDER BY created_at ASC'
+    );
+    console.log(`Found ${result.rows.length} VM plans`);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error fetching VM plans from DB:', err);
+    res.status(500).json({ error: 'Failed to retrieve VM plans' });
+  }
+});
+
+// POST /api/vm-plans - Create a new VM plan
+app.post('/api/vm-plans', authenticate, async (req, res) => {
+  console.log('--- POST /api/vm-plans --- Body:', req.body);
+  const { name, description, specs, icon, isActive = true } = req.body;
+
+  // Basic Validation
+  if (!name || !description || !specs || !specs.cpu || !specs.memory || !specs.disk) {
+    return res.status(400).json({ error: 'Missing required plan fields: name, description, specs (cpu, memory, disk)' });
+  }
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO vm_plans (name, description, specs, icon, is_active) 
+       VALUES ($1, $2, $3, $4, $5) 
+       RETURNING id, name, description, specs, icon, is_active, created_at, updated_at`,
+      [name, description, JSON.stringify(specs), icon || null, isActive]
+    );
+    console.log('Created new VM plan:', result.rows[0]);
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error('Error creating VM plan in DB:', err);
+    res.status(500).json({ error: 'Failed to create VM plan' });
+  }
+});
+
+// PUT /api/vm-plans/:id - Update a VM plan (specifically isActive status)
+app.put('/api/vm-plans/:id', authenticate, async (req, res) => {
+  const { id } = req.params;
+  const { isActive } = req.body;
+  console.log(`--- PUT /api/vm-plans/${id} --- Body:`, req.body);
+
+  if (typeof isActive !== 'boolean') {
+    return res.status(400).json({ error: 'Invalid request body: isActive (boolean) is required.' });
+  }
+
+  try {
+    const result = await pool.query(
+      'UPDATE vm_plans SET is_active = $1, updated_at = now() WHERE id = $2 RETURNING id, name, description, specs, icon, is_active, created_at, updated_at',
+      [isActive, id]
+    );
+
+    if (result.rows.length > 0) {
+      console.log('Updated VM plan:', result.rows[0]);
+      res.json(result.rows[0]);
+    } else {
+      res.status(404).json({ error: 'VM Plan not found' });
+    }
+  } catch (err) {
+    console.error(`Error updating VM plan ${id} in DB:`, err);
+    res.status(500).json({ error: 'Failed to update VM plan' });
+  }
+});
+
+// DELETE /api/vm-plans/:id - Delete a VM plan
+app.delete('/api/vm-plans/:id', authenticate, async (req, res) => {
+  const { id } = req.params;
+  console.log(`--- DELETE /api/vm-plans/${id} ---`);
+  try {
+    const result = await pool.query('DELETE FROM vm_plans WHERE id = $1 RETURNING id', [id]);
+    if (result.rowCount > 0) {
+      console.log(`Deleted VM plan with id: ${id} from DB`);
+      res.status(204).send(); // No Content success status
+    } else {
+      res.status(404).json({ error: 'VM Plan not found' });
+    }
+  } catch (err) {
+    console.error(`Error deleting VM plan ${id} from DB:`, err);
+    res.status(500).json({ error: 'Failed to delete VM plan' });
+  }
+});
 
 
 // Start the server

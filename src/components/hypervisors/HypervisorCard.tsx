@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Cloud, Server as Servers, Clock, AlertCircle, HardDrive, Layers, Cpu, MemoryStick, Database } from 'lucide-react'; // Added Cpu, MemoryStick, Database
+import { Cloud, Server as Servers, Clock, AlertCircle, Layers, Cpu, MemoryStick, Database } from 'lucide-react'; // Added Cpu, MemoryStick, Database
 import { Hypervisor, NodeResource, StorageResource, OSTemplate } from '../../types/hypervisor';
 import { formatDistanceToNow } from 'date-fns';
 import { motion } from 'framer-motion';
