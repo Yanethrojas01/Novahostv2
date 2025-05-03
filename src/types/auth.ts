@@ -16,6 +16,7 @@ export interface LoginCredentials {
 export interface DecodedToken {
   userId: string;
   email: string;
+  username: string; // <-- Añadir username
   role: 'admin' | 'user' | 'viewer';
   name?: string; // Optional: Include if you add name to the JWT payload in the backend
   iat: number; // Issued At timestamp

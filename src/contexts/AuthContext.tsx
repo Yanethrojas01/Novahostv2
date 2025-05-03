@@ -29,6 +29,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               // Reconstruct user object from token payload
               const userData: User = {
                 id: decodedToken.userId,
+                username: decodedToken.username, 
                 email: decodedToken.email,
                 role: decodedToken.role,
                 // Add name if it's included in the token, otherwise it might be null/undefined initially

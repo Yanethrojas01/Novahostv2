@@ -74,7 +74,7 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     // Find user by email, join with roles table to get role name
     const userResult = await pool.query(
-      `SELECT u.id, u.email, u.password_hash, u.is_active, r.name as role_name
+      `SELECT u.id, u.username, u.email, u.password_hash, u.is_active, r.name as role_name
        FROM users u
        JOIN roles r ON u.role_id = r.id
        WHERE u.email = $1`,
@@ -102,9 +102,17 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     // Generate JWT
-    const accessToken = jwt.sign({ userId: user.id, email: user.email, role: user.role_name }, process.env.JWT_SECRET, { expiresIn: '1h' }); // Add role to payload
+    const payload = {
+      userId: user.id,
+      username: user.username, // <-- Añadir username aquí
+      email: user.email,
+      role: user.role_name
+      // Puedes añadir 'name' si lo tienes en la DB y lo quieres en el token
+    };
+    const accessToken = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
+
     console.log(`Login successful for ${email}. Role: ${user.role_name}`);
-    res.json({ accessToken, user: { id: user.id, email: user.email, role: user.role_name } }); // Send token and basic user info
+    res.json({ accessToken, user: { id: user.id, username: user.username, email: user.email, role: user.role_name } }); // Send token and basic user info (incl. username)
 
   } catch (error) {
     console.error('Login process error:', error);
@@ -1204,22 +1212,99 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => { /
 });
 
 // GET /api/hypervisors/:id - Get a single hypervisor by ID
-app.get('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) => { // Added requireAdmin
+app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed requireAdmin for now, adjust if needed
   const { id } = req.params;
   console.log(`GET /api/hypervisors/${id} called`);
   try {
-    const result = await pool.query('SELECT id, name, type, host, username, status, last_sync, created_at, updated_at FROM hypervisors WHERE id = $1', [id]);
-    if (result.rows.length > 0) {
-      res.json(result.rows[0]);
-    } else {
+    const result = await pool.query(
+      'SELECT id, name, type, host, username, token_name, api_token, status, last_sync, created_at, updated_at FROM hypervisors WHERE id = $1',
+      [id]
+    );
+
+    if (result.rows.length === 0) {
       res.status(404).json({ error: 'Hypervisor not found' });
+      return;
     }
+
+    const hypervisor = result.rows[0];
+
+    // If connected, try to fetch details
+    if (hypervisor.status === 'connected' && hypervisor.type === 'proxmox') {
+      console.log(`Hypervisor ${id} is connected, fetching details...`);
+      try {
+        // Use the existing helper function or replicate logic
+        const [dbHost, dbPortStr] = hypervisor.host.split(':');
+        const port = dbPortStr ? parseInt(dbPortStr, 10) : 8006;
+        const cleanHost = dbHost;
+        const proxmoxConfig = {
+          host: cleanHost, port: port, username: hypervisor.username,
+          tokenID: `${hypervisor.username}!${hypervisor.token_name}`,
+          tokenSecret: hypervisor.api_token, timeout: 15000, rejectUnauthorized: false
+        };
+        const proxmox = proxmoxApi(proxmoxConfig);
+
+        // Fetch nodes, storage, templates in parallel
+        const [nodesData, storageData, templatesData] = await Promise.all([
+          proxmox.nodes.$get().catch(e => { console.error(`Error fetching nodes for ${id}:`, e.message); return []; }), // Fetch nodes
+          proxmox.storage.$get().catch(e => { console.error(`Error fetching storage for ${id}:`, e.message); return []; }), // Fetch storage
+          fetchProxmoxTemplates(proxmox).catch(e => { console.error(`Error fetching templates for ${id}:`, e.message); return []; }) // Use helper for templates
+        ]);
+
+        // Add details to the hypervisor object
+        hypervisor.nodes = nodesData; // Assuming API returns structure matching NodeResource
+        hypervisor.storage = storageData; // Assuming API returns structure matching StorageResource
+        hypervisor.templates = templatesData; // Assuming helper returns structure matching VMTemplate/NodeTemplate
+
+        console.log(`Fetched details for ${id}: ${nodesData.length} nodes, ${storageData.length} storage, ${templatesData.length} templates`);
+
+      } catch (detailError) {
+        console.error(`Failed to fetch details for connected hypervisor ${id}:`, detailError);
+        // Optionally add an error flag to the response or just return basic info
+        hypervisor.detailsError = detailError.message || 'Failed to load details';
+      }
+    } // Add else if for vSphere details fetching here
+
+    // Remove sensitive info before sending
+    delete hypervisor.api_token;
+    // delete hypervisor.password; // If password was selected
+
+    res.json(hypervisor);
+
   } catch (err) {
     console.error(`Error fetching hypervisor ${id}:`, err);
     res.status(500).json({ error: 'Failed to retrieve hypervisor' });
  
   }
 });
+
+// Helper function to fetch templates (similar to the one in GET /api/hypervisors/:id/templates)
+async function fetchProxmoxTemplates(proxmox) {
+  let allTemplates = [];
+  const nodes = await proxmox.nodes.$get();
+  for (const node of nodes) {
+    const storageList = await proxmox.nodes.$(node.node).storage.$get();
+    for (const storage of storageList) {
+      if (storage.content.includes('iso') || storage.content.includes('vztmpl') || storage.content.includes('template')) { // Added 'template' for VM templates
+        const content = await proxmox.nodes.$(node.node).storage.$(storage.storage).content.$get();
+        const templates = content
+          .filter(item => item.content === 'iso' || item.content === 'vztmpl' || item.template === 1) // Check 'template' flag for VM templates
+          .map(item => ({
+            id: item.volid, // e.g., local:iso/ubuntu.iso or local:100/vm-100-disk-0.qcow2 for templates
+            name: item.volid.split('/')[1] || item.volid, // Basic name extraction
+            description: item.volid,
+            size: item.size,
+            path: item.volid,
+            // Determine type more accurately
+            type: item.content === 'iso' ? 'iso' : (item.template === 1 ? 'template' : 'vztmpl'),
+            version: item.format,
+            storage: storage.storage,
+          }));
+        allTemplates = allTemplates.concat(templates);
+      }
+    }
+  }
+  return allTemplates;
+}
 
 // Función mejorada de manejo de errores
 function getProxmoxError(error) {

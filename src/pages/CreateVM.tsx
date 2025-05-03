@@ -42,9 +42,10 @@ export default function CreateVM() {
   useEffect(() => {
     const fetchHypervisors = async () => {
       setIsFetchingHypervisors(true);
+      const token = localStorage.getItem('authToken'); // Recuperar token
       try {
         const response = await fetch(`${API_BASE_URL}/hypervisors`, {
-          headers: { 'Authorization': 'Bearer MOCK_TOKEN' }, // Replace with actual token logic
+          headers: { ...(token && { 'Authorization': `Bearer ${token}` }) }, // Usar token real
         });
         if (!response.ok) throw new Error('Failed to fetch hypervisors');
         const data: Hypervisor[] = await response.json();
@@ -63,10 +64,11 @@ export default function CreateVM() {
   useEffect(() => {
     const fetchPlans = async () => {
       setIsFetchingPlans(true);
+      const token = localStorage.getItem('authToken'); // Recuperar token
       try {
         // Assuming the backend filters active plans or we filter here
         const response = await fetch(`${API_BASE_URL}/vm-plans`, {
-          headers: { 'Authorization': 'Bearer MOCK_TOKEN' }, // Replace with actual token logic
+          headers: { ...(token && { 'Authorization': `Bearer ${token}` }) }, // Usar token real
         });
         if (!response.ok) throw new Error('Failed to fetch VM plans');
         const data: VMPlan[] = await response.json();
@@ -89,9 +91,10 @@ export default function CreateVM() {
     if (vmParams.hypervisorId) {
       const fetchTemplates = async () => {
         setIsFetchingTemplates(true);
+        const token = localStorage.getItem('authToken'); // Recuperar token
         try {
           const response = await fetch(`${API_BASE_URL}/hypervisors/${vmParams.hypervisorId}/templates`, {
-            headers: { 'Authorization': 'Bearer MOCK_TOKEN' }, // Replace with actual token logic
+            headers: { ...(token && { 'Authorization': `Bearer ${token}` }) }, // Usar token real
           });
           if (!response.ok) throw new Error('Failed to fetch templates');
           const data: VMTemplate[] = await response.json();
@@ -160,13 +163,14 @@ export default function CreateVM() {
 
   const handleCreate = async () => {
     setIsLoading(true);
+    const token = localStorage.getItem('authToken'); // Recuperar token
     try {
       // Call the backend API to create the VM
       const response = await fetch(`${API_BASE_URL}/vms`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': 'Bearer MOCK_TOKEN', // Use actual token
+          ...(token && { 'Authorization': `Bearer ${token}` }), // Usar token real
         },
         body: JSON.stringify(vmParams),
       });

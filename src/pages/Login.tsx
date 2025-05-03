@@ -28,7 +28,6 @@ export default function Login() {
     setIsLoading(true);
 
     try {
-      // Call the backend API instead of the mock context function directly
       const response = await fetch(`${API_BASE_URL}/auth/login`, { // Use your API base URL
         method: 'POST',
         headers: {

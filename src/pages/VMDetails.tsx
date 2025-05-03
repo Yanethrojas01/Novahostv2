@@ -15,10 +15,11 @@ export default function VMDetails() {
     const fetchVM = async () => {
       setLoading(true);
       try {
+        const token = localStorage.getItem('authToken'); // Recuperar token
         const response = await fetch(`${API_BASE_URL}/vms/${id}`, {
           headers: {
-            'Authorization': 'Bearer MOCK_TOKEN', // Replace with actual token logic
-          },
+            ...(token && { 'Authorization': `Bearer ${token}` }), // Usar token real
+          }
         });
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);

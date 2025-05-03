@@ -1,6 +1,6 @@
 
-
-export type HypervisorType = 'proxmox' | 'vsphere';
+// Import detail types if they are defined elsewhere, otherwise define inline
+import { VMTemplate } from './vm'; // Assuming VMTemplate is defined here or imported
 
 export interface Hypervisor {
   id: string;
@@ -12,6 +12,10 @@ export interface Hypervisor {
   lastSync: Date | null; // Last sync timestamp from the database
   createdAt?: Date; // Added from DB
   updatedAt?: Date; // Added from DB
+  // Optional details fetched for the details page
+  nodes?: NodeResource[];
+  storage?: StorageResource[];
+  templates?: VMTemplate[]; // Use VMTemplate if it matches OSTemplate structure
 }
 
 export interface HypervisorCredentials {
@@ -51,7 +55,8 @@ export interface NodeResource {
   storage: StorageResource[];
 }
 
-export interface OSTemplate {
+// Renamed OSTemplate to NodeTemplate for clarity, or use VMTemplate if suitable
+export interface NodeTemplate {
   id: string;
   name: string;
   description?: string;

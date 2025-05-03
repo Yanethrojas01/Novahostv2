@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom'; // Import Link
 import { Cloud, Server as Servers, Clock, AlertCircle, Layers, Cpu, MemoryStick, Database } from 'lucide-react'; // Added Cpu, MemoryStick, Database
-import { Hypervisor, NodeResource, StorageResource, OSTemplate } from '../../types/hypervisor';
+import { Hypervisor, NodeResource, StorageResource, NodeTemplate } from '../../types/hypervisor'; // Use NodeTemplate instead of OSTemplate
 import { formatDistanceToNow } from 'date-fns';
 import { motion } from 'framer-motion';
 import { toast } from 'react-hot-toast';
@@ -19,7 +20,7 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
   // State for detailed resources
   const [nodes, setNodes] = useState<NodeResource[] | null>(null);
   const [storage, setStorage] = useState<StorageResource[] | null>(null);
-  const [templates, setTemplates] = useState<OSTemplate[] | null>(null);
+  const [templates, setTemplates] = useState<NodeTemplate[] | null>(null); // Use NodeTemplate[] type
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
 
   const getStatusColor = (status: string) => {
@@ -58,11 +59,12 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
     setTemplates(null);
 
     try {
-      const headers = { 'Authorization': 'Bearer MOCK_TOKEN' }; // Replace with actual token logic
+      const token = localStorage.getItem('authToken'); // Recuperar token
+      const headers = { ...(token && { 'Authorization': `Bearer ${token}` }) }; // Añadir token si existe
       const [nodesRes, storageRes, templatesRes] = await Promise.all([
         fetch(`${API_BASE_URL}/hypervisors/${hypervisor.id}/nodes`, { headers }),
         fetch(`${API_BASE_URL}/hypervisors/${hypervisor.id}/storage`, { headers }),
-        fetch(`${API_BASE_URL}/hypervisors/${hypervisor.id}/templates`, { headers }),
+        fetch(`${API_BASE_URL}/hypervisors/${hypervisor.id}/templates`, { headers })
       ]);
 
       if (!nodesRes.ok || !storageRes.ok || !templatesRes.ok) {
@@ -93,11 +95,12 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
     const toastId = toast.loading('Intentando conexión...');
 
     try {
+      const token = localStorage.getItem('authToken'); // Recuperar token
       const response = await fetch(`${API_BASE_URL}/hypervisors/${hypervisor.id}/connect`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': 'Bearer MOCK_TOKEN', // Replace with actual token logic
+          ...(token && { 'Authorization': `Bearer ${token}` }) // Añadir token si existe
         },
 
         // Body might be needed if passing specific connection parameters in the future
@@ -175,7 +178,7 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className="card"
+      className="card hover:shadow-lg transition-shadow duration-200" // Add hover effect
     >
       <div className="p-5">
         <div className="flex items-center justify-between mb-4">
@@ -189,20 +192,17 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
                 <Cloud className="h-5 w-5" />
               </div>
             )}
-            <div>
-              <h3 className="font-medium text-lg text-slate-900 dark:text-white">
-                {hypervisor.type}
-              </h3>
-              <p className="text-sm text-slate-500 dark:text-slate-400">{hypervisor.host}</p>
-              <p className="text-sm text-slate-500 dark:text-slate-400">
-                {nodes && nodes.length > 0 && (
-                  <span className="mr-2">
-                   {nodes.map(node => node.name).join(', ')}
-                  </span>
-                )}
-                
-              </p>
-            </div>
+            {/* Wrap clickable area in Link */}
+            <Link to={`/hypervisors/${hypervisor.id}`} className="flex-grow ml-3 cursor-pointer">
+              <div>
+                <h3 className="font-medium text-lg text-slate-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400">
+                  {hypervisor.name || hypervisor.type} {/* Show name if available */}
+                </h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400">{hypervisor.host}</p>
+                {/* You could optionally show node names here again if desired */}
+              </div>
+            </Link>
+            {/* End Link */}
           </div>
           <div className="flex items-center space-x-2">
             <div className={`h-3 w-3 rounded-full ${getStatusColor(hypervisor.status)}`}></div>

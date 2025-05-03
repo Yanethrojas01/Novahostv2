@@ -4,7 +4,6 @@ import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import VirtualMachineCard from '../components/dashboard/VirtualMachineCard';
 import { VM } from '../types/vm';
-// import { mockVMs } from '../utils/mockData'; // No longer using mock data
 import { toast } from 'react-hot-toast'; // For user feedback
 
 const API_BASE_URL = 'http://localhost:3001/api'; // Define the base URL like in Hypervisors.tsx
@@ -17,13 +16,18 @@ export default function Dashboard() {
 
   // Define fetchVMs outside useEffect, wrapped in useCallback
   const fetchVMs = useCallback(async () => {
+    const token = localStorage.getItem('authToken'); // Recuperar token
+console.log(token)
     setIsLoading(true);
+    
     try {
-      // Replace mock data with API call
+
       const response = await fetch(`${API_BASE_URL}/vms`, { // Use the full API URL
          headers: {
            // Include auth header if needed by your backend middleware
-           'Authorization': 'Bearer MOCK_TOKEN', // Replace with actual token logic later
+           // Asegúrate de que el token exista antes de añadir la cabecera
+           ...(token && { 'Authorization': `Bearer ${token}` }),
+    
          },
       });
       if (!response.ok) {
@@ -61,11 +65,13 @@ export default function Dashboard() {
     ));
 
     try {
+      const token = localStorage.getItem('authToken'); // Recuperar token
       const response = await fetch(`${API_BASE_URL}/vms/${vmId}/action`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': 'Bearer MOCK_TOKEN', // Replace with actual token logic
+          // Asegúrate de que el token exista antes de añadir la cabecera
+          ...(token && { 'Authorization': `Bearer ${token}` }),
         },
         body: JSON.stringify({ action }), // Send the action in the body
       });
@@ -79,7 +85,7 @@ export default function Dashboard() {
         throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
       }
 
-      // const result = await response.json(); // Process result if needed (backend currently sends mock)
+
       toast.success(`VM action '${action}' initiated successfully.`);
 
       // Optionally, re-fetch VMs after a short delay to get the actual status from Proxmox

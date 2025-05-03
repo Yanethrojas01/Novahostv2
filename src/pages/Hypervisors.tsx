@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { toast } from 'react-hot-toast'; // Assuming you have react-hot-toast or similar
 import HypervisorCard from '../components/hypervisors/HypervisorCard';
 import { Hypervisor, HypervisorCredentials } from '../types/hypervisor';
-// import { mockHypervisors } from '../utils/mockData'; // No longer needed
+
 
 const API_BASE_URL = 'http://localhost:3001/api'; // Adjust if your server runs elsewhere
 export default function Hypervisors() {
@@ -24,10 +24,11 @@ export default function Hypervisors() {
   const fetchHypervisors = async () => {
     setIsLoading(true);
     try {
+      const token = localStorage.getItem('authToken'); // Recuperar token
       const response = await fetch(`${API_BASE_URL}/hypervisors`, {
         headers: {
           // Include auth header if needed by your backend middleware
-          'Authorization': 'Bearer MOCK_TOKEN', // Replace with actual token logic later
+          ...(token && { 'Authorization': `Bearer ${token}` }), // Usar token real
         },
       });
       if (!response.ok) {
@@ -63,10 +64,11 @@ export default function Hypervisors() {
     // setHypervisors(prev => prev.filter(h => h.id !== id));
 
     try {
+      const token = localStorage.getItem('authToken'); // Recuperar token
       const response = await fetch(`${API_BASE_URL}/hypervisors/${id}`, {
         method: 'DELETE',
         headers: {
-          'Authorization': 'Bearer MOCK_TOKEN', // Replace with actual token logic
+          ...(token && { 'Authorization': `Bearer ${token}` }), // Usar token real
         },
       });
 
@@ -100,11 +102,12 @@ export default function Hypervisors() {
       console.log('Payload to send:', payload); // Debugging line
       setIsLoading(true); // Indicate activity
       try {
+        const token = localStorage.getItem('authToken'); // Recuperar token
         const response = await fetch(`${API_BASE_URL}/hypervisors`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': 'Bearer MOCK_TOKEN', // Replace with actual token logic
+            ...(token && { 'Authorization': `Bearer ${token}` }), // Usar token real
           },
           body: JSON.stringify(payload), // Send potentially modified payload
         });
