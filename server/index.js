@@ -279,38 +279,7 @@ app.get('/api/health', (req, res) => {
 });
 
 
-app.get('/api/proxmox/vms', authenticate, (req, res) => {
-  // This would make a request to the Proxmox API
-  res.json([
-    {
-      id: '100',
-      name: 'web-server-1',
-      status: 'running',
-      node: 'pve-node1',
-      cpu: 2,
-      memory: 2048,
-      disk: 32,
-    },
-    {
-      id: '101',
-      name: 'db-server',
-      status: 'running',
-      node: 'pve-node1',
-      cpu: 4,
-      memory: 8192,
-      disk: 100,
-    },
-    {
-      id: '102',
-      name: 'test-server',
-      status: 'stopped',
-      node: 'pve-node2',
-      cpu: 1,
-      memory: 1024,
-      disk: 20,
-    },
-  ]);
-});
+
 
 // vSphere API routes
 app.get('/api/vsphere/datacenters', authenticate, (req, res) => {
@@ -1254,9 +1223,112 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
         hypervisor.nodes = nodesData; // Assuming API returns structure matching NodeResource
         hypervisor.storage = storageData; // Assuming API returns structure matching StorageResource
         hypervisor.templates = templatesData; // Assuming helper returns structure matching VMTemplate/NodeTemplate
+        hypervisor.planCapacityEstimates = []; // Initialize capacity estimates array
 
         console.log(`Fetched details for ${id}: ${nodesData.length} nodes, ${storageData.length} storage, ${templatesData.length} templates`);
 
+        // --- Calculate Aggregated Resources for Display ---
+        let aggTotalCpuCores = 0;
+        let aggUsedCpuCores = 0; // Based on usage fraction * cores
+        let aggTotalMemoryBytes = 0;
+        let aggUsedMemoryBytes = 0;
+        let aggTotalDiskBytes = 0;
+        let aggUsedDiskBytes = 0;
+
+        if (nodesData.length > 0) {
+            nodesData.forEach(node => {
+                const nodeTotalCores = node.cpu?.cores || 0;
+                aggTotalCpuCores += nodeTotalCores;
+                // Use node.cpu usage (fraction 0-1) * cores for used estimate
+                aggUsedCpuCores += (node.cpu?.usage || 0) * nodeTotalCores;
+                aggTotalMemoryBytes += node.memory?.total || 0;
+                aggUsedMemoryBytes += node.memory?.used || 0;
+            });
+        }
+
+        if (storageData.length > 0) {
+            storageData.forEach(storage => {
+                // Ensure 'size' and 'used' are numbers before adding
+                aggTotalDiskBytes += Number(storage.total) || 0; // Use 'total' from proxmox storage response
+                aggUsedDiskBytes += Number(storage.used) || 0;
+            });
+        }
+
+        const aggAvgCpuUsagePercent = aggTotalCpuCores > 0 ? (aggUsedCpuCores / aggTotalCpuCores) * 100 : 0;
+        // --- End Aggregated Resources Calculation ---
+
+        // --- Calculate Available Resources and Plan Capacity ---
+        if (nodesData.length > 0 && storageData.length > 0) {
+          // 1. Aggregate Available Resources
+          let totalCpuCores = 0;
+          let usedCpuCores = 0; // Approximation based on usage percentage
+          let totalMemoryBytes = 0;
+          let usedMemoryBytes = 0;
+          let totalDiskBytes = 0;
+          let usedDiskBytes = 0;
+
+          // Use the already calculated aggregates
+          totalCpuCores = aggTotalCpuCores;
+          usedCpuCores = aggUsedCpuCores; // This is the estimated used cores, not percentage
+          totalMemoryBytes = aggTotalMemoryBytes;
+          usedMemoryBytes = aggUsedMemoryBytes;
+          totalDiskBytes = aggTotalDiskBytes;
+          usedDiskBytes = aggUsedDiskBytes;
+
+          const availableCpuCores = Math.max(0, totalCpuCores - usedCpuCores);
+          const availableMemoryBytes = Math.max(0, totalMemoryBytes - usedMemoryBytes);
+          const availableDiskBytes = Math.max(0, totalDiskBytes - usedDiskBytes);
+
+          console.log(`Aggregated Available Resources for ${id}: CPU Cores=${availableCpuCores.toFixed(2)}, Memory=${(availableMemoryBytes / (1024**3)).toFixed(2)} GB, Disk=${(availableDiskBytes / (1024**3)).toFixed(2)} GB`);
+
+          // 2. Fetch Active VM Plans
+          const { rows: activePlans } = await pool.query(
+            'SELECT id, name, specs FROM vm_plans WHERE is_active = true ORDER BY name'
+          );
+
+          // 3. Calculate Estimates per Plan
+          hypervisor.planCapacityEstimates = activePlans.map(plan => {
+            const planCpu = plan.specs?.cpu || 0;
+            const planMemoryMB = plan.specs?.memory || 0;
+            const planDiskGB = plan.specs?.disk || 0;
+
+            // Convert plan specs to comparable units (Bytes for memory/disk)
+            const planMemoryBytes = planMemoryMB * 1024 * 1024;
+            const planDiskBytes = planDiskGB * 1024 * 1024 * 1024;
+
+            // Calculate max possible based on each resource (handle division by zero)
+            const maxByCpu = planCpu > 0 ? Math.floor(availableCpuCores / planCpu) : Infinity;
+            const maxByMemory = planMemoryBytes > 0 ? Math.floor(availableMemoryBytes / planMemoryBytes) : Infinity;
+            const maxByDisk = planDiskBytes > 0 ? Math.floor(availableDiskBytes / planDiskBytes) : Infinity;
+
+            // The estimate is the minimum of the three constraints
+            const estimatedCount = Math.min(maxByCpu, maxByMemory, maxByDisk);
+
+            // Handle Infinity case if all plan specs are 0 (unlikely)
+            const finalCount = estimatedCount === Infinity ? 0 : estimatedCount;
+
+            return {
+              planId: plan.id,
+              planName: plan.name,
+              estimatedCount: finalCount,
+              specs: plan.specs // Include specs for reference if needed on frontend
+            };
+          });
+          console.log(`Calculated capacity estimates for ${hypervisor.planCapacityEstimates.length} active plans.`);
+        }
+        // --- End Calculation ---
+
+        // Add aggregated stats to the hypervisor object for frontend display
+        hypervisor.aggregatedStats = {
+            totalCores: aggTotalCpuCores,
+            avgCpuUsagePercent: aggAvgCpuUsagePercent,
+            totalMemoryBytes: aggTotalMemoryBytes,
+            usedMemoryBytes: aggUsedMemoryBytes,
+            totalDiskBytes: aggTotalDiskBytes,
+            usedDiskBytes: aggUsedDiskBytes,
+            storagePoolCount: storageData.length
+        };
+        console.log(`Added aggregated stats for ${id}:`, hypervisor.aggregatedStats);
       } catch (detailError) {
         console.error(`Failed to fetch details for connected hypervisor ${id}:`, detailError);
         // Optionally add an error flag to the response or just return basic info

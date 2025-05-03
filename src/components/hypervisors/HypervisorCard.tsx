@@ -117,8 +117,8 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
       const formattedHypervisor: Hypervisor = {
         ...hypervisor, // Keep existing data
         status: updatedHypervisorData.status, // Update status
-        lastSync: updatedHypervisorData.lastSync ? new Date(updatedHypervisorData.lastSync) : null,
-        updatedAt: new Date(), // Assume update time is now
+        last_sync: updatedHypervisorData.lastSync ? new Date(updatedHypervisorData.lastSync).toISOString() : null,
+        updated_at: new Date().toISOString(), // Assume update time is now
       };
 
       toast.success(`¡Conexión ${getStatusText(formattedHypervisor.status)}!`, { id: toastId }); // Use translated status
@@ -214,11 +214,11 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
 
         <div className="grid grid-cols-2 gap-4 mb-4">
           {/* Conditionally render sync time only if lastSync is not null */}
-          {hypervisor.lastSync ? (
+          {hypervisor.last_sync ? (
             <div className="flex items-center space-x-2">
               <Clock className="h-4 w-4 text-slate-400" />
               <span className="text-sm text-slate-600 dark:text-slate-300">
-                Sincronizado {formatDistanceToNow(hypervisor.lastSync, { addSuffix: true })}
+                Sincronizado {formatDistanceToNow(hypervisor.last_sync, { addSuffix: true })}
               </span>
             </div>
           ) : null /* Or render placeholder text like "Never synced" */}

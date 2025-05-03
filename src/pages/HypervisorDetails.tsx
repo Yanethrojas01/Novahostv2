@@ -1,16 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Cloud, Server as ServersIcon, Clock, AlertCircle, Cpu, MemoryStick, Database, Layers } from 'lucide-react';
-import { Hypervisor } from '../types/hypervisor'; // Import the updated Hypervisor type
+import { ArrowLeft, Cloud, Server as ServersIconLucide, Clock, AlertCircle, Cpu, MemoryStick, Database, Layers, Calculator } from 'lucide-react'; // Renamed ServersIcon to avoid conflict, added Calculator
+import { Hypervisor, HypervisorDetailsData, AggregatedStats } from '../types/hypervisor'; // Import AggregatedStats
 import { toast } from 'react-hot-toast';
-import { formatDistanceToNow } from 'date-fns';
+// import { formatDistanceToNow } from 'date-fns'; // Removed unused import
 import { formatBytes } from '../utils/formatters'; // Assuming you have this utility
 
 const API_BASE_URL = 'http://localhost:3001/api';
 
+
 export default function HypervisorDetails() {
   const { id } = useParams<{ id: string }>(); // Get ID from URL
-  const [hypervisor, setHypervisor] = useState<Hypervisor | null>(null);
+  const [hypervisor, setHypervisor] = useState<HypervisorDetailsData | null>(null); // <-- Use HypervisorDetailsData type
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,13 +38,14 @@ export default function HypervisorDetails() {
           throw new Error(errorData.error || `Error HTTP: ${response.status}`);
         }
 
-        const data: Hypervisor = await response.json();
-        // Convert date strings if necessary (backend might already send Date objects)
+        const data: HypervisorDetailsData = await response.json(); // Use the more specific type
+        // Convert date strings if necessary
         setHypervisor({
           ...data,
-          lastSync: data.lastSync ? new Date(data.lastSync) : null,
-          createdAt: data.createdAt ? new Date(data.createdAt) : undefined,
-          updatedAt: data.updatedAt ? new Date(data.updatedAt) : undefined,
+          // Ensure these fields exist on HypervisorDetailsData if needed, or handle potential undefined
+          last_sync: data.last_sync ? data.last_sync : null, // Keep as string from API
+          created_at: data.created_at ? data.created_at : undefined,
+          updated_at: data.updated_at ? data.updated_at : undefined,
         });
 
       } catch (err: unknown) {
@@ -89,22 +91,38 @@ export default function HypervisorDetails() {
     return <div className="p-6 text-center">Hypervisor no encontrado.</div>;
   }
 
-  // Calculate aggregated stats (similar to the card, but using data from the fetched hypervisor object)
-  const calculateAggregatedStats = () => {
-    const onlineNodes = hypervisor.nodes?.filter(n => n.status === 'online') || [];
-    const totalCores = onlineNodes.reduce((sum, node) => sum + (node.cpu?.cores || 0), 0);
-    const totalWeightedUsage = onlineNodes.reduce((sum, node) => sum + ((node.cpu?.usage || 0) * (node.cpu?.cores || 0)), 0);
-    const avgCpuUsage = totalCores > 0 ? (totalWeightedUsage / totalCores) * 100 : 0;
-    const totalMemory = onlineNodes.reduce((sum, node) => sum + (node.memory?.total || 0), 0);
-    const usedMemory = onlineNodes.reduce((sum, node) => sum + (node.memory?.used || 0), 0);
-    const totalDisk = hypervisor.storage?.reduce((sum, s) => sum + (s.size || 0), 0) || 0;
-    const usedDisk = hypervisor.storage?.reduce((sum, s) => sum + (s.used || 0), 0) || 0;
-    return { totalCores, avgCpuUsage, totalMemory, usedMemory, totalDisk, usedDisk };
-  };
-  const stats = calculateAggregatedStats();
+  // Use pre-calculated stats from backend if available
+  const stats: AggregatedStats | null = hypervisor.aggregatedStats || null;
+
+  function formatDistanceToNow(date: Date, options: { addSuffix: boolean }): string {
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffSeconds = Math.floor(diffMs / 1000);
+    const diffMinutes = Math.floor(diffSeconds / 60);
+    const diffHours = Math.floor(diffMinutes / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    let result = '';
+    if (diffDays > 0) {
+      result = `${diffDays} día${diffDays > 1 ? 's' : ''}`;
+    } else if (diffHours > 0) {
+      result = `${diffHours} hora${diffHours > 1 ? 's' : ''}`;
+    } else if (diffMinutes > 0) {
+      result = `${diffMinutes} minuto${diffMinutes > 1 ? 's' : ''}`;
+    } else {
+      result = `${diffSeconds} segundo${diffSeconds > 1 ? 's' : ''}`;
+    }
+
+    if (options.addSuffix) {
+      result += diffMs < 0 ? ' en el futuro' : ' atrás';
+    }
+
+    return result;
+  }
 
   return (
     <div className="p-4 md:p-6">
+      {/* Header Section */}
       <div className="mb-6">
         <Link to="/hypervisors" className="inline-flex items-center text-sm text-primary-600 dark:text-primary-400 hover:underline mb-2">
           <ArrowLeft className="h-4 w-4 mr-1" />
@@ -112,7 +130,7 @@ export default function HypervisorDetails() {
         </Link>
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            {hypervisor.type === 'proxmox' ? <ServersIcon className="h-8 w-8 text-orange-500" /> : <Cloud className="h-8 w-8 text-blue-500" />}
+            {hypervisor.type === 'proxmox' ? <ServersIconLucide className="h-8 w-8 text-orange-500" /> : <Cloud className="h-8 w-8 text-blue-500" />}
             <div>
               <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{hypervisor.name || hypervisor.host}</h1>
               <p className="text-slate-500 dark:text-slate-400">{hypervisor.host} ({hypervisor.type})</p>
@@ -120,9 +138,10 @@ export default function HypervisorDetails() {
           </div>
           {renderStatusBadge(hypervisor.status)}
         </div>
+        {/* Optional: Add back sync time if needed */}
         <div className="mt-2 flex items-center space-x-4 text-sm text-slate-500 dark:text-slate-400">
-          {hypervisor.lastSync && (
-            <span className="flex items-center"><Clock className="h-4 w-4 mr-1" /> Sincronizado {formatDistanceToNow(hypervisor.lastSync, { addSuffix: true })}</span>
+          {hypervisor.last_sync && (
+            <span className="flex items-center"><Clock className="h-4 w-4 mr-1" /> Sincronizado {formatDistanceToNow(new Date(hypervisor.last_sync), { addSuffix: true })}</span>
           )}
           {hypervisor.status === 'error' && (
             <span className="flex items-center text-danger-500"><AlertCircle className="h-4 w-4 mr-1" /> Error de conexión</span>
@@ -130,53 +149,82 @@ export default function HypervisorDetails() {
         </div>
       </div>
 
-      {/* Details Section */}
+      {/* Resource Details Section */}
       <div className="bg-white dark:bg-slate-800 shadow rounded-lg border border-slate-200 dark:border-slate-700 p-6">
         <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Detalles del Recurso</h2>
-        {hypervisor.status === 'connected' && hypervisor.nodes && hypervisor.storage && hypervisor.templates ? (
+        {hypervisor.status === 'connected' && hypervisor.nodes && hypervisor.storage ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
             {/* Nodes Summary */}
             <div>
-              <h3 className="font-medium text-slate-700 dark:text-slate-300 mb-2 flex items-center"><ServersIcon className="h-4 w-4 mr-2"/>Nodos ({hypervisor.nodes.length})</h3>
-              <ul className="list-disc list-inside space-y-1 text-slate-600 dark:text-slate-400">
+              <h3 className="font-medium text-slate-700 dark:text-slate-300 mb-2 flex items-center"><ServersIconLucide className="h-4 w-4 mr-2"/>Nodos ({hypervisor.nodes.length})</h3>
+              <ul className="list-disc list-inside space-y-1 text-slate-600 dark:text-slate-400 pl-5">
                 {hypervisor.nodes.map(node => (
-                  <li key={node.id}>{node.name} ({node.status})</li>
+                  <li key={node.id}>{node.name || 'Nombre Desconocido'} ({node.id}) - {node.status}</li>
                 ))}
               </ul>
             </div>
-            {/* Aggregated Stats */}
-            <div className="space-y-2">
-               <h3 className="font-medium text-slate-700 dark:text-slate-300 mb-2">Recursos Agregados</h3>
-               <p className="flex items-center"><Cpu className="h-4 w-4 mr-2 text-blue-500"/> CPU: {stats.avgCpuUsage.toFixed(1)}% usada ({stats.totalCores} Núcleos)</p>
-               <p className="flex items-center"><MemoryStick className="h-4 w-4 mr-2 text-green-500"/> Memoria: {formatBytes(stats.usedMemory)} / {formatBytes(stats.totalMemory)} usada</p>
-               <p className="flex items-center"><Database className="h-4 w-4 mr-2 text-purple-500"/> Disco: {formatBytes(stats.usedDisk)} / {formatBytes(stats.totalDisk)} usado ({hypervisor.storage.length} Pools)</p>
-            </div>
+
              {/* Storage Pools */}
              <div>
               <h3 className="font-medium text-slate-700 dark:text-slate-300 mb-2 flex items-center"><Database className="h-4 w-4 mr-2"/>Almacenamiento ({hypervisor.storage.length})</h3>
-              <ul className="list-disc list-inside space-y-1 text-slate-600 dark:text-slate-400">
+              <ul className="list-disc list-inside space-y-1 text-slate-600 dark:text-slate-400 pl-5">
                 {hypervisor.storage.map(s => (
                   <li key={s.id}>{s.name} ({s.type}) - {formatBytes(s.used)} / {formatBytes(s.size)}</li>
                 ))}
               </ul>
             </div>
+
             {/* Templates/ISOs */}
-            <div>
-              <h3 className="font-medium text-slate-700 dark:text-slate-300 mb-2 flex items-center"><Layers className="h-4 w-4 mr-2"/>Plantillas/ISOs ({hypervisor.templates.length})</h3>
-              <ul className="list-disc list-inside space-y-1 text-slate-600 dark:text-slate-400">
-                {hypervisor.templates.slice(0, 5).map(t => ( // Show first 5 for brevity
-                  <li key={t.id}>{t.name} ({formatBytes(t.size)})</li>
-                ))}
-                {hypervisor.templates.length > 5 && <li>... y {hypervisor.templates.length - 5} más</li>}
-              </ul>
-            </div>
+            {hypervisor.templates && hypervisor.templates.length > 0 && (
+              <div>
+                <h3 className="font-medium text-slate-700 dark:text-slate-300 mb-2 flex items-center"><Layers className="h-4 w-4 mr-2"/>Plantillas/ISOs ({hypervisor.templates.length})</h3>
+                <ul className="list-disc list-inside space-y-1 text-slate-600 dark:text-slate-400 pl-5">
+                  {hypervisor.templates.slice(0, 5).map(t => ( // Show first 5 for brevity
+                    <li key={t.id}>{t.name} ({formatBytes(t.size)})</li>
+                  ))}
+                  {hypervisor.templates.length > 5 && <li key="templates-more">... y {hypervisor.templates.length - 5} más</li>}
+                  </ul>
+              </div>
+            )}
           </div>
         ) : (
+          // Show specific error if details failed to load
+          hypervisor.detailsError ? <p className="text-danger-500 dark:text-danger-400">Error al cargar detalles: {hypervisor.detailsError}</p> :
           <p className="text-slate-500 dark:text-slate-400">
             {hypervisor.status === 'connected' ? 'Cargando detalles...' : 'Los detalles solo están disponibles cuando el hypervisor está conectado.'}
           </p>
         )}
       </div>
+
+      {/* Aggregated Resources Summary Section */}
+      {/* Use stats directly from hypervisor object */}
+      {hypervisor.status === 'connected' && stats && (
+        <div className="mt-6 bg-white dark:bg-slate-800 shadow rounded-lg border border-slate-200 dark:border-slate-700 p-6">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Resumen de Recursos</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
+            {/* Display stats from hypervisor.aggregatedStats */}
+            <p className="flex items-center"><Cpu className="h-4 w-4 mr-2 text-blue-500"/> CPU: {stats.avgCpuUsagePercent.toFixed(1)}% usada ({stats.totalCores} Núcleos)</p>
+            <p className="flex items-center"><MemoryStick className="h-4 w-4 mr-2 text-green-500"/> Memoria: {formatBytes(stats.usedMemoryBytes)} / {formatBytes(stats.totalMemoryBytes)} usada</p>
+            <p className="flex items-center"><Database className="h-4 w-4 mr-2 text-purple-500"/> Disco: {formatBytes(stats.usedDiskBytes)} / {formatBytes(stats.totalDiskBytes)} usado ({stats.storagePoolCount} Pools)</p>
+          </div>
+        </div>
+      )}
+
+      {/* Capacity Prediction Section */}
+      {hypervisor.status === 'connected' && hypervisor.planCapacityEstimates && hypervisor.planCapacityEstimates.length > 0 && (
+        <div className="mt-6 bg-white dark:bg-slate-800 shadow rounded-lg border border-slate-200 dark:border-slate-700 p-6">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4 flex items-center">
+            <Calculator className="h-5 w-5 mr-2"/>Predicción de Capacidad por Plan
+          </h2>
+          <ul className="list-disc list-inside space-y-1 text-slate-600 dark:text-slate-400 pl-5 text-sm">
+            {hypervisor.planCapacityEstimates.map(estimate => (
+              <li key={estimate.planId}>
+                <span className="font-semibold">{estimate.planName}</span>: ~<span className="font-bold text-emerald-600 dark:text-emerald-500">{estimate.estimatedCount}</span> VMs (CPU: {estimate.specs.cpu}, Mem: {estimate.specs.memory}MB, Disk: {estimate.specs.disk}GB)
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
