@@ -2,6 +2,8 @@
 // Import detail types if they are defined elsewhere, otherwise define inline
 import { VMTemplate } from './vm'; // Assuming VMTemplate is defined here or imported
 
+export type HypervisorType = 'proxmox' | 'vsphere'; // <-- Define the type here
+
 export interface Hypervisor {
   id: string;
   name: string;

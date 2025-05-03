@@ -60,7 +60,7 @@ function App() {
               <Profile />
             </ProtectedRoute>
           } />
-          <Route path="/hypervisor/:id" element={
+          <Route path="/hypervisors/:id" element={
             <ProtectedRoute>
               <HypervisorDetails />
             </ProtectedRoute>
