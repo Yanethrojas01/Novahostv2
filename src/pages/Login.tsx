@@ -20,7 +20,7 @@ export default function Login() {
     e.preventDefault();
 
     if (!email || !password) {
-      setError('Please enter both email and password');
+      setError('Por favor, ingresa el correo electrónico y la contraseña');
       return;
     }
 
@@ -39,7 +39,7 @@ export default function Login() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || 'Login failed');
+        throw new Error(data.error || 'Inicio de sesión fallido');
       }
 
       // If login is successful, call the context's login function with the received data
@@ -50,9 +50,9 @@ export default function Login() {
     } catch (err) { // Catch specific error type if possible
       console.error('Login error:', err);
       if (err instanceof Error) {
-        setError(err.message || 'Invalid email or password'); // Display error from backend or generic one
+        setError(err.message || 'Correo electrónico o contraseña inválidos'); // Display error from backend or generic one
       } else {
-        setError('An unexpected error occurred'); // Fallback for unknown error types
+        setError('Ocurrió un error inesperado'); // Fallback for unknown error types
       }
     } finally {
       setIsLoading(false);
@@ -76,7 +76,7 @@ export default function Login() {
           Novahost
         </h2>
         <p className="mt-2 text-center text-sm text-slate-500 dark:text-slate-400">
-          Sign in to your account to manage your virtual machines
+          Inicia sesión en tu cuenta para administrar tus máquinas virtuales
         </p>
       </motion.div>
 
@@ -96,7 +96,7 @@ export default function Login() {
 
             <div>
               <label htmlFor="email" className="form-label">
-                Email address
+                Dirección de correo electrónico
               </label>
               <input
                 id="email"
@@ -112,7 +112,7 @@ export default function Login() {
 
             <div>
               <label htmlFor="password" className="form-label">
-                Password
+                Contraseña
               </label>
               <div className="relative">
                 <input
@@ -148,15 +148,15 @@ export default function Login() {
                   className="form-checkbox"
                 />
                 <label htmlFor="remember-me" className="ml-2 block text-sm text-slate-700 dark:text-slate-300">
-                  Remember me
+                  Recuérdame
                 </label>
               </div>
 
-              <div className="text-sm">
+              {/* <div className="text-sm">
                 <a href="#" className="font-medium text-primary-600 hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300">
-                  Forgot your password?
+                  ¿Olvidaste tu contraseña?
                 </a>
-              </div>
+              </div> */}
             </div>
 
             <div>
@@ -165,38 +165,12 @@ export default function Login() {
                 disabled={isLoading}
                 className="w-full btn btn-primary py-3"
               >
-                {isLoading ? 'Signing in...' : 'Sign in'}
+                {isLoading ? 'Iniciando sesión...' : 'Iniciar sesión'}
               </button>
             </div>
           </form>
 
-          <div className="mt-6">
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-slate-300 dark:border-slate-700"></div>
-              </div>
-              <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400">
-                  Or continue with
-                </span>
-              </div>
-            </div>
-
-            <div className="mt-6 grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                className="btn btn-outline"
-              >
-                Demo mode
-              </button>
-              <button
-                type="button"
-                className="btn btn-outline"
-              >
-                SSO Login
-              </button>
-            </div>
-          </div>
+         
         </div>
       </motion.div>
     </div>
