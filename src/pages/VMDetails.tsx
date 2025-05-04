@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Server, Cpu, MemoryStick as Memory, HardDrive, Power } from 'lucide-react';
-import type { VM } from '../types/vm'; // Use the correct VM type
+import { Server, Cpu, MemoryStick as Memory, HardDrive, Power, Network, Clock, Activity } from 'lucide-react';
+import type { VM, VMMetrics } from '../types/vm'; // Use the correct VM type and import VMMetrics
+import { formatBytes } from '../utils/formatters'; // Helper function to format bytes (create this file if needed)
 import { toast } from 'react-hot-toast';
 
 const API_BASE_URL = 'http://localhost:3001/api'; // Define the base URL
@@ -10,6 +11,8 @@ export default function VMDetails() {
   const { id } = useParams();
   const [vm, setVM] = useState<VM | null>(null); // Use VM type
   const [loading, setLoading] = useState(true);
+  const [metrics, setMetrics] = useState<VMMetrics | null>(null);
+  const [metricsLoading, setMetricsLoading] = useState(false);
 
   useEffect(() => {
     const fetchVM = async () => {
@@ -38,6 +41,44 @@ export default function VMDetails() {
     fetchVM();
   }, [id]);
 
+  // Fetch metrics periodically
+  useEffect(() => {
+    if (!vm || vm.status !== 'running') {
+      setMetrics(null); // Clear metrics if VM is not running or not loaded
+      return; // Don't fetch if VM isn't running
+    }
+
+    const fetchMetrics = async () => {
+      setMetricsLoading(true);
+      try {
+        const token = localStorage.getItem('authToken');
+        const response = await fetch(`${API_BASE_URL}/vms/${id}/metrics`, {
+          headers: {
+            ...(token && { 'Authorization': `Bearer ${token}` }),
+          }
+        });
+        if (!response.ok) {
+          // Don't toast every time, maybe just log or show a subtle indicator
+          console.error(`Metrics fetch failed: ${response.status}`);
+          setMetrics(null); // Clear metrics on error
+        } else {
+          const data: VMMetrics = await response.json();
+          setMetrics(data);
+        }
+      } catch (error) {
+        console.error('Error fetching VM metrics:', error);
+        setMetrics(null); // Clear metrics on error
+      } finally {
+        setMetricsLoading(false);
+      }
+    };
+
+    fetchMetrics(); // Fetch immediately
+    const intervalId = setInterval(fetchMetrics, 10000); // Fetch every 10 seconds
+
+    return () => clearInterval(intervalId); // Cleanup interval on unmount or when VM/status changes
+  }, [id, vm, vm?.status]); // Re-run if VM data or status changes
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -55,6 +96,21 @@ export default function VMDetails() {
       </div>
     );
   }
+
+  // Helper to format uptime
+  const formatUptime = (seconds: number): string => {
+    if (seconds < 60) return `${seconds}s`;
+    const d = Math.floor(seconds / (3600 * 24));
+    const h = Math.floor(seconds % (3600 * 24) / 3600);
+    const m = Math.floor(seconds % 3600 / 60);
+    // const s = Math.floor(seconds % 60);
+    let str = '';
+    if (d > 0) str += `${d}d `;
+    if (h > 0 || d > 0) str += `${h}h `; // Show hours if days > 0
+    if (m > 0 || h > 0 || d > 0) str += `${m}m`; // Show minutes if hours > 0
+    // if (s > 0) str += `${s}s`;
+    return str.trim() || '0s';
+  };
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -110,9 +166,69 @@ export default function VMDetails() {
           </div>
         </div>
 
-        {/* Performance Metrics */}
+        {/* Performance Metrics Section */}
+        {vm.status === 'running' && (
+          <div className="border-t border-slate-200 dark:border-slate-700 p-6">
+            <h3 className="text-xl font-semibold text-slate-800 dark:text-slate-100 mb-4 flex items-center">
+              <Activity className="w-6 h-6 mr-2 text-primary-600" />
+              Performance Metrics
+              {metricsLoading && <div className="ml-2 animate-spin rounded-full h-4 w-4 border-b-2 border-slate-400"></div>}
+            </h3>
+            {metrics ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* CPU Usage */}
+                <div className="bg-slate-50 dark:bg-slate-700 rounded-lg p-3">
+                  <div className="flex items-center space-x-2 mb-1">
+                    <Cpu className="w-5 h-5 text-blue-500" />
+                    <span className="text-sm font-medium text-slate-600 dark:text-slate-300">CPU Usage</span>
+                  </div>
+                  <p className="text-lg font-semibold text-slate-800 dark:text-slate-100">{metrics.cpu.toFixed(1)}%</p>
+                </div>
+                {/* Memory Usage */}
+                <div className="bg-slate-50 dark:bg-slate-700 rounded-lg p-3">
+                  <div className="flex items-center space-x-2 mb-1">
+                    <Memory className="w-5 h-5 text-green-500" />
+                    <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Memory Usage</span>
+                  </div>
+                  <p className="text-lg font-semibold text-slate-800 dark:text-slate-100">{metrics.memory.toFixed(1)}%</p>
+                </div>
+                {/* Network I/O (Total) */}
+                <div className="bg-slate-50 dark:bg-slate-700 rounded-lg p-3">
+                  <div className="flex items-center space-x-2 mb-1">
+                    <Network className="w-5 h-5 text-purple-500" />
+                    <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Network (Total)</span>
+                  </div>
+                  <p className="text-sm text-slate-700 dark:text-slate-200">In: {formatBytes(metrics.network.in)}</p>
+                  <p className="text-sm text-slate-700 dark:text-slate-200">Out: {formatBytes(metrics.network.out)}</p>
+                </div>
+                {/* Uptime */}
+                <div className="bg-slate-50 dark:bg-slate-700 rounded-lg p-3">
+                  <div className="flex items-center space-x-2 mb-1">
+                    <Clock className="w-5 h-5 text-orange-500" />
+                    <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Uptime</span>
+                  </div>
+                  <p className="text-lg font-semibold text-slate-800 dark:text-slate-100">{formatUptime(metrics.uptime)}</p>
+                </div>
+              </div>
+            ) : (
+              !metricsLoading && <p className="text-slate-500 dark:text-slate-400">Metrics data is currently unavailable.</p>
+            )}
+          </div>
+        )}
 
       </div>
     </div>
   );
 }
+
+// Helper function (create src/utils/formatters.ts if it doesn't exist)
+/*
+export function formatBytes(bytes: number, decimals = 2): string {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+}
+*/

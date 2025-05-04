@@ -723,6 +723,85 @@ app.get('/api/vms/:id', authenticate, async (req, res) => {
   }
 });
 
+// GET /api/vms/:id/metrics - Get current performance metrics for a single VM
+app.get('/api/vms/:id/metrics', authenticate, async (req, res) => {
+  const { id: vmId } = req.params;
+  console.log(`--- Received GET /api/vms/${vmId}/metrics ---`);
+
+  try {
+    // --- Step 1: Find the VM's Hypervisor and Node (Reusing logic from GET /api/vms/:id) ---
+    const { rows: connectedHypervisors } = await pool.query(
+      `SELECT id, type, host, username, api_token, token_name 
+       FROM hypervisors WHERE status = 'connected'`
+    );
+
+    let targetHypervisor = null;
+    let targetNode = null;
+    let proxmoxClient = null;
+
+    for (const hypervisor of connectedHypervisors) {
+      if (hypervisor.type === 'proxmox') {
+        const [dbHost, dbPortStr] = hypervisor.host.split(':');
+        const port = dbPortStr ? parseInt(dbPortStr, 10) : 8006;
+        const cleanHost = dbHost;
+
+        const proxmoxConfig = {
+          host: cleanHost, port: port, username: hypervisor.username,
+          tokenID: `${hypervisor.username}!${hypervisor.token_name}`,
+          tokenSecret: hypervisor.api_token, timeout: 5000, rejectUnauthorized: false // Shorter timeout for metrics
+        };
+        const proxmox = proxmoxApi(proxmoxConfig);
+
+        try {
+          const vmResources = await proxmox.cluster.resources.$get({ type: 'vm' });
+          const foundVm = vmResources.find(vm => vm.vmid.toString() === vmId);
+
+          if (foundVm) {
+            targetHypervisor = hypervisor;
+            targetNode = foundVm.node;
+            proxmoxClient = proxmox;
+            console.log(`Found VM ${vmId} on node ${targetNode} of hypervisor ${hypervisor.id} for metrics`);
+            break;
+          }
+        } catch (findError) {
+          console.warn(`Could not check hypervisor ${hypervisor.id} for VM ${vmId} metrics:`, findError.message);
+        }
+      }
+      // TODO: Add vSphere logic here if needed
+    }
+
+    if (!targetHypervisor || !targetNode || !proxmoxClient) {
+      return res.status(404).json({ error: `VM ${vmId} not found on any connected Proxmox hypervisor.` });
+    }
+
+    // --- Step 2: Get VM Current Status ---
+    const vmStatus = await proxmoxClient.nodes.$(targetNode).qemu.$(vmId).status.current.$get();
+
+    // --- Step 3: Map data to our VMMetrics type ---
+    const metrics = {
+      cpu: (vmStatus.cpu || 0) * 100, // Proxmox CPU is 0-1 fraction, convert to percentage
+      memory: vmStatus.maxmem > 0 ? (vmStatus.mem / vmStatus.maxmem) * 100 : 0, // Calculate memory percentage
+      disk: 0, // Disk usage % is not directly available here. Maybe show I/O rates later?
+      network: {
+        in: vmStatus.netin || 0, // These are total bytes, not rate. Rate calculation needs state.
+        out: vmStatus.netout || 0,
+      },
+      uptime: vmStatus.uptime || 0, // Seconds
+    };
+
+    res.json(metrics);
+
+  } catch (error) {
+    console.error(`Error fetching metrics for VM ${vmId}:`, error);
+    const errorDetails = getProxmoxError(error);
+    res.status(errorDetails.code || 500).json({
+      error: `Failed to retrieve metrics for VM ${vmId}.`,
+      details: errorDetails.message,
+      suggestion: errorDetails.suggestion
+    });
+  }
+});
+
 // --- End VM Listing API ---
 
 // Helper function to get authenticated proxmox client
