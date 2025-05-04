@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Server, Cpu, MemoryStick as Memory, HardDrive, Power, Network, Clock, Activity } from 'lucide-react';
+import { Server, Cpu, MemoryStick as Memory, HardDrive, Power, Network, Clock, Activity, Info, ServerCog, NetworkIcon } from 'lucide-react'; // Added Info, ServerCog, NetworkIcon
 import type { VM, VMMetrics } from '../types/vm'; // Use the correct VM type and import VMMetrics
 import { formatBytes } from '../utils/formatters'; // Helper function to format bytes (create this file if needed)
 import { toast } from 'react-hot-toast';
@@ -165,6 +165,50 @@ export default function VMDetails() {
             <p className="text-slate-600 dark:text-slate-300">{vm.specs.disk} GB</p>
           </div>
         </div>
+
+        {/* Additional Information Section (Combined) */}
+        {(vm.description || vm.hypervisorType || vm.nodeName) && (
+          <div className="border-t border-slate-200 dark:border-slate-700 p-6">
+            <h3 className="text-xl font-semibold text-slate-800 dark:text-slate-100 mb-4 flex items-center">
+              <Info className="w-6 h-6 mr-2 text-primary-600" />
+              Información Adicional
+            </h3>
+            <div className="space-y-3">
+              {/* Hypervisor Type */}
+              {vm.hypervisorType && (
+                <div className="flex items-start space-x-2">
+                  <ServerCog className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Tipo Hypervisor:</span>
+                    <p className="text-slate-800 dark:text-slate-100">{vm.hypervisorType}</p>
+                  </div>
+                </div>
+              )}
+              {/* Node */}
+              {vm.nodeName && (
+                <div className="flex items-start space-x-2">
+                  <NetworkIcon className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Nodo:</span>
+                    <p className="text-slate-800 dark:text-slate-100">{vm.nodeName}</p>
+                  </div>
+                </div>
+              )}
+              {/* Description */}
+              {vm.description && (
+                <div className="flex items-start space-x-2">
+                  {/* Optional: Add an icon for description if desired */}
+                  {/* <FileText className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" /> */}
+                  <div>
+                    <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Descripción:</span>
+                    <p className="text-slate-800 dark:text-slate-100 whitespace-pre-wrap">{vm.description}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
 
         {/* Performance Metrics Section */}
         {vm.status === 'running' && (
