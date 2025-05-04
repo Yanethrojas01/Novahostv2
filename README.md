@@ -90,7 +90,7 @@ Novahost is a modern web application for managing virtual machines across Proxmo
      - To create new migrations for schema changes:
 
        ```bash
-       npm run migrate:create -- -n migration_name
+       npm run migrate:create -- migration_name
        ```
 
    - **Generate Default Admin Password Hash:**
