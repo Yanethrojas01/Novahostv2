@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom'; // Import Link
-import { Cloud, Server as Servers, Clock, AlertCircle, Layers, Cpu, MemoryStick, Database } from 'lucide-react'; // Added Cpu, MemoryStick, Database
+import { Cloud, Server as Servers, Clock, AlertCircle, Layers, Cpu, MemoryStick, Database, ExternalLink } from 'lucide-react'; // Added Cpu, MemoryStick, Database, ExternalLink
 import { Hypervisor, NodeResource, StorageResource, NodeTemplate } from '../../types/hypervisor'; // Use NodeTemplate instead of OSTemplate
 import { formatDistanceToNow } from 'date-fns';
 import { motion } from 'framer-motion';
@@ -73,14 +73,14 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
       }
 
       const nodesData = await nodesRes.json();
-      
+
       const storageData = await storageRes.json();
       const templatesData = await templatesRes.json();
 
       setNodes(nodesData);
       setStorage(storageData);
       setTemplates(templatesData);
-      
+
 
     } catch (error) {
       console.error('Failed to fetch hypervisor details:', error);
@@ -89,7 +89,7 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
       setIsLoadingDetails(false);
     }
   };
-  
+
   const handleConnectionAttempt = async () => {
     setIsConnecting(true);
     const toastId = toast.loading('Intentando conexión...');
@@ -181,6 +181,7 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
       className="card hover:shadow-lg transition-shadow duration-200" // Add hover effect
     >
       <div className="p-5">
+        {/* Header Section */}
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center space-x-3">
             {hypervisor.type === 'proxmox' ? (
@@ -192,18 +193,15 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
                 <Cloud className="h-5 w-5" />
               </div>
             )}
-            {/* Wrap clickable area in Link */}
-            <Link to={`/hypervisors/${hypervisor.id}`} className="flex-grow ml-3 cursor-pointer">
-              <div>
-                <h3 className="font-medium text-lg text-slate-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400">
-                  {hypervisor.name || hypervisor.type} {/* Show name if available */}
-                </h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400">{hypervisor.host}</p>
-                {/* You could optionally show node names here again if desired */}
-              </div>
-            </Link>
-            {/* End Link */}
+            {/* Hypervisor Name and Host (Not a link anymore) */}
+            <div className="flex-grow ml-3">
+              <h3 className="font-medium text-lg text-slate-900 dark:text-white">
+                {hypervisor.name || hypervisor.type}
+              </h3>
+              <p className="text-sm text-slate-500 dark:text-slate-400">{hypervisor.host}</p>
+            </div>
           </div>
+          {/* Status Indicator */}
           <div className="flex items-center space-x-2">
             <div className={`h-3 w-3 rounded-full ${getStatusColor(hypervisor.status)}`}></div>
             <span className="text-sm text-slate-600 dark:text-slate-300">
@@ -212,25 +210,33 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4 mb-4">
-          {/* Conditionally render sync time only if lastSync is not null */}
-          {hypervisor.last_sync ? (
-            <div className="flex items-center space-x-2">
-              <Clock className="h-4 w-4 text-slate-400" />
-              <span className="text-sm text-slate-600 dark:text-slate-300">
-                Sincronizado {formatDistanceToNow(hypervisor.last_sync, { addSuffix: true })}
-              </span>
-            </div>
-          ) : null /* Or render placeholder text like "Never synced" */}
-
-          {hypervisor.status === 'error' && (
-            <div className="flex items-center space-x-2">
-              <AlertCircle className="h-4 w-4 text-danger-500" />
-              <span className="text-sm text-danger-500">
-                Error de conexión
-              </span>
-            </div>
-          )}
+        {/* Info Section: Sync Time, Error, Details Link */}
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 mb-4 text-sm">
+          <div className="flex items-center space-x-2">
+            {/* Sync Time */}
+            {hypervisor.last_sync ? (
+              <>
+                <Clock className="h-4 w-4 text-slate-400" />
+                <span className="text-slate-600 dark:text-slate-300">
+                  Sincronizado {formatDistanceToNow(hypervisor.last_sync, { addSuffix: true })}
+                </span>
+              </>
+            ) : (
+              <span className="text-slate-400 italic">Nunca sincronizado</span>
+            )}
+            {/* Error Indicator */}
+            {hypervisor.status === 'error' && (
+              <div className="flex items-center space-x-1 text-danger-500 ml-2">
+                <AlertCircle className="h-4 w-4" />
+                <span>Error</span>
+              </div>
+            )}
+          </div>
+          {/* Details Link */}
+          <Link to={`/hypervisors/${hypervisor.id}`} className="inline-flex items-center space-x-1 text-primary-600 dark:text-primary-400 hover:underline">
+            <ExternalLink className="h-4 w-4" />
+            <span>Detalles</span>
+          </Link>
         </div>
 
         {/* Detailed Resource Section */}
@@ -293,7 +299,9 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
         )}
         {/* End Detailed Resource Section */}
 
-        <div className="border-t border-slate-200 dark:border-slate-700 pt-3 flex justify-between">
+        {/* Action Buttons Section */}
+        <div className="border-t border-slate-200 dark:border-slate-700 pt-3 mt-4 flex justify-between items-center">
+          {/* Connect/Test Button */}
           {hypervisor.status === 'disconnected' || hypervisor.status === 'error' ? (
             <button
               onClick={handleConnectionAttempt}
@@ -311,6 +319,7 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
               {isConnecting ? 'Probando...' : 'Probar Conexión'}
             </button>
           )}
+          {/* Delete Button */}
           <button
             onClick={() => onDelete(hypervisor.id)}
             className="btn btn-danger text-xs"
