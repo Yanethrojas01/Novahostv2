@@ -12,10 +12,10 @@ export default function LoadingScreen() {
       >
         <Loader2 className="h-12 w-12 text-primary-600 dark:text-primary-400 animate-spin mb-4" />
         <h2 className="text-xl font-semibold text-slate-800 dark:text-slate-200">
-          Loading...
+          Cargando...
         </h2>
         <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">
-          Preparing your VM management dashboard
+          Preparando tu panel de administración de VM
         </p>
       </motion.div>
     </div>
