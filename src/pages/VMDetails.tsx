@@ -50,8 +50,8 @@ export default function VMDetails() {
     return (
       <div className="flex flex-col items-center justify-center h-64">
         <Server className="w-16 h-16 text-gray-400 mb-4" />
-        <h2 className="text-2xl font-semibold text-gray-700">Virtual Machine Not Found</h2>
-        <p className="text-gray-500 mt-2">The requested VM could not be found.</p>
+        <h2 className="text-2xl font-semibold text-gray-700">Virtual Machine No Encontrada</h2>
+        <p className="text-gray-500 mt-2">La VM requerida no se encuentra.</p>
       </div>
     );
   }
@@ -111,7 +111,7 @@ export default function VMDetails() {
         </div>
 
         {/* Performance Metrics */}
-        {/* Performance Metrics Section Removed - Backend does not provide this data yet */}
+
       </div>
     </div>
   );
