@@ -101,7 +101,7 @@ export default function CreateVM() {
           setTemplates(data);
         } catch (error) {
           console.error('Error fetching templates:', error);
-          toast.error('Could not load templates for the selected hypervisor.');
+          toast.error('No se han podido cargar plantillas para el hipervisor seleccionado.');
         } finally {
           setIsFetchingTemplates(false);
         }
@@ -181,7 +181,7 @@ export default function CreateVM() {
       }
 
       const result = await response.json();
-      toast.success(result.message || 'VM creation initiated successfully!');
+      toast.success(result.message || 'La creación de la máquina virtual se ha iniciado correctamente.');
 
       // Remove Supabase call from frontend
       // Redirect to the dashboard

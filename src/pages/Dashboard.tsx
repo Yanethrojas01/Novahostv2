@@ -86,7 +86,7 @@ console.log(token)
       }
 
 
-      toast.success(`VM action '${action}' initiated successfully.`);
+      toast.success(`Acción VM '${action}' iniciada con éxito.`);
 
       // Optionally, re-fetch VMs after a short delay to get the actual status from Proxmox
       // setTimeout(fetchVMs, 3000); // Example: refresh after 3 seconds
