@@ -2,7 +2,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { BarChart3, Cloud, Cog, Home, Monitor, Plus, Server as Servers, X } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { clsx } from 'clsx';
-
+import logodch from "../../img/CDHLogo.png"
 interface SidebarProps {
   mobile?: boolean;
   onClose?: () => void;
@@ -43,10 +43,12 @@ export default function Sidebar({ mobile = false, onClose }: SidebarProps) {
       <div className={clsx("flex-shrink-0", !mobile && "p-4 border-b border-slate-200 dark:border-slate-700")}>
         {!mobile && (
           <div className="flex items-center space-x-2">
-            <Servers className="h-6 w-6 text-primary-600 dark:text-primary-400" />
+            {/* <Servers className="h-6 w-6 text-primary-600 dark:text-primary-400" /> */}
+            <img src={logodch} alt="Novahost" className="h-17 w-20" />
             <span className="text-lg font-semibold text-primary-600 dark:text-primary-400">
-              Novahost
+                            Novahost 
             </span>
+           
           </div>
         )}
       </div>
