@@ -1184,7 +1184,7 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
                   console.log(`Modern auth failed (${authResponse.status}), trying legacy ESXi auth...`);
                   
                   // Para ESXi más antiguos que pueden no tener la API REST completa
-                  const legacyAuthResponse = await fetch(`${vsphereApiUrl}/ui/#/login`, {
+                  const legacyAuthResponse = await fetch(`${vsphereApiUrl}/ui/login`, {
                       method: 'POST',
                       headers: {
                           'Content-Type': 'application/x-www-form-urlencoded',
@@ -1372,13 +1372,13 @@ else if (type === 'vsphere') {
       
       // 2. Si falla la API REST, intentar con la autenticación de la interfaz web
       if (!sessionId) {
-          console.log(`Trying UI login method for ESXi: ${vsphereApiUrl}/ui/#/login`);
+          console.log(`Trying UI login method for ESXi: ${vsphereApiUrl}/ui/login`);
           try {
               const formData = new URLSearchParams();
               formData.append('userName', username);
               formData.append('password', password);
               
-              const uiLoginResponse = await fetch(`${vsphereApiUrl}/ui/#/login`, {
+              const uiLoginResponse = await fetch(`${vsphereApiUrl}/ui/login`, {
                   method: 'POST',
                   headers: {
                       'Content-Type': 'application/x-www-form-urlencoded'
@@ -1481,7 +1481,7 @@ else if (type === 'vsphere') {
   // Check if connection failed during the process
   if (status !== 'connected') {
     // Throw an error here to be caught by the main try...catch block
-    console.log(`Connection failed for ${vsphereSubtype} at ${vsphereApiUrl}`);
+    console
 }
 }
       // Errores de conexión generales
