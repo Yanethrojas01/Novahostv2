@@ -6,7 +6,7 @@ import { toast } from 'react-hot-toast';
 // import { formatDistanceToNow } from 'date-fns'; // Removed unused import
 import { formatBytes } from '../utils/formatters'; // Assuming you have this utility
 
-const API_BASE_URL = 'http://localhost:3001/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
 
 export default function HypervisorDetails() {

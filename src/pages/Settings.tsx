@@ -10,7 +10,7 @@ import type { VMPlan } from '../types/vm';
 import type { FinalClient } from '../types/client'; // Import FinalClient type
 
 export default function Settings() {
-  const API_BASE_URL = 'http://localhost:3001/api'; // Define API base URL
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
   const { theme, toggleTheme } = useTheme();
   // const [emailNotifications, setEmailNotifications] = useState(true);
   const { user: currentUser } = useAuth(); // Get current user info for token

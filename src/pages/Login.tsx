@@ -4,7 +4,7 @@ import { Server as Servers, EyeOff, Eye } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth'; // Corrected import path
 import { motion } from 'framer-motion';
 
-const API_BASE_URL = 'http://localhost:3001/api'; // Define API base URL
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL; // Define API base URL
 
 export default function Login() {
   const [email, setEmail] = useState('');

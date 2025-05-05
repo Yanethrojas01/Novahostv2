@@ -6,7 +6,7 @@ import HypervisorCard from '../components/hypervisors/HypervisorCard';
 import { Hypervisor, HypervisorCredentials } from '../types/hypervisor';
 
 
-const API_BASE_URL = 'http://localhost:3001/api'; // Adjust if your server runs elsewhere
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;; // Adjust if your server runs elsewhere
 export default function Hypervisors() {
   const [hypervisors, setHypervisors] = useState<Hypervisor[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
