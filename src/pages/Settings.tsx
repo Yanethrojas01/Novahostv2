@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Moon, Sun, Globe, Database, Server, Plus, Trash2, Users, UserPlus } from 'lucide-react'; // Added Users, UserPlus
+import { Moon, Sun, Globe, Database, Server, Plus, Trash2, Users, UserPlus, Briefcase, Search, ChevronLeft, ChevronRight, Edit } from 'lucide-react'; // Added Briefcase, Search, Chevrons, Edit
 import { useTheme } from '../contexts/ThemeContext';
 // import { supabase } from '../lib/supabase'; // No longer needed
 import { useAuth } from '../hooks/useAuth'; // Import useAuth to get token
 import { toast } from 'react-hot-toast'; // Import toast for feedback
 import type { User } from '../types/auth'; // Import User type
 import type { VMPlan } from '../types/vm';
+import type { FinalClient } from '../types/client'; // Import FinalClient type
 
 export default function Settings() {
   const API_BASE_URL = 'http://localhost:3001/api'; // Define API base URL
@@ -37,10 +38,24 @@ export default function Settings() {
     password: '',
     role_name: 'user' // Default role
   });
+   // State for Final Clients
+   const [clients, setClients] = useState<FinalClient[]>([]);
+   const [isLoadingClients, setIsLoadingClients] = useState(false);
+   const [clientSearchTerm, setClientSearchTerm] = useState('');
+   const [clientCurrentPage, setClientCurrentPage] = useState(1);
+   const [clientTotalPages, setClientTotalPages] = useState(1);
+   const [newClient, setNewClient] = useState<Partial<FinalClient>>({
+     name: '',
+     rif: '',
+     contact_info: {},
+     additional_info: ''
+     });
+
 
   useEffect(() => {
     fetchPlans();
     fetchUsers(); // Fetch users on mount
+    fetchClients();
   }, []);
 
   // Helper to get the auth token
@@ -51,6 +66,34 @@ export default function Settings() {
     if (!token) toast.error("Authentication token not found. Please log in again.");
     return token ? `Bearer ${token}` : null;
   };
+
+  const fetchClients = async (page = 1, search = clientSearchTerm) => {
+    const authToken = getAuthToken();
+    if (!authToken) return;
+    setIsLoadingClients(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/final-clients?page=${page}&limit=10&search=${encodeURIComponent(search)}`, {
+        headers: { 'Authorization': authToken },
+      });
+      if (!response.ok) throw new Error('Failed to fetch clients');
+      const data = await response.json();
+      setClients(data.items || []);
+      setClientCurrentPage(data.pagination.currentPage);
+      setClientTotalPages(data.pagination.totalPages);
+    } catch (error) {
+      console.error('Error fetching clients:', error);
+      toast.error('Could not load final clients.');
+      setClients([]); // Clear clients on error
+    } finally {
+      setIsLoadingClients(false);
+    }
+  };
+
+  // Effect to refetch clients when search term changes (with debounce)
+  useEffect(() => {
+    const handler = setTimeout(() => fetchClients(1, clientSearchTerm), 500); // Debounce search
+    return () => clearTimeout(handler);
+  }, [clientSearchTerm]);
 
   const fetchPlans = async () => {
     try {
@@ -133,7 +176,7 @@ export default function Settings() {
       toast.error('Failed to add VM plan.');
     }
   };
-
+ 
   const handleDeletePlan = async (id: string) => {
     const authToken = getAuthToken();
     if (!authToken) return;
@@ -187,6 +230,71 @@ export default function Settings() {
     }
   };
 
+  const handleAddClient = async () => {
+    const authToken = getAuthToken();
+    if (!authToken) return;
+    if (!newClient.name || !newClient.rif) {
+      toast.error("Name and RIF are required for a new client.");
+      return;
+    }
+    try {
+      const response = await fetch(`${API_BASE_URL}/final-clients`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': authToken,
+        },
+        body: JSON.stringify(newClient),
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Failed to parse error response' }));
+        throw new Error(errorData.error || `Failed to add client (status: ${response.status})`);
+      }
+      toast.success('Final client added successfully!');
+      setNewClient({ name: '', rif: '', contact_info: {}, additional_info: '' }); // Reset form
+      fetchClients(clientCurrentPage); // Refresh client list on current page
+    } catch (error: unknown) {
+      console.error('Error adding client:', error);
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      toast.error(`Failed to add client: ${message}`);
+    }
+  };
+
+  const handleDeleteClient = async (clientId: string) => {
+    const authToken = getAuthToken();
+    if (!authToken) return;
+    if (!window.confirm("Are you sure you want to delete this client? This action cannot be undone.")) return;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/final-clients/${clientId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': authToken },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Failed to parse error response' }));
+        throw new Error(errorData.error || `Failed to delete client (status: ${response.status})`);
+      }
+
+      if (response.status === 204) {
+        toast.success('Client deleted successfully!');
+        // Refetch, considering if the current page might become empty
+        fetchClients(clients.length === 1 && clientCurrentPage > 1 ? clientCurrentPage - 1 : clientCurrentPage);
+      } else {
+        console.warn('Unexpected response status after client delete:', response.status);
+        toast.error('Client deleted, but received unexpected server response.');
+        fetchClients(clientCurrentPage); // Refresh list anyway
+      }
+    } catch (error: unknown) {
+      console.error('Error deleting client:', error);
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      toast.error(`Failed to delete client: ${message}`);
+    }
+  };
+
+  // TODO: Implement Edit Client functionality
+
+
   const handleAddUser = async () => {
     const authToken = getAuthToken();
     if (!authToken) return;
@@ -221,7 +329,7 @@ export default function Settings() {
 
   // TODO: Implement Edit User functionality
   const handleEditUser = (user: User) => {
-    toast.info(`Edit functionality for ${user.email} not yet implemented.`);
+    toast(`Edit functionality for ${user.email} not yet implemented.`);
     // Logic to open modal or enable inline editing
   };
 
@@ -530,7 +638,7 @@ export default function Settings() {
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500 dark:text-slate-400 capitalize">{user.role}</td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm">
                               <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                                user.is_active ? 'bg-success-100 dark:bg-success-900/30 text-success-800 dark:text-success-300' : 'bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-300'
+                            user.is_active ? 'bg-success-100 dark:bg-success-900/30 text-success-800 dark:text-success-300' : 'bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-300'
                               }`}>
                                 {user.is_active ? 'Active' : 'Inactive'}
                               </span>
@@ -556,6 +664,133 @@ export default function Settings() {
             </div>
           </div>
         </motion.section>
+
+{/* Final Clients Management */}
+<motion.section
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="card"
+        >
+          <div className="p-6">
+            <h2 className="text-lg font-medium text-slate-900 dark:text-white mb-4 flex items-center">
+              <Briefcase className="h-5 w-5 mr-2 text-primary-600 dark:text-primary-400" />
+              Clientes Finales
+            </h2>
+
+            <div className="space-y-6">
+              {/* Add New Client Form */}
+              <div className="border-b border-slate-200 dark:border-slate-700 pb-6">
+                <h3 className="text-sm font-medium text-slate-900 dark:text-white mb-4">Agregar Nuevo Cliente</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="form-label">Nombre Cliente</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={newClient.name || ''}
+                      onChange={(e) => setNewClient(prev => ({ ...prev, name: e.target.value }))}
+                      placeholder="e.g., Empresa XYZ C.A."
+                    />
+                  </div>
+                  <div>
+                    <label className="form-label">RIF</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={newClient.rif || ''}
+                      onChange={(e) => setNewClient(prev => ({ ...prev, rif: e.target.value }))}
+                      placeholder="e.g., J-12345678-9"
+                    />
+                  </div>
+                  {/* Add fields for contact_info and additional_info if needed */}
+                  <div className="md:col-span-2 flex items-end">
+                    <button
+                      className="btn btn-primary"
+                      onClick={handleAddClient}
+                      disabled={!newClient.name || !newClient.rif}
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      Agregar Cliente
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Existing Clients Table & Search */}
+              <div>
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-sm font-medium text-slate-900 dark:text-white">Clientes Registrados</h3>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Buscar por nombre o RIF..."
+                      value={clientSearchTerm}
+                      onChange={(e) => setClientSearchTerm(e.target.value)}
+                      className="form-input pl-8 text-sm"
+                    />
+                    <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-700">
+                    <thead className="bg-slate-50 dark:bg-slate-800">
+                      <tr>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Nombre</th>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">RIF</th>
+                        <th scope="col" className="relative px-6 py-3">
+                          <span className="sr-only">Actions</span>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white dark:bg-slate-900 divide-y divide-slate-200 dark:divide-slate-700">
+                      {isLoadingClients ? (
+                        <tr><td colSpan={3} className="text-center py-4 text-slate-500">Cargando clientes...</td></tr>
+                      ) : clients.length > 0 ? (
+                        clients.map((client) => (
+                          <tr key={client.id}>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-900 dark:text-white">{client.name}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500 dark:text-slate-400">{client.rif}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                              <button onClick={() => toast(`Edit for ${client.name} not implemented`)} className="text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-200">
+                                <Edit className="h-4 w-4 inline" />
+                              </button>
+                              <button onClick={() => handleDeleteClient(client.id)} className="text-danger-600 hover:text-danger-900 dark:text-danger-400 dark:hover:text-danger-200">
+                                <Trash2 className="h-4 w-4 inline" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr><td colSpan={3} className="text-center py-4 text-slate-500">No se encontraron clientes.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                {/* Pagination Controls */}
+                {clientTotalPages > 1 && (
+                  <div className="mt-4 flex justify-between items-center text-sm">
+                    <button
+                      onClick={() => fetchClients(clientCurrentPage - 1)}
+                      disabled={clientCurrentPage <= 1 || isLoadingClients}
+                      className="btn btn-secondary btn-sm disabled:opacity-50"
+                    >
+                      <ChevronLeft className="h-4 w-4 mr-1" /> Anterior
+                    </button>
+                    <span className="text-slate-600 dark:text-slate-400">Página {clientCurrentPage} de {clientTotalPages}</span>
+                    <button
+                      onClick={() => fetchClients(clientCurrentPage + 1)}
+                      disabled={clientCurrentPage >= clientTotalPages || isLoadingClients}
+                      className="btn btn-secondary btn-sm disabled:opacity-50"
+                    >
+                      Siguiente <ChevronRight className="h-4 w-4 ml-1" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </motion.section>
+
 
         {/* Preferences */}
         <motion.section

@@ -1742,7 +1742,145 @@ app.delete('/api/vm-plans/:id', authenticate, requireAdmin, async (req, res) => 
     res.status(500).json({ error: 'Failed to delete VM plan' });
   }
 });
+// --- Final Client CRUD API Routes ---
 
+// GET /api/final-clients - List final clients with pagination and search
+app.get('/api/final-clients', authenticate, async (req, res) => {
+  const page = parseInt(req.query.page || '1', 10);
+  const limit = parseInt(req.query.limit || '10', 10);
+  const search = req.query.search || '';
+  const offset = (page - 1) * limit;
+
+  console.log(`--- GET /api/final-clients --- Page: ${page}, Limit: ${limit}, Search: '${search}'`);
+
+  try {
+    let query = 'SELECT * FROM final_clients';
+    let countQuery = 'SELECT COUNT(*) FROM final_clients';
+    const queryParams = [];
+    const countQueryParams = [];
+
+    if (search) {
+      const searchTerm = `%${search}%`;
+      query += ' WHERE name ILIKE $1 OR rif ILIKE $1';
+      countQuery += ' WHERE name ILIKE $1 OR rif ILIKE $1';
+      queryParams.push(searchTerm);
+      countQueryParams.push(searchTerm);
+    }
+
+    query += ` ORDER BY name ASC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
+    queryParams.push(limit, offset);
+
+    const [dataResult, countResult] = await Promise.all([
+      pool.query(query, queryParams),
+      pool.query(countQuery, countQueryParams)
+    ]);
+
+    const totalItems = parseInt(countResult.rows[0].count, 10);
+    const totalPages = Math.ceil(totalItems / limit);
+
+    res.json({
+      items: dataResult.rows,
+      pagination: {
+        currentPage: page,
+        totalPages: totalPages,
+        totalItems: totalItems,
+        limit: limit
+      }
+    });
+
+  } catch (err) {
+    console.error('Error fetching final clients:', err);
+    res.status(500).json({ error: 'Failed to retrieve final clients' });
+  }
+});
+
+// POST /api/final-clients - Create a new final client
+app.post('/api/final-clients', authenticate, requireAdmin, async (req, res) => {
+  const { name, rif, contact_info, additional_info } = req.body;
+  const created_by_user_id = req.user.userId; // Get user ID from authenticated request
+
+  console.log(`--- POST /api/final-clients --- Creating client: ${name}, RIF: ${rif}`);
+
+  if (!name || !rif) {
+    return res.status(400).json({ error: 'Name and RIF are required' });
+  }
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO final_clients (name, rif, contact_info, additional_info, created_by_user_id)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [name, rif, contact_info || null, additional_info || null, created_by_user_id]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error('Error creating final client:', err);
+    if (err.code === '23505') { // Unique constraint violation (likely RIF)
+      return res.status(409).json({ error: 'A client with this RIF already exists.' });
+    }
+    res.status(500).json({ error: 'Failed to create final client' });
+  }
+});
+
+// PUT /api/final-clients/:id - Update a final client
+app.put('/api/final-clients/:id', authenticate, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { name, rif, contact_info, additional_info } = req.body;
+
+  console.log(`--- PUT /api/final-clients/${id} --- Updating client: ${name}, RIF: ${rif}`);
+
+  if (!name || !rif) {
+    return res.status(400).json({ error: 'Name and RIF are required' });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE final_clients
+       SET name = $1, rif = $2, contact_info = $3, additional_info = $4, updated_at = now()
+       WHERE id = $5
+       RETURNING *`,
+      [name, rif, contact_info || null, additional_info || null, id]
+    );
+
+    if (result.rows.length === 0) {      return res.status(404).json({ error: 'Final client not found' });
+  }
+  res.json(result.rows[0]);
+} catch (err) {
+  console.error(`Error updating final client ${id}:`, err);
+  if (err.code === '23505') { // Unique constraint violation (likely RIF)
+    return res.status(409).json({ error: 'Another client with this RIF already exists.' });
+  }
+  res.status(500).json({ error: 'Failed to update final client' });
+}
+});
+
+// DELETE /api/final-clients/:id - Delete a final client
+app.delete('/api/final-clients/:id', authenticate, requireAdmin, async (req, res) => {
+const { id } = req.params;
+console.log(`--- DELETE /api/final-clients/${id} ---`);
+
+try {
+  // Check if client is associated with any VMs before deleting? Optional.
+  // const vmCheck = await pool.query('SELECT 1 FROM virtual_machines WHERE final_client_id = $1 LIMIT 1', [id]);
+  // if (vmCheck.rows.length > 0) {
+  //   return res.status(409).json({ error: 'Cannot delete client associated with existing VMs.' });
+  // }
+
+  const result = await pool.query('DELETE FROM final_clients WHERE id = $1 RETURNING id', [id]);
+
+  if (result.rowCount === 0) {
+    return res.status(404).json({ error: 'Final client not found' });
+  }
+  res.status(204).send(); // No Content
+} catch (err) {
+  console.error(`Error deleting final client ${id}:`, err);
+  // Handle potential foreign key constraint errors if not using ON DELETE SET NULL/CASCADE appropriately
+  res.status(500).json({ error: 'Failed to delete final client' });
+}
+});
+
+// --- End Final Client CRUD API Routes ---
+ 
 
 // Start the server
 app.listen(port, () => {
