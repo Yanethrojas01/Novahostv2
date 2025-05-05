@@ -38,9 +38,9 @@ export default function Hypervisors() {
       // Convert date strings to Date objects if necessary
       const formattedData = data.map(h => ({
         ...h,
-        lastSync: h.lastSync ? new Date(h.lastSync) : null,
-        createdAt: h.createdAt ? new Date(h.createdAt) : undefined, // Convert createdAt
-        updatedAt: h.updatedAt ? new Date(h.updatedAt) : undefined, // Convert updatedAt
+        lastSync: h.last_sync ? new Date(h.last_sync) : null,
+        createdAt: h.created_at ? new Date(h.created_at) : undefined, // Convert createdAt
+        updatedAt: h.updated_at ? new Date(h.updated_at) : undefined, // Convert updatedAt
       }));
       setHypervisors(formattedData);
     } catch (error) {
