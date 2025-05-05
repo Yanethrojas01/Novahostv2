@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Server, Cpu, MemoryStick as Memory } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { VMCreateParams, VMTemplate, VMPlan } from '../types/vm'; // Import VMPlan
-import { Hypervisor } from '../types/hypervisor'; // Import Hypervisor type
+import { Hypervisor } from '../types/hypervisor';
+import { FinalClient } from '../types/client'; // Import FinalClient type
 // import { supabase } from '../lib/supabase'; // Remove direct Supabase usage
 import { toast } from 'react-hot-toast';
 
@@ -16,8 +17,10 @@ export default function CreateVM() {
   const [isFetchingHypervisors, setIsFetchingHypervisors] = useState(true);
   const [isFetchingTemplates, setIsFetchingTemplates] = useState(false);
   const [isFetchingPlans, setIsFetchingPlans] = useState(false); // State for fetching plans
+  const [isFetchingClients, setIsFetchingClients] = useState(false); // State for fetching clients
   const [availableHypervisors, setAvailableHypervisors] = useState<Hypervisor[]>([]);
   const [templates, setTemplates] = useState<VMTemplate[]>([]); // Use VMTemplate type
+  const [availableClients, setAvailableClients] = useState<FinalClient[]>([]); // State for final clients
   const [availablePlans, setAvailablePlans] = useState<VMPlan[]>([]); // State for VM Plans
   const [configMode, setConfigMode] = useState<'plan' | 'custom'>('plan'); // 'plan' or 'custom'
 
@@ -34,6 +37,8 @@ export default function CreateVM() {
     start: true,
     tags: [], // Initialize tags as empty array
     templateId: undefined, // Initialize templateId
+    ticket: '', // Initialize ticket
+    finalClientId: undefined, // Initialize finalClientId
   });
 
   const [tagInput, setTagInput] = useState('');
@@ -81,6 +86,29 @@ export default function CreateVM() {
       }
     };
     fetchPlans();
+  }, []);
+
+  // Fetch final clients on mount
+  useEffect(() => {
+    const fetchClients = async () => {
+      setIsFetchingClients(true);
+      const token = localStorage.getItem('authToken');
+      try {
+        // Assuming pagination is handled or we fetch all for the dropdown
+        const response = await fetch(`${API_BASE_URL}/final-clients?limit=1000`, { // Fetch a large number for dropdown
+          headers: { ...(token && { 'Authorization': `Bearer ${token}` }) },
+        });
+        if (!response.ok) throw new Error('Failed to fetch final clients');
+        const data = await response.json(); // Assuming API returns { items: [...] }
+        setAvailableClients(data.items || []); // Adjust based on actual API response structure
+      } catch (error) {
+        console.error('Error fetching final clients:', error);
+        toast.error('Could not load final clients.');
+      } finally {
+        setIsFetchingClients(false);
+      }
+    };
+    fetchClients();
   }, []);
 
   // Fetch templates when hypervisor changes
@@ -320,6 +348,30 @@ export default function CreateVM() {
                     <option key={h.id} value={h.id}>
                       {h.name} ({h.type})
                     </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Ticket Input */}
+              <div>
+                <label htmlFor="ticket" className="form-label">Ticket (Opcional)</label>
+                <input
+                  type="text"
+                  id="ticket"
+                  className="form-input"
+                  placeholder="ej., INC-12345"
+                  value={vmParams.ticket || ''}
+                  onChange={(e) => setVmParams(prev => ({ ...prev, ticket: e.target.value }))}
+                />
+              </div>
+
+              {/* Final Client Select */}
+              <div>
+                <label htmlFor="finalClient" className="form-label">Cliente Final (Opcional)</label>
+                <select id="finalClient" className="form-select" value={vmParams.finalClientId || ''} onChange={(e) => setVmParams(prev => ({ ...prev, finalClientId: e.target.value || undefined }))} disabled={isFetchingClients || availableClients.length === 0}>
+                  <option value="">{isFetchingClients ? 'Cargando clientes...' : (availableClients.length === 0 ? 'No hay clientes' : 'Selecciona un cliente')}</option>
+                  {availableClients.map(client => (
+                    <option key={client.id} value={client.id}>{client.name} ({client.rif})</option>
                   ))}
                 </select>
               </div>

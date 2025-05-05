@@ -73,6 +73,8 @@ export interface VMCreateParams {
   start?: boolean;
   templateId?: string;
   tags?: string[];
+  ticket?: string; // Added ticket field
+  finalClientId?: string; // Added final client ID field
   planId?: string;
 }
 
