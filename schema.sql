@@ -1,6 +1,6 @@
 /*
   Esquema completo corregido - BoltV2
-  Orden correcto de creación de tablas y sin duplicaciones
+  Con tabla final_clients agregada
 */
 
 -- 1. Tablas base sin dependencias
@@ -23,6 +23,18 @@ CREATE TABLE users (
   updated_at timestamptz DEFAULT now()
 );
 
+-- Nueva tabla para clientes finales
+CREATE TABLE final_clients (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  rif text NOT NULL UNIQUE, -- Registro de Información Fiscal
+  contact_info jsonb, -- Información de contacto estructurada
+  additional_info text,
+  created_by_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+
 -- 2. Tablas con dependencias básicas
 CREATE TABLE hypervisors (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -38,7 +50,7 @@ CREATE TABLE hypervisors (
   updated_at timestamptz DEFAULT now()
 );
 
--- 3. Tablas que dependen de hypervisors y users
+-- 3. Tablas que dependen de hypervisors, users y final_clients
 CREATE TABLE virtual_machines (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name text NOT NULL,
@@ -49,7 +61,7 @@ CREATE TABLE virtual_machines (
   memory_mb integer NOT NULL,
   disk_gb integer NOT NULL,
   ticket text,
-  final_client text,
+  final_client_id uuid REFERENCES final_clients(id) ON DELETE SET NULL, -- Relación modificada
   created_by_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
   os text,
   created_at timestamptz DEFAULT now(),
@@ -88,7 +100,12 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Triggers para actualización automática de updated_at
+-- Triggers para todas las tablas
+CREATE TRIGGER update_final_clients_updated_at
+  BEFORE UPDATE ON final_clients
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at();
+
 CREATE TRIGGER update_hypervisors_updated_at
   BEFORE UPDATE ON hypervisors
   FOR EACH ROW
@@ -131,6 +148,7 @@ INSERT INTO users (username, email, password_hash, role_id, is_active) VALUES (
 
 -- Configuración de seguridad
 -- Habilitar RLS para todas las tablas
+ALTER TABLE final_clients ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hypervisors ENABLE ROW LEVEL SECURITY;
 ALTER TABLE virtual_machines ENABLE ROW LEVEL SECURITY;
 ALTER TABLE vm_metrics ENABLE ROW LEVEL SECURITY;
@@ -139,12 +157,20 @@ ALTER TABLE roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 
 -- Forzar RLS
+ALTER TABLE final_clients FORCE ROW LEVEL SECURITY;
 ALTER TABLE hypervisors FORCE ROW LEVEL SECURITY;
 ALTER TABLE virtual_machines FORCE ROW LEVEL SECURITY;
 ALTER TABLE vm_metrics FORCE ROW LEVEL SECURITY;
 ALTER TABLE vm_plans FORCE ROW LEVEL SECURITY;
 ALTER TABLE roles FORCE ROW LEVEL SECURITY;
 ALTER TABLE users FORCE ROW LEVEL SECURITY;
+
+-- Políticas de acceso para final_clients
+CREATE POLICY "Allow public read access to final clients" ON final_clients
+FOR SELECT USING (true);
+
+CREATE POLICY "Allow postgres user to manage final clients" ON final_clients
+FOR ALL TO postgres USING (true);
 
 -- Políticas de acceso
 -- Hypervisors
