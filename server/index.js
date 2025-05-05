@@ -1508,31 +1508,46 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
 
 // Helper function to fetch templates (similar to the one in GET /api/hypervisors/:id/templates)
 async function fetchProxmoxTemplates(proxmox) {
-  let allTemplates = [];
+  let allTemplatesMap = new Map(); // Use a Map for deduplication
   const nodes = await proxmox.nodes.$get();
   for (const node of nodes) {
-    const storageList = await proxmox.nodes.$(node.node).storage.$get();
-    for (const storage of storageList) {
-      if (storage.content.includes('iso') || storage.content.includes('vztmpl') || storage.content.includes('template')) { // Added 'template' for VM templates
-        const content = await proxmox.nodes.$(node.node).storage.$(storage.storage).content.$get();
-        const templates = content
-          .filter(item => item.content === 'iso' || item.content === 'vztmpl' || item.template === 1) // Check 'template' flag for VM templates
-          .map(item => ({
-            id: item.volid, // e.g., local:iso/ubuntu.iso or local:100/vm-100-disk-0.qcow2 for templates
-            name: item.volid.split('/')[1] || item.volid, // Basic name extraction
-            description: item.volid,
-            size: item.size,
-            path: item.volid,
-            // Determine type more accurately
-            type: item.content === 'iso' ? 'iso' : (item.template === 1 ? 'template' : 'vztmpl'),
-            version: item.format,
-            storage: storage.storage,
-          }));
-        allTemplates = allTemplates.concat(templates);
+    try { // Add try-catch for storage/content fetching per node
+      const storageList = await proxmox.nodes.$(node.node).storage.$get();
+      for (const storage of storageList) {
+        // Check if storage is active and readable - skip if not active?
+        // if (!storage.active) continue;
+
+        if (storage.content.includes('iso') || storage.content.includes('vztmpl') || storage.content.includes('template')) { // Added 'template' for VM templates
+          const content = await proxmox.nodes.$(node.node).storage.$(storage.storage).content.$get();
+          content
+            .filter(item => item.content === 'iso' || item.content === 'vztmpl' || item.template === 1) // Check 'template' flag for VM templates
+            .forEach(item => { // Use forEach instead of map+concat
+              const templateId = item.volid;
+              if (!allTemplatesMap.has(templateId)) { // Add only if not already present
+                allTemplatesMap.set(templateId, {
+                  id: templateId, // e.g., local:iso/ubuntu.iso or local:100/vm-100-disk-0.qcow2 for templates
+                  name: item.volid.split('/')[1] || item.volid, // Basic name extraction
+                  description: item.volid,
+                  size: item.size,
+                  path: item.volid,
+                  // Determine type more accurately
+                  type: item.content === 'iso' ? 'iso' : (item.template === 1 ? 'template' : 'vztmpl'),
+                  version: item.format,
+                  storage: storage.storage,
+                  // Add hypervisorType and specs if possible/needed for VMTemplate type
+                  // hypervisorType: 'proxmox', // Assuming proxmox here
+                  // specs: {}, // Default or fetch specs if possible
+                });
+              }
+            });
+        }
       }
+    } catch (nodeError) {
+        console.error(`Error fetching storage/content for node ${node.node}: ${nodeError.message}`);
+        // Continue with the next node
     }
   }
-  return allTemplates;
+  return Array.from(allTemplatesMap.values()); // Convert Map values back to an array
 }
 
 // Función mejorada de manejo de errores
