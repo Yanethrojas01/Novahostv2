@@ -953,9 +953,8 @@ app.get('/api/hypervisors', authenticate, async (req, res) => {
   }
 });
 // POST /api/hypervisors - Create new hyperviso
-app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => { // Added requireAdmin
-  //console.log('--- Received POST /api/hypervisors ---'); // <-- Añade esta línea
-    const { type, host, username, password, apiToken, tokenName } = req.body;
+app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
+  const { type, host, username, password, apiToken, tokenName } = req.body;
 
   // Validación mejorada
   const validationErrors = [];
@@ -972,42 +971,37 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => { /
       
       if (!hasToken && !hasPassword) {
           validationErrors.push('Proxmox requires either password or API token + token name');
-          //console.log('Proxmox requires either password or API token + token name');
       }
       
       if (apiToken && !tokenName) {
           validationErrors.push('Token name is required when using API token');
-          //console.log('Token name is required when using API token');
       }
       
       if (tokenName && !apiToken) {
           validationErrors.push('API token secret is required when using token name');
-          //console.log('API token secret is required when using token name');
       }
       
       if (!/^https?:\/\/[\w.-]+(:\d+)?$/.test(host)) {
           validationErrors.push('Invalid host format. Use http(s)://hostname[:port]');
-          //console.log('Invalid host format. Use http(s)://hostname[:port]');
       }
   }
-  // Validaciones específicas para vSphere
+  // Validaciones específicas para vSphere (ESXi/vCenter)
   else if (type === 'vsphere') {
       if (!password) {
           validationErrors.push('Password is required for vSphere connection');
       }
-      // Podríamos añadir una validación de formato de host más simple si es necesario
-      // if (!/^[\w.-]+$/.test(host) && !/^https?:\/\/[\w.-]+$/.test(host)) {
-      //     validationErrors.push('Invalid host format for vSphere. Use hostname or https://hostname');
-      // }
+      
+      // Formato más flexible para vSphere (acepta tanto hostname como URL)
+      if (!/^[\w.-]+(:\d+)?$/.test(host) && !/^https?:\/\/[\w.-]+(:\d+)?$/.test(host)) {
+          validationErrors.push('Invalid host format for vSphere. Use hostname or https://hostname[:port]');
+      }
   }
 
   if (validationErrors.length > 0) {
-    //console.log('Validation errors:', validationErrors);  
     return res.status(400).json({
           error: 'Validation failed',
           details: validationErrors
       });
-      
   }
 
   // Variables de procesamiento
@@ -1015,6 +1009,7 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => { /
   let lastSync = null;
   let cleanHost = host;
   const name = host.replace(/^https?:\/\//, '').split(/[/:]/)[0].replace(/[^\w-]/g, '-').substring(0, 50);
+  let vsphereSubtype = null; // Para vSphere
 
   try {
       if (type === 'proxmox') {
@@ -1030,8 +1025,6 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => { /
               username: username,
               timeout: 15000,
               rejectUnauthorized: false,
-              //ignoreUnauthorized: true,
-              //rejectUnauthorized: process.env.NODE_ENV === 'production'
           };
 
           // Configurar autenticación
@@ -1043,37 +1036,20 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => { /
           }
 
           // Crear cliente Proxmox
-         // const proxmox = new Proxmox(proxmoxConfig); 
-          const proxmox = proxmoxApi(proxmoxConfig);//prueba
-
-          // Probar conexión usando endpoint /version
-          // Corrección: Usar el método request genérico para /version
-          // const versionResponse = await proxmox.request('GET', '/version');
-          // // Ajuste: La respuesta de la API de Proxmox suele estar en response.data.data
-          // const pveVersion = versionResponse?.data?.data?.version;
-          // if (!pveVersion) {
-          //     throw new Error('Invalid Proxmox version response');
-          // }
+          const proxmox = proxmoxApi(proxmoxConfig);
 
           // Verificar nodos usando endpoint /nodes
           try {
-            const nodesResponse = await proxmox.nodes.$get(); // Ya funciona correctamente
-            
+            const nodesResponse = await proxmox.nodes.$get();
             
             if (!nodesResponse?.length) {
                 throw new Error('No nodes found in cluster');
             }
     
             // Obtener la versión desde el primer nodo
-            //const nodeName = nodesResponse.data[0].node;
-
-            //const nodeName = proxmox.nodesResponse.$(nodesResponse[0].node);//prueba
             const nodeName = nodesResponse[0].node;
-          
+            const versionResponse = await proxmox.nodes.$(nodeName).version.$get();
             
-            const versionResponse = await proxmox.nodes.$(nodeName).version.$get(); // Método específico según la biblioteca
-            
-    
             const pveVersion = versionResponse?.version;
             
             if (!pveVersion) {
@@ -1083,28 +1059,42 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => { /
             status = 'connected';
             lastSync = new Date();
             console.log(`Connected to Proxmox ${pveVersion} at ${cleanHost}:${port}`);
-        } catch (error) {
-            // Manejo de errores específico para Proxmox
-            throw error;
-        }
+          } catch (error) {
+              // Manejo de errores específico para Proxmox
+              throw error;
+          }
 
       } else if (type === 'vsphere') {
           // --- Lógica de Conexión a vSphere (REST API) ---
-          console.log(`Attempting vSphere REST API connection to: ${host} with user: ${username}`);
-          // Ensure host starts with https://, default port is 443
-          const vsphereApiUrl = host.startsWith('http') ? host.replace(/^http:/, 'https:') : `https://${host}`;
-          cleanHost = new URL(vsphereApiUrl).hostname; // Update cleanHost for DB saving
-
-          // Agent to allow self-signed certificates (USE WITH CAUTION IN PRODUCTION)
+          console.log(`Attempting vSphere connection to: ${host} with user: ${username}`);
+          
+          // Normalizar la URL para ESXi/vCenter
+          let vsphereApiUrl;
+          if (host.startsWith('http')) {
+              vsphereApiUrl = host.replace(/^http:/, 'https:');
+          } else {
+              // Si no tiene protocolo, añadir https:// y asegurarse de que no tiene puerto
+              const hostParts = host.split(':');
+              vsphereApiUrl = `https://${hostParts[0]}`;
+              // Si tiene puerto especificado, agregarlo
+              if (hostParts.length > 1 && hostParts[1]) {
+                  vsphereApiUrl += `:${hostParts[1]}`;
+              }
+          }
+          
+          // Extraer el hostname limpio para la base de datos
+          cleanHost = new URL(vsphereApiUrl).hostname;
+          
+          // Configurar agente para manejar certificados auto-firmados
           const agent = new https.Agent({
-            rejectUnauthorized: process.env.NODE_ENV === 'production' // Only allow in dev/test
+            rejectUnauthorized: false // Para entornos de prueba/desarrollo
           });
 
           let sessionId = null;
-          let vsphereSubtype = 'esxi'; // Asumir ESXi por defecto
+          vsphereSubtype = 'unknown'; // Valor inicial
 
           try {
-              // 1. Authenticate via REST API to get session token
+              // 1. Intentar autenticación para ESXi 6.7+ y vCenter - usando el endpoint de REST API moderno
               console.log(`Authenticating to ${vsphereApiUrl}/rest/com/vmware/cis/session`);
               const authResponse = await fetch(`${vsphereApiUrl}/rest/com/vmware/cis/session`, {
                   method: 'POST',
@@ -1112,99 +1102,127 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => { /
                       'Authorization': `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`,
                       'Accept': 'application/json'
                   },
-                  agent: agent // Use the custom agent
+                  agent: agent
               });
-              console.log("authrespons",authResponse)
-
-              // Intentar obtener más detalles del error 400
-              let errorBodyText = `Authentication failed (${authResponse.status})`;
-              if (!authResponse.ok) {
-                  try {
-                      const errorText = await authResponse.text(); // Intentar leer como texto
-                      if (errorText) {
-                          errorBodyText += `: ${errorText}`;
-                      }
-                  } catch (parseError) { /* Ignorar si no se puede leer el cuerpo */ }
-              }
-
-              if (!authResponse.ok) {
-                  console.error('vSphere authentication error:', errorBodyText);
-                  throw new Error(errorBodyText);
-              }
-
-              const sessionData = await authResponse.json();
-              sessionId = sessionData.value; // The session token
-
-              if (!sessionId) {
-                  console.error('vSphere session ID not found in response:', sessionData);
-                  throw new Error('Session ID not received from vSphere');
-              }
-              console.log(`vSphere session obtained: ${sessionId.substring(0, 10)}...`);
-
-              // 2. Test the connection by making a simple API call (e.g., list hosts)
-              console.log(`Testing connection by listing hosts: ${vsphereApiUrl}/rest/vcenter/host`);
-              const hostListResponse = await fetch(`${vsphereApiUrl}/rest/vcenter/host`, {
-                  method: 'GET',
-                  headers: {
-                      'vmware-api-session-id': sessionId,
-                      'Accept': 'application/json'
-                  },
-                  agent: agent // Use the custom agent
-              });
-
-              if (!hostListResponse.ok) {
-                  throw new Error(`Failed to list vSphere hosts (${hostListResponse.status}) after login`);
-              }
-
-              const hostListData = await hostListResponse.json();
-              console.log(`Successfully listed ${hostListData.value?.length || 0} hosts from vSphere.`);
-
-              // 2b. Try to determine if it's vCenter by accessing a specific endpoint
-              try {
-                  console.log(`Checking for vCenter specific endpoint: ${vsphereApiUrl}/rest/vcenter/deployment`);
-                  const deploymentCheck = await fetch(`${vsphereApiUrl}/rest/vcenter/deployment`, {
-                      method: 'GET',
-                      headers: { 'vmware-api-session-id': sessionId, 'Accept': 'application/json' },
-                      agent: agent
-                  });
-                  if (deploymentCheck.ok) {
-                      vsphereSubtype = 'vcenter'; // It's likely vCenter
-                      console.log(`Determined endpoint ${cleanHost} is vCenter.`);
-                  } else {
-                      console.log(`Endpoint ${cleanHost} is likely ESXi (deployment check status: ${deploymentCheck.status}).`);
+              
+              // Para ESXi 6.7 y vCenter 6.7+, esto debería funcionar
+              if (authResponse.ok) {
+                  const sessionData = await authResponse.json();
+                  sessionId = sessionData.value;
+                  
+                  if (!sessionId) {
+                      throw new Error('Session ID not received from vSphere');
                   }
-              } catch (subtypeError) {
-                  console.warn(`Could not determine vSphere subtype for ${cleanHost}, assuming ESXi:`, subtypeError.message);
+                  
+                  console.log(`vSphere session obtained: ${sessionId.substring(0, 10)}...`);
+                  
+                  // 2. Detectar si es ESXi o vCenter
+                  try {
+                      // Primero, intentar con un endpoint específico de vCenter
+                      const vcenterCheck = await fetch(`${vsphereApiUrl}/rest/vcenter/deployment/install/initial-data`, {
+                          method: 'GET',
+                          headers: { 'vmware-api-session-id': sessionId, 'Accept': 'application/json' },
+                          agent: agent
+                      });
+                      
+                      if (vcenterCheck.ok || vcenterCheck.status === 403) { // 403 también indica que existe el endpoint
+                          vsphereSubtype = 'vcenter';
+                          console.log(`Determined ${cleanHost} is vCenter`);
+                      } else {
+                          // Si no es vCenter, verificar que sea ESXi
+                          const hostListResponse = await fetch(`${vsphereApiUrl}/rest/vcenter/host`, {
+                              method: 'GET',
+                              headers: { 'vmware-api-session-id': sessionId, 'Accept': 'application/json' },
+                              agent: agent
+                          });
+                          
+                          if (hostListResponse.ok) {
+                              const hostListData = await hostListResponse.json();
+                              
+                              // En ESXi standalone normalmente esto devuelve una lista vacía o un solo host
+                              if (Array.isArray(hostListData.value)) {
+                                  vsphereSubtype = 'esxi';
+                                  console.log(`Determined ${cleanHost} is ESXi`);
+                              }
+                          }
+                      }
+                      
+                      // Si aún no pudimos determinar, intentar otro enfoque para ESXi
+                      if (vsphereSubtype === 'unknown') {
+                          // Intentar acceder a un recurso solo de ESXi
+                          const esxiCheck = await fetch(`${vsphereApiUrl}/rest/host/status`, {
+                              method: 'GET',
+                              headers: { 'vmware-api-session-id': sessionId, 'Accept': 'application/json' },
+                              agent: agent
+                          });
+                          
+                          if (esxiCheck.ok) {
+                              vsphereSubtype = 'esxi';
+                              console.log(`Confirmed ${cleanHost} is ESXi through /rest/host/status endpoint`);
+                          }
+                      }
+                      
+                      // Si todo lo anterior falló pero tenemos conexión, asumir ESXi
+                      if (vsphereSubtype === 'unknown') {
+                          vsphereSubtype = 'esxi';
+                          console.log(`Assuming ${cleanHost} is ESXi (could not determine definitively)`);
+                      }
+                      
+                      status = 'connected';
+                      lastSync = new Date();
+                      console.log(`Successfully connected to ${vsphereSubtype} at ${vsphereApiUrl}`);
+                      
+                  } catch (typeDetectionError) {
+                      console.warn(`Could not determine vSphere type, assuming ESXi:`, typeDetectionError.message);
+                      vsphereSubtype = 'esxi'; // Valor predeterminado si no podemos determinar
+                      status = 'connected'; // Aún así, la conexión fue exitosa
+                  }
+              } else {
+                  // Si falla la autenticación moderna, intentar con endpoints específicos de ESXi 6.5 o anterior
+                  console.log(`Modern auth failed (${authResponse.status}), trying legacy ESXi auth...`);
+                  
+                  // Para ESXi más antiguos que pueden no tener la API REST completa
+                  const legacyAuthResponse = await fetch(`${vsphereApiUrl}/ui/login`, {
+                      method: 'POST',
+                      headers: {
+                          'Content-Type': 'application/x-www-form-urlencoded',
+                      },
+                      body: `userName=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`,
+                      agent: agent,
+                      redirect: 'manual' // No seguir redirecciones
+                  });
+                  
+                  // Verificar cookies de sesión
+                  const cookies = legacyAuthResponse.headers.get('set-cookie');
+                  if (legacyAuthResponse.status === 302 && cookies) {
+                      console.log(`Legacy ESXi session obtained via cookies`);
+                      vsphereSubtype = 'esxi-legacy';
+                      status = 'connected';
+                      lastSync = new Date();
+                  } else {
+                      throw new Error(`Authentication failed for both modern and legacy ESXi interfaces`);
+                  }
               }
-              // If both steps succeeded:
-              status = 'connected';
-              lastSync = new Date();
-              console.log(`Successfully connected to vSphere REST API at ${vsphereApiUrl}`);
-
           } catch (vsphereError) {
-              console.error(`vSphere REST API connection failed for ${vsphereApiUrl}:`, vsphereError.message);
-              status = 'error'; // Mantener 'error' si la conexión falla
-              // Podrías lanzar el error para que sea capturado por el catch general
-              // throw vsphereError; // Descomenta si quieres que el error detenga la inserción
+              console.error(`vSphere connection failed for ${vsphereApiUrl}:`, vsphereError.message);
+              status = 'error';
+              throw new Error(`vSphere connection failed: ${vsphereError.message}`);
           } finally {
-              // 3. Logout: Always try to delete the session
+              // Cerrar sesión si existe
               if (sessionId) {
                   try {
                       console.log(`Logging out vSphere session ${sessionId.substring(0, 10)}...`);
                       await fetch(`${vsphereApiUrl}/rest/com/vmware/cis/session`, {
                           method: 'DELETE',
                           headers: { 'vmware-api-session-id': sessionId },
-                          agent: agent // Use the custom agent
+                          agent: agent
                       });
                   } catch (logoutError) {
-                      console.warn(`Failed to logout vSphere session ${sessionId.substring(0, 10)}...:`, logoutError.message);
+                      console.warn(`Failed to logout vSphere session:`, logoutError.message);
                   }
               }
           }
       }
-
-      // Variable para guardar el subtipo determinado (solo relevante para vSphere)
-      const determinedSubtype = (type === 'vsphere' && status === 'connected') ? vsphereSubtype : null;
 
       // Insertar en base de datos
       const dbResult = await pool.query(
@@ -1212,16 +1230,16 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => { /
               name, type, host, username,
               api_token, token_name, vsphere_subtype, status, last_sync
            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-           RETURNING id, name, type, host, username, status, last_sync, created_at`,
+           RETURNING id, name, type, host, username, vsphere_subtype, status, last_sync, created_at`,
           [
               name,
               type,
-              // Corrección: Guardar siempre con el puerto estándar de Proxmox (8006)
-              type === 'proxmox' ? `${cleanHost}:8006` : cleanHost, // Guardar solo hostname para vSphere
+              // Guardar host según el tipo
+              type === 'proxmox' ? `${cleanHost}:8006` : cleanHost,
               username,
               apiToken || null,
               tokenName || null,
-              determinedSubtype, // Añadir el subtipo aquí
+              vsphereSubtype, // Guardar el subtipo detectado para vSphere
               status,
               lastSync
           ]
@@ -1240,43 +1258,56 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => { /
 
       const errorInfo = {
           code: 500,
-          message: 'Proxmox API Error',
+          message: `${type.charAt(0).toUpperCase() + type.slice(1)} connection error`,
           suggestion: 'Check connection details and credentials'
       };
 
-      // Manejar errores de la API de Proxmox
+      // Manejar errores específicos según el tipo
       if (type === 'proxmox' && error.response) {
           errorInfo.code = error.response.status;
           errorInfo.message = error.response.data?.errors?.join(', ') || error.message;
           
-          // Errores comunes
+          // Errores comunes de Proxmox
           if (errorInfo.code === 401) {
               errorInfo.suggestion = 'Verify token/user permissions in Proxmox';
           } else if (errorInfo.code === 403) {
               errorInfo.suggestion = 'Check user role privileges';
           } else if (errorInfo.code === 595) {
-              errorInfo.suggestion = process.env.NODE_ENV === 'production' 
-                  ? 'Install valid SSL certificate' 
-                  : 'Set NODE_ENV=development to allow self-signed certs';
+              errorInfo.suggestion = 'SSL certificate verification failed';
           }
       }
-      // Errores de conexión
+      // Errores específicos de vSphere
+      else if (type === 'vsphere') {
+          // Mapear errores comunes de vSphere/ESXi
+          if (error.message.includes('ECONNREFUSED')) {
+              errorInfo.code = 503;
+              errorInfo.message = 'Connection refused';
+              errorInfo.suggestion = 'Check if the ESXi/vCenter host is reachable and the port is correct';
+          } else if (error.message.includes('Authentication failed')) {
+              errorInfo.code = 401;
+              errorInfo.message = 'Authentication failed';
+              errorInfo.suggestion = 'Verify username and password for vSphere';
+          } else if (error.message.includes('certificate')) {
+              errorInfo.code = 495;
+              errorInfo.message = 'SSL certificate error';
+              errorInfo.suggestion = 'The server uses an invalid SSL certificate';
+          }
+      }
+      // Errores de conexión generales
       else if (error.code === 'ECONNREFUSED') {
           errorInfo.code = 503;
           errorInfo.message = 'Connection refused';
           errorInfo.suggestion = `Check ${type} service and firewall rules`;
-      }
-      // Otros errores (incluidos los lanzados manualmente desde vSphere try/catch)
-      else {
+      } else {
+          // Otros errores
           errorInfo.message = error.message || 'An unknown error occurred';
-          // Podrías intentar extraer un código si el error lo tiene
       }
 
       console.error(`Hypervisor creation failed: ${errorInfo.message}`, {
           type,
           host: cleanHost,
           username,
-          authMethod: apiToken ? 'token' : 'password',
+          authMethod: type === 'proxmox' && apiToken ? 'token' : 'password',
           error: error.stack
       });
 
