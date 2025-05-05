@@ -1,4 +1,4 @@
-import { ChevronRight, HardDrive, Monitor, Power, SquareSlash, Zap } from 'lucide-react';
+import { ChevronRight, HardDrive, Monitor, Power, SquareSlash, Zap, Ticket, User, Calendar } from 'lucide-react'; // Added Ticket, User, Calendar
 import { VM } from '../../types/vm';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
@@ -47,7 +47,7 @@ export default function VirtualMachineCard({ vm, onAction }: VirtualMachineCardP
           </div>
         </div>
         
-        <div className="grid grid-cols-2 gap-4 mb-4">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2 mb-4 text-sm">
           <div className="flex items-center space-x-2">
             <Monitor className="h-4 w-4 text-slate-400" />
             <span className="text-sm text-slate-600 dark:text-slate-300">
@@ -68,12 +68,40 @@ export default function VirtualMachineCard({ vm, onAction }: VirtualMachineCardP
               {vm.specs.disk} GB
             </span>
           </div>
+          {/* Moved Created Date here */}
           <div className="flex items-center space-x-2">
-            <div className="text-xs text-slate-500 dark:text-slate-400">
-              Created: {format(new Date(vm.createdAt), 'MMM d, yyyy')}
-            </div>
+            <Calendar className="h-4 w-4 text-slate-400" />
+            <span className="text-slate-500 dark:text-slate-400">
+              {format(new Date(vm.createdAt), 'MMM d, yyyy')}
+            </span>
           </div>
         </div>
+
+        {/* Additional Info: Ticket & Client */}
+        {(vm.ticket || vm.finalClientId) && (
+          <div className="border-t border-slate-200 dark:border-slate-600 pt-2 mt-2 mb-4 space-y-1 text-sm">
+            {vm.ticket && (
+              <div className="flex items-center space-x-2">
+                <Ticket className="h-4 w-4 text-slate-400" />
+                <span className="text-slate-600 dark:text-slate-300 truncate" title={vm.ticket}>Ticket: {vm.ticket}</span>
+              </div>
+            )}
+            {/* Display Client Name if available, otherwise fallback or nothing */}
+            {vm.finalClientName && ( // Prefer showing name if backend provides it
+              <div className="flex items-center space-x-2">
+                <User className="h-4 w-4 text-slate-400" />
+                <span className="text-slate-600 dark:text-slate-300 truncate" title={vm.finalClientName}>Cliente: {vm.finalClientName}</span>
+              </div>
+            )}
+            {/* Optional: Show Client ID if name is not available */}
+            {/* {!vm.finalClientName && vm.finalClientId && (
+              <div className="flex items-center space-x-2">
+                <User className="h-4 w-4 text-slate-400" />
+                <span className="text-xs text-slate-500 dark:text-slate-400">Client ID: {vm.finalClientId.substring(0, 8)}...</span>
+              </div>
+            )} */}
+          </div>
+        )}
         
         {vm.ipAddresses && vm.ipAddresses.length > 0 && (
           <div className="mb-3">

@@ -40,6 +40,9 @@ export interface VM {
   lastStatusChange?: Date;
   tags?: string[];
   ipAddresses?: string[];
+  ticket?: string; // Added from schema.sql
+  finalClientId?: string; // Added from schema.sql
+  finalClientName?: string; // Optional: If backend provides the name via JOIN
 }
 
 export interface VMMetrics {
