@@ -1348,20 +1348,37 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
         };
         const proxmox = proxmoxApi(proxmoxConfig);
 
-        // Fetch nodes, storage, templates in parallel
-        const [nodesData, storageData, templatesData] = await Promise.all([
-          proxmox.nodes.$get().catch(e => { console.error(`Error fetching nodes for ${id}:`, e.message); return []; }), // Fetch nodes
+        // Fetch basic node list, storage, templates in parallel
+        const [basicNodesData, storageData, templatesData] = await Promise.all([
+          proxmox.nodes.$get().catch(e => { console.error(`Error fetching basic node list for ${id}:`, e.message); return []; }), // Fetch basic node list
           proxmox.storage.$get().catch(e => { console.error(`Error fetching storage for ${id}:`, e.message); return []; }), // Fetch storage
           fetchProxmoxTemplates(proxmox).catch(e => { console.error(`Error fetching templates for ${id}:`, e.message); return []; }) // Use helper for templates
         ]);
 
+        // --- Fetch DETAILED status for each node ---
+        const detailedNodesData = await Promise.all(
+          basicNodesData.map(async (node) => {
+            try {
+              const nodeStatus = await proxmox.nodes.$(node.node).status.$get();
+              return { // Combine basic info with detailed status
+                ...node, // Keep basic info like 'node' name
+                detailedStatus: nodeStatus, // Add detailed status under a new key
+              };
+            } catch (nodeStatusError) {
+              console.error(`Error fetching status for node ${node.node}:`, nodeStatusError.message);
+              return { ...node, detailedStatus: null }; // Return basic info with null status on error
+            }
+          })
+        );
+        // --- End Detailed Node Fetch ---
+
         // Add details to the hypervisor object
-        hypervisor.nodes = nodesData; // Assuming API returns structure matching NodeResource
+        hypervisor.nodes = basicNodesData; // Use basicNodesData here
         hypervisor.storage = storageData; // Assuming API returns structure matching StorageResource
         hypervisor.templates = templatesData; // Assuming helper returns structure matching VMTemplate/NodeTemplate
         hypervisor.planCapacityEstimates = []; // Initialize capacity estimates array
 
-        console.log(`Fetched details for ${id}: ${nodesData.length} nodes, ${storageData.length} storage, ${templatesData.length} templates`);
+        console.log(`Fetched details for ${id}: ${basicNodesData.length} nodes, ${storageData.length} storage, ${templatesData.length} templates`); // Use basicNodesData here
 
         // --- Calculate Aggregated Resources for Display ---
         let aggTotalCpuCores = 0;
@@ -1371,16 +1388,19 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
         let aggTotalDiskBytes = 0;
         let aggUsedDiskBytes = 0;
 
-        if (nodesData.length > 0) {
-            nodesData.forEach(node => {
-                const nodeTotalCores = node.cpu?.cores || 0;
+        // Use detailedNodesData for calculation
+        if (detailedNodesData.length > 0) {
+            detailedNodesData.forEach(node => {
+                if (!node.detailedStatus) return; // Skip nodes where status fetch failed
+
+                const nodeTotalCores = node.detailedStatus.cpuinfo?.cores || 0;
                 aggTotalCpuCores += nodeTotalCores;
                 // Use node.cpu usage (fraction 0-1) * cores for used estimate
-                aggUsedCpuCores += (node.cpu?.usage || 0) * nodeTotalCores;
-                aggTotalMemoryBytes += node.memory?.total || 0;
-                aggUsedMemoryBytes += node.memory?.used || 0;
+                aggUsedCpuCores += (node.detailedStatus.cpu || 0) * nodeTotalCores; // Use detailed status CPU usage
+                aggTotalMemoryBytes += node.detailedStatus.memory?.total || 0; // Use detailed status memory
+                aggUsedMemoryBytes += node.detailedStatus.memory?.used || 0; // Use detailed status memory
             });
-        }
+        } // End calculation using detailedNodesData
 
         if (storageData.length > 0) {
             storageData.forEach(storage => {
@@ -1394,7 +1414,7 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
         // --- End Aggregated Resources Calculation ---
 
         // --- Calculate Available Resources and Plan Capacity ---
-        if (nodesData.length > 0 && storageData.length > 0) {
+        if (basicNodesData.length > 0 && storageData.length > 0) {
           // 1. Aggregate Available Resources
           let totalCpuCores = 0;
           let usedCpuCores = 0; // Approximation based on usage percentage

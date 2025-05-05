@@ -22,6 +22,7 @@ export interface Hypervisor {
   templates?: VMTemplate[]; // Use VMTemplate if it matches OSTemplate structure
   planCapacityEstimates?: PlanCapacityEstimate[]; // Added from details page logic
   aggregatedStats?: AggregatedStats; // Added from details page logic
+  detailsError?: string; // Added to hold error message if details fetch fails
 }
 
 export interface HypervisorCredentials {

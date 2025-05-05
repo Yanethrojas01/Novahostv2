@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Cloud, Server as ServersIconLucide, Clock, AlertCircle, Cpu, MemoryStick, Database, Layers, Calculator } from 'lucide-react'; // Renamed ServersIcon to avoid conflict, added Calculator
-import { Hypervisor, HypervisorDetailsData, AggregatedStats } from '../types/hypervisor'; // Import AggregatedStats
+import { Hypervisor, AggregatedStats } from '../types/hypervisor'; // Import AggregatedStats, removed HypervisorDetailsData
 import { toast } from 'react-hot-toast';
 // import { formatDistanceToNow } from 'date-fns'; // Removed unused import
 import { formatBytes } from '../utils/formatters'; // Assuming you have this utility
@@ -11,7 +11,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
 export default function HypervisorDetails() {
   const { id } = useParams<{ id: string }>(); // Get ID from URL
-  const [hypervisor, setHypervisor] = useState<HypervisorDetailsData | null>(null); // <-- Use HypervisorDetailsData type
+  const [hypervisor, setHypervisor] = useState<Hypervisor | null>(null); // <-- Use Hypervisor type
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,7 +38,7 @@ export default function HypervisorDetails() {
           throw new Error(errorData.error || `Error HTTP: ${response.status}`);
         }
 
-        const data: HypervisorDetailsData = await response.json(); // Use the more specific type
+        const data: Hypervisor = await response.json(); // Use the Hypervisor type
         // Convert date strings if necessary
         setHypervisor({
           ...data,
