@@ -316,7 +316,7 @@ app.get('/api/vsphere/vms', authenticate, (req, res) => {
 // POST /api/vms - Create a new VM
 app.post('/api/vms', authenticate, async (req, res) => {
   // Cast the body to the expected type (ensure VMCreateParams is imported or defined if needed)
-  const params = req.body; // as VMCreateParams;
+  const params = req.body; // as VMCreateParams; 
   console.log('--- Received POST /api/vms --- Params:', params);
 
   // Basic Validation - Check templateId instead of specs.os for template selection
@@ -327,11 +327,11 @@ app.post('/api/vms', authenticate, async (req, res) => {
   try {
     // 1. Get Hypervisor Details
     const { rows: [hypervisor] } = await pool.query(
-      `SELECT id, type, host, username, api_token, token_name, status
+      `SELECT id, type, host, username, api_token, token_name, status 
        FROM hypervisors WHERE id = $1`,
       [params.hypervisorId]
     );
-
+console.log(hypervisor)
     if (!hypervisor) {
       return res.status(404).json({ error: 'Target hypervisor not found' });
     }
@@ -428,42 +428,9 @@ app.post('/api/vms', authenticate, async (req, res) => {
       }
     } // Add else if for vSphere later
     // --- End Proxmox Logic ---
-
-    // --- Insert VM record into the database ---
-    if (newVmId && creationResult) { // Only insert if Proxmox part was initiated
-      console.log(`Inserting VM record into database for Proxmox VMID: ${newVmId}`);
-      try {
-        const insertResult = await pool.query(
-          `INSERT INTO virtual_machines (name, description, hypervisor_id, status, cpu_cores, memory_mb, disk_gb, ticket, final_client_id, created_by_user_id, os)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-           RETURNING id`, // Return the new DB UUID
-          [
-            params.name,
-            params.description || null,
-            params.hypervisorId,
-            'creating', // Initial status
-            params.specs.cpu,
-            params.specs.memory,
-            params.specs.disk,
-            params.ticket || null,
-            params.finalClientId || null,
-            req.user.userId, // Get user ID from authenticated request
-            params.specs.os || null // Or derive from template if possible
-          ]
-        );
-        console.log(`Successfully inserted VM record with DB ID: ${insertResult.rows[0].id}`);
-      } catch (dbError) {
-        console.error('Error inserting VM record into database after Proxmox creation:', dbError);
-        // Decide how to handle this: maybe log it but still return success to frontend?
-        // Or return a specific error indicating partial success?
-        // For now, we'll log and continue, but the DB record might be missing.
-      }
-    }
-    // --- End Database Insert ---
-
     // Respond with success (including the new VM ID and task ID)
     res.status(202).json({ // 202 Accepted
-      id: newVmId, // This is the Proxmox VMID
+      id: newVmId,
       status: 'creating',
       message: `VM creation initiated for ${params.name} (ID: ${newVmId}). Task ID: ${creationResult}`,
       taskId: creationResult
@@ -480,6 +447,112 @@ app.post('/api/vms', authenticate, async (req, res) => {
   }
 });
 
+// POST /api/vms/:id/action - Implement real actions
+app.post('/api/vms/:id/action', authenticate, async (req, res) => { // Make it async
+  const { id: vmId } = req.params; // Rename id to vmId for clarity
+  const { action } = req.body; // 'start', 'stop', 'restart'
+
+  console.log(`--- Received POST /api/vms/${vmId}/action --- Action: ${action}`);
+
+  if (!['start', 'stop', 'restart'].includes(action)) {
+    return res.status(400).json({ error: 'Invalid action specified.' });
+  }
+
+  try {
+    // --- Step 1: Find the VM's Hypervisor and Node ---
+    // This is the complex part. We need to know which hypervisor and node hosts the VM.
+    // Option A: Query all connected hypervisors (inefficient but works for now)
+    // Option B: Frontend sends hypervisorId/nodeName in request body (better)
+    // Option C: Have a persistent mapping of vmId -> hypervisorId/nodeName (best)
+
+    // Let's try Option A for demonstration:
+    const { rows: connectedHypervisors } = await pool.query(
+      `SELECT id, type, host, username, api_token, token_name 
+       FROM hypervisors WHERE status = 'connected'`
+    );
+
+    let targetHypervisor = null;
+    let targetNode = null;
+    let proxmoxClient = null;
+
+    for (const hypervisor of connectedHypervisors) {
+      if (hypervisor.type === 'proxmox') {
+        const [dbHost, dbPortStr] = hypervisor.host.split(':');
+        const port = dbPortStr ? parseInt(dbPortStr, 10) : 8006;
+        const cleanHost = dbHost;
+
+        const proxmoxConfig = {
+          host: cleanHost, port: port, username: hypervisor.username,
+          tokenID: `${hypervisor.username}!${hypervisor.token_name}`,
+          tokenSecret: hypervisor.api_token, timeout: 10000, rejectUnauthorized: false
+        };
+        const proxmox = proxmoxApi(proxmoxConfig);
+
+        try {
+          // Use /cluster/resources to find the VM and its node
+          const vmResources = await proxmox.cluster.resources.$get({ type: 'vm' });
+          const foundVm = vmResources.find(vm => vm.vmid.toString() === vmId);
+
+          if (foundVm) {
+            targetHypervisor = hypervisor;
+            targetNode = foundVm.node;
+            proxmoxClient = proxmox;
+            console.log(`Found VM ${vmId} on node ${targetNode} of hypervisor ${hypervisor.id}`);
+            break; // Stop searching once found
+          }
+        } catch (findError) {
+          console.warn(`Could not check hypervisor ${hypervisor.id} for VM ${vmId}:`, findError.message);
+          // Continue to the next hypervisor
+        }
+      }
+      // TODO: Add vSphere logic here if needed
+    }
+
+    if (!targetHypervisor || !targetNode || !proxmoxClient) {
+      return res.status(404).json({ error: `VM ${vmId} not found on any connected Proxmox hypervisor.` });
+    }
+
+    // --- Step 2: Perform the action ---
+    let result;
+    const vmPath = proxmoxClient.nodes.$(targetNode).qemu.$(vmId).status;
+
+    console.log(`Performing action '${action}' on VM ${vmId} at ${targetNode}...`);
+
+    switch (action) {
+      case 'start':
+        result = await vmPath.start.$post();
+        break;
+      case 'stop':
+        result = await vmPath.stop.$post();
+        break;
+      case 'restart':
+        // Proxmox often uses 'reboot' for restart
+        result = await vmPath.reboot.$post();
+        break;
+      default:
+        throw new Error('Invalid action'); // Should be caught earlier
+    }
+
+    console.log(`Action '${action}' result for VM ${vmId}:`, result); // result is often the task ID
+
+    // Respond optimistically
+    res.json({
+      id: vmId,
+      status: 'pending', // Indicate the action is initiated
+      message: `Action '${action}' initiated for VM ${vmId}. Task ID: ${result}`,
+      taskId: result // Send back the Proxmox task ID
+    });
+
+  } catch (error) {
+    console.error(`Error performing action '${action}' on VM ${vmId}:`, error);
+    const errorDetails = getProxmoxError(error); // Use existing error handler
+    res.status(errorDetails.code || 500).json({
+      error: `Failed to perform action '${action}' on VM ${vmId}.`,
+      details: errorDetails.message,
+      suggestion: errorDetails.suggestion
+    });
+  }
+});
 
 // --- VM Listing API ---
 
@@ -726,98 +799,6 @@ app.get('/api/vms/:id/metrics', authenticate, async (req, res) => {
       error: `Failed to retrieve metrics for VM ${vmId}.`,
       details: errorDetails.message,
       suggestion: errorDetails.suggestion
-    });
-  }
-});
-
-// POST /api/vms/:id/action - Perform an action (start, stop, restart) on a VM
-app.post('/api/vms/:id/action', authenticate, async (req, res) => {
-  const { id: vmId } = req.params;
-  const { action } = req.body; // Expecting { action: 'start' | 'stop' | 'restart' }
-
-  console.log(`--- Received POST /api/vms/${vmId}/action --- Action: ${action}`);
-
-  // Validate action
-  const validActions = ['start', 'stop', 'restart', 'shutdown']; // Added shutdown
-  if (!action || !validActions.includes(action)) {
-    return res.status(400).json({ error: `Invalid or missing action. Valid actions are: ${validActions.join(', ')}` });
-  }
-
-  try {
-    // --- Step 1: Find the VM's Hypervisor and Node (Reusing logic) ---
-    const { rows: connectedHypervisors } = await pool.query(
-      `SELECT id, type, host, username, api_token, token_name 
-       FROM hypervisors WHERE status = 'connected'`
-    );
-
-    let targetHypervisor = null;
-    let targetNode = null;
-    let proxmoxClient = null;
-
-    for (const hypervisor of connectedHypervisors) {
-      if (hypervisor.type === 'proxmox') {
-        const [dbHost, dbPortStr] = hypervisor.host.split(':');
-        const port = dbPortStr ? parseInt(dbPortStr, 10) : 8006;
-        const cleanHost = dbHost;
-
-        const proxmoxConfig = {
-          host: cleanHost, port: port, username: hypervisor.username,
-          tokenID: `${hypervisor.username}!${hypervisor.token_name}`,
-          tokenSecret: hypervisor.api_token, timeout: 15000, rejectUnauthorized: false // Longer timeout for actions
-        };
-        const proxmox = proxmoxApi(proxmoxConfig);
-
-        try {
-          // Check if VM exists on this hypervisor/node
-          const vmResources = await proxmox.cluster.resources.$get({ type: 'vm' });
-          const foundVm = vmResources.find(vm => vm.vmid.toString() === vmId);
-
-          if (foundVm) {
-            targetHypervisor = hypervisor;
-            targetNode = foundVm.node;
-            proxmoxClient = proxmox;
-            console.log(`Found VM ${vmId} on node ${targetNode} of hypervisor ${hypervisor.id} for action '${action}'`);
-            break;
-          }
-        } catch (findError) {
-          console.warn(`Could not check hypervisor ${hypervisor.id} for VM ${vmId} action:`, findError.message);
-        }
-      }
-      // TODO: Add vSphere logic here if needed
-    }
-
-    if (!targetHypervisor || !targetNode || !proxmoxClient) {
-      return res.status(404).json({ error: `VM ${vmId} not found on any connected Proxmox hypervisor.` });
-    }
-
-    // --- Step 2: Execute the action ---
-    let actionResult;
-    console.log(`Executing action '${action}' on VM ${vmId} on node ${targetNode}...`);
-    if (action === 'start') {
-      actionResult = await proxmoxClient.nodes.$(targetNode).qemu.$(vmId).status.start.$post();
-    } else if (action === 'stop') {
-      actionResult = await proxmoxClient.nodes.$(targetNode).qemu.$(vmId).status.stop.$post();
-    } else if (action === 'restart' || action === 'reboot') { // Allow 'reboot' as well
-      actionResult = await proxmoxClient.nodes.$(targetNode).qemu.$(vmId).status.reboot.$post();
-    } else if (action === 'shutdown') {
-      actionResult = await proxmoxClient.nodes.$(targetNode).qemu.$(vmId).status.shutdown.$post(); // Requires Guest Agent
-    }
-
-    console.log(`Action '${action}' initiated for VM ${vmId}. Task ID: ${actionResult}`);
-    res.status(202).json({ message: `Action '${action}' initiated successfully for VM ${vmId}.`, taskId: actionResult }); // 202 Accepted
-
-  } catch (error) {
-    console.error(`Error performing action '${action}' on VM ${vmId}:`, error);
-    const errorDetails = getProxmoxError(error);
-    // Provide more specific error messages if possible
-    let suggestion = errorDetails.suggestion;
-    if (action === 'shutdown' && errorDetails.code === 500) {
-        suggestion = 'Shutdown requires the QEMU Guest Agent to be installed and running inside the VM. Try stopping instead.';
-    }
-    res.status(errorDetails.code || 500).json({
-      error: `Failed to perform action '${action}' on VM ${vmId}.`,
-      details: errorDetails.message,
-      suggestion: suggestion
     });
   }
 });
