@@ -7,6 +7,9 @@ Novahost is a modern web application for managing virtual machines across Proxmo
 - 🖥️ Unified VM management for Proxmox and vSphere
 - 🚀 Create and manage VMs with an intuitive interface
 - 📊 Real-time monitoring and metrics
+- 📈 VM creation statistics with date range selection and daily charts (`Stats.tsx`)
+- ℹ️ Detailed hypervisor view showing nodes, storage, templates, resource usage per node, and capacity predictions (`HypervisorDetails.tsx`)
+- 👤 User profile management page (`Profile.tsx`)
 - 🔐 Secure authentication and role-based access control
 - 🌙 Dark mode support
 - 🔄 Real-time updates and notifications
