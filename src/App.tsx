@@ -15,6 +15,7 @@ const Hypervisors = lazy(() => import('./pages/Hypervisors'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 const Profile = lazy(() => import('./pages/Profile'));
 const HypervisorDetails = lazy(() => import('./pages/HypervisorDetails'));
+const Stats = lazy(() => import('./pages/Stats'));
 
 function App() {
   const { isAuthenticated } = useAuth();
@@ -65,7 +66,11 @@ function App() {
               <HypervisorDetails />
             </ProtectedRoute>
           } />
-
+<Route path="/stats" element={
+            <ProtectedRoute>
+              <Stats />
+            </ProtectedRoute>
+          } />
         </Route>
 
         

@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "server": "node server/index.js",
-    "migrate:up": "node-pg-migrate -f node-pg-migrate.config.js up",
+    "migrate:up": "node-pg-migrate -f node-pg-migrate.config.cjs up",
     "migrate:down": "node-pg-migrate -f node-pg-migrate.config.js down",
     "migrate:create": "node-pg-migrate -f node-pg-migrate.config.js create"
   },

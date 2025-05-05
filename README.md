@@ -80,7 +80,6 @@ Novahost is a modern web application for managing virtual machines across Proxmo
 
        - Copy the generated hash output (the long string starting with `$2b$10$...`).
        - Paste this hash into the `INSERT INTO users` statement within the `migrations/schema.sql` file, replacing the placeholder `'YOUR_BCRYPT_HASH_HERE'`.
-psql "postgresql://postgres:ed16740939@localhost:5432/ver2" -f "d:/Github/boltv2/project/migrations/schema.sql
      - Run migrations to create the database schema:
 
        ```bash

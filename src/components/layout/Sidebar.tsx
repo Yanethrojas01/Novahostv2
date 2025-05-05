@@ -15,6 +15,7 @@ export default function Sidebar({ mobile = false, onClose }: SidebarProps) {
     { name: 'Dashboard', href: '/', icon: Home },
     { name: 'Crear VM', href: '/create-vm', icon: Plus },
     { name: 'Hypervisores', href: '/hypervisors', icon: Cloud },
+    { name: 'Estadisticas', href: '/stats', icon: BarChart3 },
     { name: 'Configuración', href: '/settings', icon: Cog },
   ];
 
