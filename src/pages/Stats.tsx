@@ -1,6 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
-import { BarChart, Calendar } from 'lucide-react';
+import { Calendar } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from 'recharts';
 
 const API_BASE_URL = 'http://localhost:3001/api'; // Asegúrate que sea la URL correcta de tu API
 
@@ -10,7 +19,7 @@ interface VMCreationStats {
   startDate: string;
   endDate: string;
   // Podrías añadir más detalles si la API los devuelve, como datos por día para un gráfico
-   dailyCounts?: { date: string; count: number }[];
+  dailyCounts?: { date: string; count: number }[] | null; // Allow null
 }
 
 export default function StatsPage() {
@@ -120,8 +129,26 @@ export default function StatsPage() {
           </p>
           <p className="text-4xl font-bold text-primary-600 dark:text-primary-400 mt-2">{stats.count}</p>
           <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">máquinas virtuales.</p>
-          {/* Aquí podrías añadir un gráfico si la API devuelve datos diarios */}
-          {/* Ejemplo: <BarChart data={stats.dailyCounts} /> */}
+a
+          {/* Gráfico de Barras si hay datos diarios */}
+          {stats.dailyCounts && stats.dailyCounts.length > 0 && (
+            <div className="mt-8">
+              <h3 className="text-md font-medium text-slate-900 dark:text-white mb-4">Creaciones por Día</h3>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart
+                  data={stats.dailyCounts}
+                  margin={{ top: 5, right: 20, left: -10, bottom: 5 }} // Ajusta márgenes si es necesario
+                >
+                  <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2} />
+                  <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
+                  <Tooltip contentStyle={{ backgroundColor: 'rgba(30, 41, 59, 0.8)', borderColor: 'rgba(71, 85, 105, 0.8)', borderRadius: '0.375rem' }} itemStyle={{ color: '#cbd5e1' }} labelStyle={{ color: '#f1f5f9', fontWeight: 'bold' }} />
+                  <Bar dataKey="count" fill="var(--color-primary-500)" name="VMs Creadas" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
         </div>
       )}
        {!stats && !isLoading && !error && (

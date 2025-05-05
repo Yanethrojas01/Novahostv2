@@ -1941,6 +1941,7 @@ try {
 // GET /api/stats/vm-creation-count - Count VMs created within a date range
 app.get('/api/stats/vm-creation-count', authenticate, async (req, res) => {
   const { startDate, endDate } = req.query;
+  const MAX_DAYS_FOR_DAILY_COUNTS = 90; // Maximum range to return daily counts
   console.log(`--- GET /api/stats/vm-creation-count --- Start: ${startDate}, End: ${endDate}`);
 
   // Basic Validation
@@ -1970,20 +1971,48 @@ app.get('/api/stats/vm-creation-count', authenticate, async (req, res) => {
   endOfDay.setDate(endOfDay.getDate() + 1);
 
   try {
-    const result = await pool.query(
+    // Calculate total count
+    const totalCountResult = await pool.query(
       'SELECT COUNT(*) FROM virtual_machines WHERE created_at >= $1 AND created_at < $2',
       [start, endOfDay] // Use adjusted end date for the query
     );
-
-    const count = parseInt(result.rows[0].count, 10);
+    const count = parseInt(totalCountResult.rows[0].count, 10);
     console.log(`Found ${count} VMs created between ${startDate} and ${endDate}`);
-    res.json({ count, startDate, endDate }); // Return the original dates for consistency
+
+    let dailyCounts = null;
+
+    // Calculate daily counts if the range is within the limit
+    const diffTime = Math.abs(end.getTime() - start.getTime());
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; // +1 to include start/end days
+
+    if (diffDays <= MAX_DAYS_FOR_DAILY_COUNTS) {
+      console.log(`Date range (${diffDays} days) is within limit (${MAX_DAYS_FOR_DAILY_COUNTS}), calculating daily counts.`);
+      const dailyResult = await pool.query(
+        `SELECT DATE(created_at) as date, COUNT(*) as count
+         FROM virtual_machines
+         WHERE created_at >= $1 AND created_at < $2
+         GROUP BY DATE(created_at)
+         ORDER BY date ASC`,
+        [start, endOfDay]
+      );
+      // Format date to YYYY-MM-DD string
+      dailyCounts = dailyResult.rows.map(row => ({
+        date: new Date(row.date).toISOString().split('T')[0],
+        count: parseInt(row.count, 10)
+      }));
+      console.log(`Calculated daily counts for ${dailyCounts.length} days.`);
+    } else {
+      console.log(`Date range (${diffDays} days) exceeds limit (${MAX_DAYS_FOR_DAILY_COUNTS}), skipping daily counts.`);
+    }
+
+    res.json({ count, startDate, endDate, dailyCounts }); // Include dailyCounts in the response
 
   } catch (err) {
     console.error('Error fetching VM creation stats:', err);
     res.status(500).json({ error: 'Failed to retrieve VM creation statistics' });
   }
 });
+
 
 // --- End Final Client CRUD API Routes ---
  
