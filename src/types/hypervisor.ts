@@ -1,6 +1,6 @@
 
 // Import detail types if they are defined elsewhere, otherwise define inline
-import { VMTemplate } from './vm'; // Assuming VMTemplate is defined in './vm'
+import { VMTemplate, VMSpecs } from './vm'; // Assuming VMTemplate is defined in './vm', added VMSpecs
 
 export type HypervisorType = 'proxmox' | 'vsphere'; // <-- Define the type here
 
@@ -14,11 +14,14 @@ export interface Hypervisor {
   status: 'connected' | 'disconnected' | 'error' | string; // Status from the database (string for flexibility)
   last_sync: string | null; // Last sync timestamp from the database (string from JSON)
   created_at?: string; // Added from DB (string from JSON)
+  vsphere_subtype?: 'vcenter' | 'esxi'; // Added subtype
   updated_at?: string; // Added from DB (string from JSON)
   // Optional details fetched for the details page
   nodes?: NodeResource[];
   storage?: StorageResource[];
   templates?: VMTemplate[]; // Use VMTemplate if it matches OSTemplate structure
+  planCapacityEstimates?: PlanCapacityEstimate[]; // Added from details page logic
+  aggregatedStats?: AggregatedStats; // Added from details page logic
 }
 
 export interface HypervisorCredentials {
@@ -26,10 +29,9 @@ export interface HypervisorCredentials {
   host: string;
   port?: number;
   username: string;
-  password: string;
+  password?: string; // Make password optional if using token
   apiToken?: string;
   tokenName?: string; // Added for Proxmox API Token ID (user@realm!tokenName)
-
 }
 
 export interface StorageResource {
@@ -45,13 +47,13 @@ export interface StorageResource {
 export interface NodeResource {
   id: string;
   name: string;
-  status: 'online' | 'offline' | 'maintenance';
+  status: 'online' | 'offline' | 'maintenance' | string; // Allow string for flexibility
   cpu?: { // Make optional as details might fail
     cores: number;
-    usage: number;
+    usage: number; // Fraction 0-1
   };
   memory?: { // Make optional as details might fail
-    total: number;
+    total: number; // Bytes
     used: number;
     free: number;
   };
@@ -59,27 +61,14 @@ export interface NodeResource {
 }
 
 // Renamed OSTemplate to NodeTemplate for clarity, or use VMTemplate if suitable
-export interface NodeTemplate {
-  id: string;
-  name: string;
-  description?: string;
-  size: number;
-  path: string;
-  type: 'iso' | 'template';
-  version?: string;
-  storage: string;
-}
+// This seems redundant if VMTemplate covers it. Let's keep VMTemplate from vm.ts
 
 // Type for the capacity estimation data added to the hypervisor details
 export interface PlanCapacityEstimate {
   planId: string;
   planName: string;
   estimatedCount: number;
-  specs: {
-    cpu: number;
-    memory: number;
-    disk: number;
-  };
+  specs: VMSpecs; // Use VMSpecs from vm.ts
 }
 
 // Type for aggregated stats calculated by the backend for details page
@@ -93,13 +82,5 @@ export interface AggregatedStats {
   storagePoolCount: number;
 }
 
-export interface HypervisorDetailsData extends Hypervisor { // Extiende Hypervisor para heredar campos base
-  // No es necesario redefinir id, name, type, host, status, etc.
-  // Override or add specific fields for the details view
-  nodes: NodeResource[]; // Use specific type
-  storage: StorageResource[]; // Use specific type
-  templates: VMTemplate[]; // Use specific type (assuming VMTemplate is correct)
-  planCapacityEstimates?: PlanCapacityEstimate[]; // Add the new field
-  aggregatedStats?: AggregatedStats; // Add the aggregated stats field
-  detailsError?: string; // Optional error message if details fail to load
-}
+// The HypervisorDetailsData interface was removed as the optional fields
+// were added directly to the base Hypervisor interface.

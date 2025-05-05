@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom'; // Import Link
-import { Cloud, Server as Servers, Clock, AlertCircle, Layers, Cpu, MemoryStick, Database, ExternalLink } from 'lucide-react'; // Added Cpu, MemoryStick, Database, ExternalLink
+import { Cloud, Server as Servers, Clock, AlertCircle, Layers, Cpu, MemoryStick, Database, ExternalLink, ServerCog } from 'lucide-react'; // Added Cpu, MemoryStick, Database, ExternalLink, ServerCog
 import { Hypervisor, NodeResource, StorageResource, NodeTemplate } from '../../types/hypervisor'; // Use NodeTemplate instead of OSTemplate
 import { formatDistanceToNow } from 'date-fns';
 import { motion } from 'framer-motion';
@@ -189,7 +189,11 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
                 <Servers className="h-5 w-5" />
               </div>
             ) : (
-              <div className="p-2 bg-blue-100 dark:bg-blue-900/20 rounded-lg text-blue-600 dark:text-blue-400">
+              // Cambiar color o icono si es vCenter vs ESXi
+              <div className={`p-2 rounded-lg ${
+                hypervisor.vsphere_subtype === 'vcenter' ? 'bg-purple-100 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400' // Purple for vCenter
+                                                        : 'bg-blue-100 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' // Blue for ESXi/Unknown
+              }`}>
                 <Cloud className="h-5 w-5" />
               </div>
             )}
@@ -199,6 +203,10 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
                 {hypervisor.name || hypervisor.type}
               </h3>
               <p className="text-sm text-slate-500 dark:text-slate-400">{hypervisor.host}</p>
+              {/* Mostrar subtipo si es vSphere */}
+              {hypervisor.type === 'vsphere' && hypervisor.vsphere_subtype && (
+                <span className="text-xs text-slate-400 dark:text-slate-500 capitalize">({hypervisor.vsphere_subtype})</span>
+              )}
             </div>
           </div>
           {/* Status Indicator */}

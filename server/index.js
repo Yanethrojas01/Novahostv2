@@ -827,7 +827,7 @@ async function getProxmoxClient(hypervisorId) {
   };
   return proxmoxApi(proxmoxConfig);
 }
-
+// --- Hypervisor CRUD API Routes ---
 // GET /api/hypervisors/:id/nodes
 app.get('/api/hypervisors/:id/nodes', authenticate, async (req, res) => {
   const { id } = req.params;
@@ -936,9 +936,6 @@ app.get('/api/hypervisors/:id/templates', authenticate, async (req, res) => {
     res.status(errorDetails.code || 500).json({ error: 'Failed to retrieve templates', details: errorDetails.message });
   }
 });
-
-
-// --- Hypervisor CRUD API Routes ---
 
 // GET /api/hypervisors - List all hypervisors
 app.get('/api/hypervisors', authenticate, async (req, res) => {
@@ -1104,6 +1101,7 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => { /
           });
 
           let sessionId = null;
+          let vsphereSubtype = 'esxi'; // Asumir ESXi por defecto
 
           try {
               // 1. Authenticate via REST API to get session token
@@ -1118,14 +1116,20 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => { /
               });
               console.log("authrespons",authResponse)
 
+              // Intentar obtener más detalles del error 400
+              let errorBodyText = `Authentication failed (${authResponse.status})`;
               if (!authResponse.ok) {
-                  let errorBody = `Authentication failed (${authResponse.status})`;
                   try {
-                      const errorJson = await authResponse.json();
-                      errorBody = errorJson.value?.messages?.[0]?.default_message || errorBody;
-                  } catch (parseError) { /* Ignore if body isn't JSON */ }
-                  console.error('vSphere authentication error:', errorBody);
-                  throw new Error(errorBody);
+                      const errorText = await authResponse.text(); // Intentar leer como texto
+                      if (errorText) {
+                          errorBodyText += `: ${errorText}`;
+                      }
+                  } catch (parseError) { /* Ignorar si no se puede leer el cuerpo */ }
+              }
+
+              if (!authResponse.ok) {
+                  console.error('vSphere authentication error:', errorBodyText);
+                  throw new Error(errorBodyText);
               }
 
               const sessionData = await authResponse.json();
@@ -1155,6 +1159,23 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => { /
               const hostListData = await hostListResponse.json();
               console.log(`Successfully listed ${hostListData.value?.length || 0} hosts from vSphere.`);
 
+              // 2b. Try to determine if it's vCenter by accessing a specific endpoint
+              try {
+                  console.log(`Checking for vCenter specific endpoint: ${vsphereApiUrl}/rest/vcenter/deployment`);
+                  const deploymentCheck = await fetch(`${vsphereApiUrl}/rest/vcenter/deployment`, {
+                      method: 'GET',
+                      headers: { 'vmware-api-session-id': sessionId, 'Accept': 'application/json' },
+                      agent: agent
+                  });
+                  if (deploymentCheck.ok) {
+                      vsphereSubtype = 'vcenter'; // It's likely vCenter
+                      console.log(`Determined endpoint ${cleanHost} is vCenter.`);
+                  } else {
+                      console.log(`Endpoint ${cleanHost} is likely ESXi (deployment check status: ${deploymentCheck.status}).`);
+                  }
+              } catch (subtypeError) {
+                  console.warn(`Could not determine vSphere subtype for ${cleanHost}, assuming ESXi:`, subtypeError.message);
+              }
               // If both steps succeeded:
               status = 'connected';
               lastSync = new Date();
@@ -1182,12 +1203,15 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => { /
           }
       }
 
+      // Variable para guardar el subtipo determinado (solo relevante para vSphere)
+      const determinedSubtype = (type === 'vsphere' && status === 'connected') ? vsphereSubtype : null;
+
       // Insertar en base de datos
       const dbResult = await pool.query(
           `INSERT INTO hypervisors (
-              name, type, host, username, 
-              api_token, token_name, status, last_sync
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+              name, type, host, username,
+              api_token, token_name, vsphere_subtype, status, last_sync
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
            RETURNING id, name, type, host, username, status, last_sync, created_at`,
           [
               name,
@@ -1197,6 +1221,7 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => { /
               username,
               apiToken || null,
               tokenName || null,
+              determinedSubtype, // Añadir el subtipo aquí
               status,
               lastSync
           ]

@@ -36,6 +36,7 @@ export default function Hypervisors() {
       }
       const data: Hypervisor[] = await response.json();
       // Convert date strings to Date objects if necessary
+      // Also ensure vsphere_subtype is handled (it should be included in ...h)
       const formattedData = data.map(h => ({
         ...h,
         lastSync: h.last_sync ? new Date(h.last_sync) : null,
@@ -55,14 +56,7 @@ export default function Hypervisors() {
     fetchHypervisors();
   }, []);
 
-  // Removed handleConnect as status should be determined by backend
-  // const handleConnect = (id: string) => { ... };
-
   const handleDelete = async (id: string) => {
-    // Optimistic UI update (optional)
-    // const originalHypervisors = [...hypervisors];
-    // setHypervisors(prev => prev.filter(h => h.id !== id));
-
     try {
       const token = localStorage.getItem('authToken'); // Recuperar token
       const response = await fetch(`${API_BASE_URL}/hypervisors/${id}`, {
@@ -73,8 +67,6 @@ export default function Hypervisors() {
       });
 
       if (!response.ok) {
-        // Revert optimistic update if failed
-        // setHypervisors(originalHypervisors);
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
@@ -85,8 +77,6 @@ export default function Hypervisors() {
     } catch (error) {
       console.error('Error deleting hypervisor:', error);
       toast.error('Error al eliminar el hipervisor.');
-      // Ensure state is correct if optimistic update was used and failed
-      // fetchHypervisors(); // Or revert as shown above
     }
   };
 
@@ -117,7 +107,6 @@ export default function Hypervisors() {
            throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
         }
 
-        // const addedHypervisor = await response.json(); // Use if needed
         toast.success('Hipervisor añadido correctamente.');
 
         // Reset form and close
@@ -144,7 +133,6 @@ export default function Hypervisors() {
         toast.error(errorMessage);
         setIsLoading(false); // Stop loading indicator on error
       }
-      // setIsLoading(false); // Already handled in fetchHypervisors finally block
     } else {
       toast.error('Por favor, rellena Host, Usuario y Contraseña O Token API + Nombre del Token.');
     }
@@ -242,7 +230,7 @@ export default function Hypervisors() {
               <input
                 type="text"
                 className="form-input"
-                placeholder="hostname.example.com"
+                placeholder={newHypervisor.type === 'proxmox' ? 'https://hostname.example.com:8006' : 'hostname.example.com'}
                 value={newHypervisor.host}
                 onChange={(e) => setNewHypervisor(prev => ({ ...prev, host: e.target.value }))}
               />
