@@ -8,7 +8,7 @@ import { FinalClient } from '../types/client'; // Import FinalClient type
 // import { supabase } from '../lib/supabase'; // Remove direct Supabase usage
 import { toast } from 'react-hot-toast';
 
-const API_BASE_URL = 'http://localhost:3001/api'; // Define API base URL
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL; // Read from .env
 
 export default function CreateVM() {
   const navigate = useNavigate();

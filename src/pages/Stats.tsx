@@ -11,7 +11,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 
-const API_BASE_URL = 'http://localhost:3001/api'; // Asegúrate que sea la URL correcta de tu API
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL; // Read from .env
 
 // Define una interfaz para la respuesta esperada de la API
 interface VMCreationStats {

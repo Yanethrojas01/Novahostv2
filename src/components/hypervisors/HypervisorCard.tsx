@@ -8,7 +8,7 @@ import { motion } from 'framer-motion';
 import { toast } from 'react-hot-toast';
 import { formatBytes } from '../../utils/formatters'; // Import the new utility
 // It might be better to define this in a central config file
-const API_BASE_URL = 'http://localhost:3001/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL; // Read from .env
 
 interface HypervisorCardProps {
   hypervisor: Hypervisor;

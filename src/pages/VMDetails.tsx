@@ -5,7 +5,7 @@ import type { VM, VMMetrics } from '../types/vm'; // Use the correct VM type and
 import { formatBytes } from '../utils/formatters'; // Helper function to format bytes (create this file if needed)
 import { toast } from 'react-hot-toast';
 
-const API_BASE_URL = 'http://localhost:3001/api'; // Define the base URL
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL; // Read from .env
 
 export default function VMDetails() {
   const { id } = useParams();

@@ -6,7 +6,7 @@ import VirtualMachineCard from '../components/dashboard/VirtualMachineCard';
 import { VM } from '../types/vm';
 import { toast } from 'react-hot-toast'; // For user feedback
 
-const API_BASE_URL = 'http://localhost:3001/api'; // Define the base URL like in Hypervisors.tsx
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL; // Read from .env
 
 export default function Dashboard() {
   const [vms, setVms] = useState<VM[]>([]); // State to hold VMs from API
