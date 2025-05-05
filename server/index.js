@@ -707,7 +707,7 @@ app.get('/api/vms/:id', authenticate, async (req, res) => {
         // os: vmConfig.ostype, // Map os type if needed
       },
       createdAt: new Date(vmStatus.uptime ? Date.now() - (vmStatus.uptime * 1000) : Date.now()), // Estimate create time from uptime or use now
-      // tags: vmConfig.tags ? vmConfig.tags.split(';') : [], // Parse tags if needed
+      tags: vmConfig.tags ? vmConfig.tags.split(';') : [], // Parse tags if needed
       // ipAddresses: [], // Getting IPs often requires the guest agent
     };
 

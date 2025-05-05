@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom'; // Import Link
 import { Cloud, Server as Servers, Clock, AlertCircle, Layers, Cpu, MemoryStick, Database, ExternalLink, ServerCog } from 'lucide-react'; // Added Cpu, MemoryStick, Database, ExternalLink, ServerCog
-import { Hypervisor, NodeResource, StorageResource, NodeTemplate } from '../../types/hypervisor'; // Use NodeTemplate instead of OSTemplate
+import { Hypervisor, NodeResource, StorageResource } from '../../types/hypervisor'; // Removed NodeTemplate
+import { VMTemplate } from '../../types/vm'; // Import VMTemplate from vm.ts
 import { formatDistanceToNow } from 'date-fns';
 import { motion } from 'framer-motion';
 import { toast } from 'react-hot-toast';
@@ -20,7 +21,7 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
   // State for detailed resources
   const [nodes, setNodes] = useState<NodeResource[] | null>(null);
   const [storage, setStorage] = useState<StorageResource[] | null>(null);
-  const [templates, setTemplates] = useState<NodeTemplate[] | null>(null); // Use NodeTemplate[] type
+  const [templates, setTemplates] = useState<VMTemplate[] | null>(null); // Use VMTemplate[] type
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
 
   const getStatusColor = (status: string) => {
