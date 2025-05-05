@@ -10,7 +10,7 @@ interface VMCreationStats {
   startDate: string;
   endDate: string;
   // Podrías añadir más detalles si la API los devuelve, como datos por día para un gráfico
-  // dailyCounts?: { date: string; count: number }[];
+   dailyCounts?: { date: string; count: number }[];
 }
 
 export default function StatsPage() {
@@ -67,9 +67,9 @@ export default function StatsPage() {
   }, [startDate, endDate]); // Depende de las fechas seleccionadas
 
   // Opcional: Cargar estadísticas iniciales al montar el componente
-  // useEffect(() => {
-  //   fetchStats();
-  // }, [fetchStats]); // fetchStats está envuelto en useCallback
+   useEffect(() => {
+     fetchStats();
+   }, [fetchStats]); // fetchStats está envuelto en useCallback
 
   return (
     <div>

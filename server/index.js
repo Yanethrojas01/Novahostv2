@@ -1935,6 +1935,55 @@ try {
 }
 });
 
+// --- Statistics Routes ---
+
+// GET /api/stats/vm-creation-count - Count VMs created within a date range
+app.get('/api/stats/vm-creation-count', authenticate, async (req, res) => {
+  const { startDate, endDate } = req.query;
+  console.log(`--- GET /api/stats/vm-creation-count --- Start: ${startDate}, End: ${endDate}`);
+
+  // Basic Validation
+  if (!startDate || !endDate) {
+    return res.status(400).json({ error: 'Both startDate and endDate query parameters are required.' });
+  }
+
+  // Validate date format (simple check for YYYY-MM-DD)
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
+    return res.status(400).json({ error: 'Dates must be in YYYY-MM-DD format.' });
+  }
+
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    return res.status(400).json({ error: 'Invalid date format provided.' });
+  }
+
+  if (start > end) {
+    return res.status(400).json({ error: 'startDate cannot be after endDate.' });
+  }
+
+  // Adjust end date to include the entire day (e.g., '2023-11-15' becomes '2023-11-16 00:00:00')
+  const endOfDay = new Date(end);
+  endOfDay.setDate(endOfDay.getDate() + 1);
+
+  try {
+    const result = await pool.query(
+      'SELECT COUNT(*) FROM virtual_machines WHERE created_at >= $1 AND created_at < $2',
+      [start, endOfDay] // Use adjusted end date for the query
+    );
+
+    const count = parseInt(result.rows[0].count, 10);
+    console.log(`Found ${count} VMs created between ${startDate} and ${endDate}`);
+    res.json({ count, startDate, endDate }); // Return the original dates for consistency
+
+  } catch (err) {
+    console.error('Error fetching VM creation stats:', err);
+    res.status(500).json({ error: 'Failed to retrieve VM creation statistics' });
+  }
+});
+
 // --- End Final Client CRUD API Routes ---
  
 
