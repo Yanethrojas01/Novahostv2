@@ -1391,7 +1391,7 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
         hypervisor.nodes = detailedNodesData; // Use detailedNodesData which now includes status, cpu, mem, rootfs, disks
         hypervisor.storage = storageData; // Assuming API returns structure matching StorageResource
         hypervisor.templates = templatesData; // Assuming helper returns structure matching VMTemplate/NodeTemplate
-        hypervisor.planCapacityEstimates = []; // Initialize capacity estimates array
+        // hypervisor.planCapacityEstimates = []; // Remove hypervisor-level estimates initialization
         console.log(`Fetched details for ${id}: ${detailedNodesData.length} nodes, ${storageData.length} storage, ${templatesData.length} templates`);
 
         // --- Calculate Aggregated Resources for Display ---
@@ -1401,6 +1401,12 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
         let aggUsedMemoryBytes = 0;
         let aggTotalDiskBytes = 0;
         let aggUsedDiskBytes = 0;
+
+        // --- Fetch Active VM Plans (needed for per-node calculation) ---
+        const { rows: activePlans } = await pool.query(
+          'SELECT id, name, specs FROM vm_plans WHERE is_active = true ORDER BY name'
+        );
+        console.log(`Fetched ${activePlans.length} active VM plans for capacity calculation.`);
 
         // Use detailedNodesData for calculation
         if (detailedNodesData.length > 0) {
@@ -1413,6 +1419,47 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
                 aggUsedCpuCores += (node.cpu?.usage || 0) * nodeTotalLogicalCpus; // Use node.cpu.usage
                 aggTotalMemoryBytes += node.memory?.total || 0; // Use node.memory.total
                 aggUsedMemoryBytes += node.memory?.used || 0; // Use node.memory.used
+
+                // --- Calculate Available Resources and Plan Capacity *for this node* ---
+                const nodeAvailableCpuCores = Math.max(0, (node.cpu?.cores || 0) * (1 - (node.cpu?.usage || 0)));
+                const nodeAvailableMemoryBytes = node.memory?.free || 0;
+                // Use rootfs for disk capacity on the node
+                const nodeAvailableDiskBytes = Math.max(0, (node.rootfs?.total || 0) - (node.rootfs?.used || 0));
+
+                node.planCapacityEstimates = activePlans.map(plan => {
+                  const planCpu = plan.specs?.cpu || 0;
+                  const planMemoryMB = plan.specs?.memory || 0;
+                  const planDiskGB = plan.specs?.disk || 0;
+
+                  // Convert plan specs to comparable units (Bytes for memory/disk)
+                  const planMemoryBytes = planMemoryMB * 1024 * 1024;
+                  const planDiskBytes = planDiskGB * 1024 * 1024 * 1024;
+
+                  // Calculate max possible based on *node's* resources
+                  const maxByCpu = planCpu > 0 ? Math.floor(nodeAvailableCpuCores / planCpu) : Infinity;
+                  const maxByMemory = planMemoryBytes > 0 ? Math.floor(nodeAvailableMemoryBytes / planMemoryBytes) : Infinity;
+                  // Use node's rootfs available disk for calculation
+                  const maxByDisk = planDiskBytes > 0 ? Math.floor(nodeAvailableDiskBytes / planDiskBytes) : Infinity;
+
+                  // The estimate is the minimum of the three constraints for this node
+                  const estimatedCount = Math.min(maxByCpu, maxByMemory, maxByDisk);
+
+                  // Handle Infinity case
+                  const finalCount = estimatedCount === Infinity ? 0 : estimatedCount;
+
+                  return {
+                    planId: plan.id,
+                    planName: plan.name,
+                    estimatedCount: finalCount,
+                    specs: plan.specs
+                  };
+                });
+                // --- End Per-Node Capacity Calculation ---
+
+                // Add node's rootfs usage to the aggregated disk calculation (if needed elsewhere, otherwise remove)
+                // aggTotalDiskBytes += node.rootfs?.total || 0;
+                // aggUsedDiskBytes += node.rootfs?.used || 0;
+
             });
         } // End calculation using detailedNodesData
 
@@ -1426,67 +1473,6 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
 
         const aggAvgCpuUsagePercent = aggTotalCpuCores > 0 ? (aggUsedCpuCores / aggTotalCpuCores) * 100 : 0;
         // --- End Aggregated Resources Calculation ---
-
-        // --- Calculate Available Resources and Plan Capacity ---
-        if (detailedNodesData.length > 0 && storageData.length > 0) {
-          // 1. Aggregate Available Resources
-          let totalCpuCores = 0;
-          let usedCpuCores = 0; // Approximation based on usage percentage
-          let totalMemoryBytes = 0;
-          let usedMemoryBytes = 0;
-          let totalDiskBytes = 0;
-          let usedDiskBytes = 0;
-
-          // Use the already calculated aggregates
-          totalCpuCores = aggTotalCpuCores;
-          usedCpuCores = aggUsedCpuCores; // This is the estimated used cores, not percentage
-          totalMemoryBytes = aggTotalMemoryBytes;
-          usedMemoryBytes = aggUsedMemoryBytes;
-          totalDiskBytes = aggTotalDiskBytes;
-          usedDiskBytes = aggUsedDiskBytes;
-
-          const availableCpuCores = Math.max(0, totalCpuCores - usedCpuCores);
-          const availableMemoryBytes = Math.max(0, totalMemoryBytes - usedMemoryBytes);
-          const availableDiskBytes = Math.max(0, totalDiskBytes - usedDiskBytes);
-
-          console.log(`Aggregated Available Resources for ${id}: CPU Cores=${availableCpuCores.toFixed(2)}, Memory=${(availableMemoryBytes / (1024**3)).toFixed(2)} GB, Disk=${(availableDiskBytes / (1024**3)).toFixed(2)} GB`);
-
-          // 2. Fetch Active VM Plans
-          const { rows: activePlans } = await pool.query(
-            'SELECT id, name, specs FROM vm_plans WHERE is_active = true ORDER BY name'
-          );
-
-          // 3. Calculate Estimates per Plan
-          hypervisor.planCapacityEstimates = activePlans.map(plan => {
-            const planCpu = plan.specs?.cpu || 0;
-            const planMemoryMB = plan.specs?.memory || 0;
-            const planDiskGB = plan.specs?.disk || 0;
-
-            // Convert plan specs to comparable units (Bytes for memory/disk)
-            const planMemoryBytes = planMemoryMB * 1024 * 1024;
-            const planDiskBytes = planDiskGB * 1024 * 1024 * 1024;
-
-            // Calculate max possible based on each resource (handle division by zero)
-            const maxByCpu = planCpu > 0 ? Math.floor(availableCpuCores / planCpu) : Infinity;
-            const maxByMemory = planMemoryBytes > 0 ? Math.floor(availableMemoryBytes / planMemoryBytes) : Infinity;
-            const maxByDisk = planDiskBytes > 0 ? Math.floor(availableDiskBytes / planDiskBytes) : Infinity;
-
-            // The estimate is the minimum of the three constraints
-            const estimatedCount = Math.min(maxByCpu, maxByMemory, maxByDisk);
-
-            // Handle Infinity case if all plan specs are 0 (unlikely)
-            const finalCount = estimatedCount === Infinity ? 0 : estimatedCount;
-
-            return {
-              planId: plan.id,
-              planName: plan.name,
-              estimatedCount: finalCount,
-              specs: plan.specs // Include specs for reference if needed on frontend
-            };
-          });
-          console.log(`Calculated capacity estimates for ${hypervisor.planCapacityEstimates.length} active plans.`);
-        }
-        // --- End Calculation ---
 
         // Add aggregated stats to the hypervisor object for frontend display
         hypervisor.aggregatedStats = {

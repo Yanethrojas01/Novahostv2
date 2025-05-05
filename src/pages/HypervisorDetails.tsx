@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Cloud, Server as ServersIconLucide, Clock, AlertCircle, Cpu, MemoryStick, Database, Layers, Calculator, HardDrive } from 'lucide-react'; // Renamed ServersIcon to avoid conflict, added Calculator, HardDrive
+import { ArrowLeft, Cloud, Server as ServersIconLucide, Clock, AlertCircle, Cpu, MemoryStick, Database, Layers, Calculator, HardDrive, Activity, Box } from 'lucide-react'; // Renamed ServersIcon to avoid conflict, added Calculator, HardDrive, Activity, Box
 import { Hypervisor, AggregatedStats } from '../types/hypervisor'; // Import AggregatedStats, removed HypervisorDetailsData
 import { toast } from 'react-hot-toast';
 // import { formatDistanceToNow } from 'date-fns'; // Removed unused import
@@ -91,9 +91,10 @@ export default function HypervisorDetails() {
     return <div className="p-6 text-center">Hypervisor no encontrado.</div>;
   }
 
-  // Use pre-calculated stats from backend if available
-  const stats: AggregatedStats | null = hypervisor.aggregatedStats || null;
+  // Use pre-calculated stats from backend if available (though we removed the display for aggregated)
+  // const stats: AggregatedStats | null = hypervisor.aggregatedStats || null;
 
+  // Custom formatDistanceToNow implementation
   function formatDistanceToNow(date: Date, options: { addSuffix: boolean }): string {
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
@@ -158,10 +159,25 @@ export default function HypervisorDetails() {
             <div>
               <h3 className="font-medium text-slate-700 dark:text-slate-300 mb-2 flex items-center"><ServersIconLucide className="h-4 w-4 mr-2"/>Nodos ({hypervisor.nodes.length})</h3>
               <ul className="list-disc list-inside space-y-1 text-slate-600 dark:text-slate-400 pl-5">
-                {hypervisor.nodes.map(node => (
-                  <li key={node.id}>
-                    {node.name || 'Nombre Desconocido'} ({node.id}) - {node.status}
-                    {/* Display Physical Disks for this node */}
+                {hypervisor.nodes.map(node => {
+                  const cpuUsage = node.cpu ? `${(node.cpu.usage * 100).toFixed(1)}% (${node.cpu.cores} Cores)` : 'N/A';
+                  const memoryUsage = node.memory ? `${formatBytes(node.memory.used)} / ${formatBytes(node.memory.total)}` : 'N/A';
+                  const diskUsage = node.rootfs ? `${formatBytes(node.rootfs.used)} / ${formatBytes(node.rootfs.total)}` : 'N/A';
+
+                  return (
+                  <li key={node.id} className="mb-3"> {/* Add margin bottom to list item */}
+                    <span className="font-semibold">{node.name || 'Nombre Desconocido'}</span> ({node.id}) - <span className={`font-medium ${node.status === 'online' ? 'text-success-600 dark:text-success-400' : 'text-slate-500'}`}>{node.status}</span>
+
+                    {/* Node Resource Usage */}
+                    {node.status === 'online' && (
+                      <div className="pl-4 mt-1 text-xs text-slate-500 dark:text-slate-400 space-y-0.5">
+                        <p className="flex items-center"><Cpu className="h-3 w-3 mr-1.5"/> CPU: {cpuUsage}</p>
+                        <p className="flex items-center"><MemoryStick className="h-3 w-3 mr-1.5"/> Memoria: {memoryUsage}</p>
+                        <p className="flex items-center"><Activity className="h-3 w-3 mr-1.5"/> Disco Raíz: {diskUsage}</p>
+                      </div>
+                    )}
+
+                    {/* Display Physical Disks (Keep this section) */}
                     {node.physicalDisks && node.physicalDisks.length > 0 && (
                       <ul className="list-['-_'] list-inside pl-4 mt-1 text-xs text-slate-500 dark:text-slate-400 space-y-0.5">
                         {node.physicalDisks.map(disk => (
@@ -175,8 +191,23 @@ export default function HypervisorDetails() {
                         ))}
                       </ul>
                     )}
-                  </li>
-                ))}
+
+                    {/* Per-Node Capacity Prediction */}
+                    {node.status === 'online' && node.planCapacityEstimates && node.planCapacityEstimates.length > 0 && (
+                       <div className="pl-4 mt-2 text-xs text-slate-500 dark:text-slate-400">
+                         <h4 className="font-medium text-slate-600 dark:text-slate-300 mb-1 flex items-center"><Calculator className="h-3 w-3 mr-1.5"/>Capacidad Estimada:</h4>
+                         <ul className="list-['»_'] list-inside space-y-0.5">
+                           {node.planCapacityEstimates.map(estimate => (
+                             <li key={estimate.planId}>
+                               {estimate.planName}: ~<span className="font-semibold text-emerald-600 dark:text-emerald-500">{estimate.estimatedCount}</span> VMs
+                             </li>
+                           ))}
+                         </ul>
+                       </div>
+                    )}
+
+                  </li>);
+                })}
               </ul>
             </div>
 
@@ -212,35 +243,6 @@ export default function HypervisorDetails() {
         )}
       </div>
 
-      {/* Aggregated Resources Summary Section */}
-      {/* Use stats directly from hypervisor object */}
-      {hypervisor.status === 'connected' && stats && (
-        <div className="mt-6 bg-white dark:bg-slate-800 shadow rounded-lg border border-slate-200 dark:border-slate-700 p-6">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Resumen de Recursos</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
-            {/* Display stats from hypervisor.aggregatedStats */}
-            <p className="flex items-center"><Cpu className="h-4 w-4 mr-2 text-blue-500"/> CPU: {stats.avgCpuUsagePercent.toFixed(1)}% usada ({stats.totalCores} Núcleos)</p>
-            <p className="flex items-center"><MemoryStick className="h-4 w-4 mr-2 text-green-500"/> Memoria: {formatBytes(stats.usedMemoryBytes)} / {formatBytes(stats.totalMemoryBytes)} usada</p>
-            <p className="flex items-center"><Database className="h-4 w-4 mr-2 text-purple-500"/> Disco: {formatBytes(stats.usedDiskBytes)} / {formatBytes(stats.totalDiskBytes)} usado ({stats.storagePoolCount} Pools)</p>
-          </div>
-        </div>
-      )}
-
-      {/* Capacity Prediction Section */}
-      {hypervisor.status === 'connected' && hypervisor.planCapacityEstimates && hypervisor.planCapacityEstimates.length > 0 && (
-        <div className="mt-6 bg-white dark:bg-slate-800 shadow rounded-lg border border-slate-200 dark:border-slate-700 p-6">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4 flex items-center">
-            <Calculator className="h-5 w-5 mr-2"/>Predicción de Capacidad por Plan
-          </h2>
-          <ul className="list-disc list-inside space-y-1 text-slate-600 dark:text-slate-400 pl-5 text-sm">
-            {hypervisor.planCapacityEstimates.map(estimate => (
-              <li key={estimate.planId}>
-                <span className="font-semibold">{estimate.planName}</span>: ~<span className="font-bold text-emerald-600 dark:text-emerald-500">{estimate.estimatedCount}</span> VMs (CPU: {estimate.specs.cpu}, Mem: {estimate.specs.memory}MB, Disk: {estimate.specs.disk}GB)
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
     </div>
   );
 }

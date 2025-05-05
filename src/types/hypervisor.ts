@@ -72,6 +72,7 @@ export interface NodeResource {
     type?: 'hdd' | 'ssd' | string; // Type (HDD/SSD)
     health?: string; // SMART status summary
   }[];
+  planCapacityEstimates?: PlanCapacityEstimate[]; // Add capacity estimates per node
 }
 
 // Renamed OSTemplate to NodeTemplate for clarity, or use VMTemplate if suitable
