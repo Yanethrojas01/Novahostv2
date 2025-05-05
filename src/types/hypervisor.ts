@@ -63,6 +63,15 @@ export interface NodeResource {
     total: number; // Bytes
     used: number; // Bytes
   };
+  // Physical disk information for the node
+  physicalDisks?: {
+    devpath: string; // e.g., /dev/sda
+    model?: string;
+    serial?: string;
+    size?: number; // Bytes
+    type?: 'hdd' | 'ssd' | string; // Type (HDD/SSD)
+    health?: string; // SMART status summary
+  }[];
 }
 
 // Renamed OSTemplate to NodeTemplate for clarity, or use VMTemplate if suitable

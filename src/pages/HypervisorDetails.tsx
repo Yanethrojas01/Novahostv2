@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Cloud, Server as ServersIconLucide, Clock, AlertCircle, Cpu, MemoryStick, Database, Layers, Calculator } from 'lucide-react'; // Renamed ServersIcon to avoid conflict, added Calculator
+import { ArrowLeft, Cloud, Server as ServersIconLucide, Clock, AlertCircle, Cpu, MemoryStick, Database, Layers, Calculator, HardDrive } from 'lucide-react'; // Renamed ServersIcon to avoid conflict, added Calculator, HardDrive
 import { Hypervisor, AggregatedStats } from '../types/hypervisor'; // Import AggregatedStats, removed HypervisorDetailsData
 import { toast } from 'react-hot-toast';
 // import { formatDistanceToNow } from 'date-fns'; // Removed unused import
@@ -159,7 +159,23 @@ export default function HypervisorDetails() {
               <h3 className="font-medium text-slate-700 dark:text-slate-300 mb-2 flex items-center"><ServersIconLucide className="h-4 w-4 mr-2"/>Nodos ({hypervisor.nodes.length})</h3>
               <ul className="list-disc list-inside space-y-1 text-slate-600 dark:text-slate-400 pl-5">
                 {hypervisor.nodes.map(node => (
-                  <li key={node.id}>{node.name || 'Nombre Desconocido'} ({node.id}) - {node.status}</li>
+                  <li key={node.id}>
+                    {node.name || 'Nombre Desconocido'} ({node.id}) - {node.status}
+                    {/* Display Physical Disks for this node */}
+                    {node.physicalDisks && node.physicalDisks.length > 0 && (
+                      <ul className="list-['-_'] list-inside pl-4 mt-1 text-xs text-slate-500 dark:text-slate-400 space-y-0.5">
+                        {node.physicalDisks.map(disk => (
+                          <li key={disk.devpath} className="flex items-center space-x-1">
+                            <HardDrive className="h-3 w-3 flex-shrink-0" />
+                            <span>
+                              {disk.devpath}: {disk.model || 'Modelo Desconocido'} ({formatBytes(disk.size || 0)}, {disk.type || 'Tipo Desconocido'})
+                              {disk.health && ` - ${disk.health}`}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </li>
                 ))}
               </ul>
             </div>

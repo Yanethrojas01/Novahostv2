@@ -1360,25 +1360,39 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
           basicNodesData.map(async (node) => {
             try {
               const nodeStatus = await proxmox.nodes.$(node.node).status.$get();
-              return { // Combine basic info with detailed status
+              // Fetch physical disk info
+              const diskInfo = await proxmox.nodes.$(node.node).disks.list.$get().catch(diskError => {
+                console.error(`Error fetching disks for node ${node.node}:`, diskError.message);
+                return []; // Return empty array on error
+              });
+
+              // Calculate total logical CPUs
+              const totalLogicalCpus = (nodeStatus.cpuinfo?.cores || 0) * (nodeStatus.cpuinfo?.sockets || 1);
+
+              return { // Combine basic info, detailed status, and disk info
                 ...node, // Keep basic info like 'node' name
                 detailedStatus: nodeStatus, // Add detailed status under a new key
+                physicalDisks: diskInfo, // Add physical disk info
+                // Add calculated/formatted fields matching NodeResource type
+                status: node.status, // From basicNodesData
+                cpu: { cores: totalLogicalCpus, usage: nodeStatus.cpu || 0 },
+                memory: { total: nodeStatus.memory?.total || 0, used: nodeStatus.memory?.used || 0, free: nodeStatus.memory?.free || 0 },
+                rootfs: nodeStatus.rootfs ? { total: nodeStatus.rootfs.total || 0, used: nodeStatus.rootfs.used || 0 } : undefined,
               };
             } catch (nodeStatusError) {
               console.error(`Error fetching status for node ${node.node}:`, nodeStatusError.message);
-              return { ...node, detailedStatus: null }; // Return basic info with null status on error
+              return { ...node, detailedStatus: null, physicalDisks: [], status: 'unknown', cpu: undefined, memory: undefined, rootfs: undefined }; // Return basic info with null/empty details on error
             }
           })
         );
         // --- End Detailed Node Fetch ---
 
         // Add details to the hypervisor object
-        hypervisor.nodes = basicNodesData; // Use basicNodesData here
+        hypervisor.nodes = detailedNodesData; // Use detailedNodesData which now includes status, cpu, mem, rootfs, disks
         hypervisor.storage = storageData; // Assuming API returns structure matching StorageResource
         hypervisor.templates = templatesData; // Assuming helper returns structure matching VMTemplate/NodeTemplate
         hypervisor.planCapacityEstimates = []; // Initialize capacity estimates array
-
-        console.log(`Fetched details for ${id}: ${basicNodesData.length} nodes, ${storageData.length} storage, ${templatesData.length} templates`); // Use basicNodesData here
+        console.log(`Fetched details for ${id}: ${detailedNodesData.length} nodes, ${storageData.length} storage, ${templatesData.length} templates`);
 
         // --- Calculate Aggregated Resources for Display ---
         let aggTotalCpuCores = 0;
@@ -1392,13 +1406,13 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
         if (detailedNodesData.length > 0) {
             detailedNodesData.forEach(node => {
                 if (!node.detailedStatus) return; // Skip nodes where status fetch failed
-
-                const nodeTotalCores = node.detailedStatus.cpuinfo?.cores || 0;
-                aggTotalCpuCores += nodeTotalCores;
+                // Use the calculated totalLogicalCpus from the node object
+                const nodeTotalLogicalCpus = node.cpu?.cores || 0; // Already calculated as cores * sockets
+                aggTotalCpuCores += nodeTotalLogicalCpus;
                 // Use node.cpu usage (fraction 0-1) * cores for used estimate
-                aggUsedCpuCores += (node.detailedStatus.cpu || 0) * nodeTotalCores; // Use detailed status CPU usage
-                aggTotalMemoryBytes += node.detailedStatus.memory?.total || 0; // Use detailed status memory
-                aggUsedMemoryBytes += node.detailedStatus.memory?.used || 0; // Use detailed status memory
+                aggUsedCpuCores += (node.cpu?.usage || 0) * nodeTotalLogicalCpus; // Use node.cpu.usage
+                aggTotalMemoryBytes += node.memory?.total || 0; // Use node.memory.total
+                aggUsedMemoryBytes += node.memory?.used || 0; // Use node.memory.used
             });
         } // End calculation using detailedNodesData
 
@@ -1414,7 +1428,7 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
         // --- End Aggregated Resources Calculation ---
 
         // --- Calculate Available Resources and Plan Capacity ---
-        if (basicNodesData.length > 0 && storageData.length > 0) {
+        if (detailedNodesData.length > 0 && storageData.length > 0) {
           // 1. Aggregate Available Resources
           let totalCpuCores = 0;
           let usedCpuCores = 0; // Approximation based on usage percentage
