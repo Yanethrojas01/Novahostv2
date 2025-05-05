@@ -5,6 +5,7 @@ import https from 'https'; // Needed for custom agent
 import dotenv from 'dotenv';
 import Proxmox, { proxmoxApi } from 'proxmox-api'; // Import the proxmox library
 import bcrypt from 'bcrypt'; // For password hashing
+import { constants as cryptoConstants } from 'crypto'; // Import crypto constants
 import jwt from 'jsonwebtoken'; // For JWT generation/verification
 
 // Load environment variables from .env file
@@ -1183,7 +1184,7 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
                   console.log(`Modern auth failed (${authResponse.status}), trying legacy ESXi auth...`);
                   
                   // Para ESXi más antiguos que pueden no tener la API REST completa
-                  const legacyAuthResponse = await fetch(`${vsphereApiUrl}/ui/login`, {
+                  const legacyAuthResponse = await fetch(`${vsphereApiUrl}/ui/#/login`, {
                       method: 'POST',
                       headers: {
                           'Content-Type': 'application/x-www-form-urlencoded',
@@ -1278,22 +1279,211 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
           }
       }
       // Errores específicos de vSphere
-      else if (type === 'vsphere') {
-          // Mapear errores comunes de vSphere/ESXi
-          if (error.message.includes('ECONNREFUSED')) {
-              errorInfo.code = 503;
-              errorInfo.message = 'Connection refused';
-              errorInfo.suggestion = 'Check if the ESXi/vCenter host is reachable and the port is correct';
-          } else if (error.message.includes('Authentication failed')) {
-              errorInfo.code = 401;
-              errorInfo.message = 'Authentication failed';
-              errorInfo.suggestion = 'Verify username and password for vSphere';
-          } else if (error.message.includes('certificate')) {
-              errorInfo.code = 495;
-              errorInfo.message = 'SSL certificate error';
-              errorInfo.suggestion = 'The server uses an invalid SSL certificate';
+     // Modificación para la parte de vSphere en el código existente
+// --- Lógica de Conexión a vSphere mejorada para ESXi 6.7 ---
+else if (type === 'vsphere') {
+  console.log(`Attempting vSphere connection to: ${host} with user: ${username}`);
+  
+  // Normalizar la URL para ESXi/vCenter
+  let vsphereApiUrl;
+  if (host.startsWith('http')) {
+      vsphereApiUrl = host.replace(/^http:/, 'https:');
+  } else {
+      // Si no tiene protocolo, añadir https:// y asegurarse de que no tiene puerto
+      const hostParts = host.split(':');
+      vsphereApiUrl = `https://${hostParts[0]}`;
+      // Si tiene puerto especificado, agregarlo
+      if (hostParts.length > 1 && hostParts[1]) {
+          vsphereApiUrl += `:${hostParts[1]}`;
+      }
+      // Si no tiene puerto, añadir el puerto por defecto para ESXi
+      else {
+          vsphereApiUrl += ':443';
+      }
+  }
+  
+  // Extraer el hostname limpio para la base de datos
+  try {
+      cleanHost = new URL(vsphereApiUrl).hostname;
+  } catch (urlError) {
+      console.error(`Invalid URL format: ${vsphereApiUrl}`);
+      throw new Error(`Invalid host format: ${host}`);
+  }
+  
+  // Configurar agente para manejar certificados auto-firmados con opciones avanzadas
+  const agent = new https.Agent({
+    rejectUnauthorized: false, // Para entornos de prueba/desarrollo
+    secureOptions: cryptoConstants.SSL_OP_NO_SSLv3 | cryptoConstants.SSL_OP_NO_TLSv1, // Use imported constants
+    ciphers: 'ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384',
+    minVersion: 'TLSv1.2'
+  });
+
+  let sessionId = null;
+  vsphereSubtype = 'unknown'; // Valor inicial
+
+  try {
+      // Intentar múltiples enfoques de autenticación, empezando con el más probable para ESXi 6.7
+      console.log(`Trying ESXi 6.7 authentication methods for ${vsphereApiUrl}`);
+      
+      // 1. Primer intento: REST API (disponible en ESXi 6.7)
+      console.log(`Attempting modern REST API authentication: ${vsphereApiUrl}/rest/com/vmware/cis/session`);
+      let authResponse;
+      try {
+          authResponse = await fetch(`${vsphereApiUrl}/rest/com/vmware/cis/session`, {
+              method: 'POST',
+              headers: {
+                  'Authorization': `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`,
+                  'Accept': 'application/json',
+                  'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({}), // Add empty JSON body
+
+              agent: agent,
+              timeout: 10000 // 10 segundos de timeout
+          });
+          
+          console.log(`REST API auth response status: ${authResponse.status}`);
+          
+          if (authResponse.ok) {
+              const sessionData = await authResponse.json();
+              sessionId = sessionData.value;
+              
+              if (!sessionId) {
+                  console.warn('Session ID not received from vSphere REST API');
+              } else {
+                  console.log(`vSphere REST API session obtained: ${sessionId.substring(0, 10)}...`);
+                  vsphereSubtype = 'esxi';
+                  status = 'connected';
+                  lastSync = new Date();
+              }
+          } else {
+              console.warn(`REST API auth failed with status: ${authResponse.status}`);
+              // Intentar leer el cuerpo de error para más detalles
+              try {
+                  const errorBody = await authResponse.text();
+                  console.warn(`Auth error details: ${errorBody}`);
+              } catch (e) {
+                  console.warn('Could not read error response body');
+              }
+          }
+      } catch (restAuthError) {
+          console.warn(`REST API auth error: ${restAuthError.message}`);
+      }
+      
+      // 2. Si falla la API REST, intentar con la autenticación de la interfaz web
+      if (!sessionId) {
+          console.log(`Trying UI login method for ESXi: ${vsphereApiUrl}/ui/#/login`);
+          try {
+              const formData = new URLSearchParams();
+              formData.append('userName', username);
+              formData.append('password', password);
+              
+              const uiLoginResponse = await fetch(`${vsphereApiUrl}/ui/#/login`, {
+                  method: 'POST',
+                  headers: {
+                      'Content-Type': 'application/x-www-form-urlencoded'
+                  },
+                  body: formData.toString(),
+                  agent: agent,
+                  redirect: 'manual', // No seguir redirecciones
+                  timeout: 10000
+              });
+              
+              console.log(`UI login response status: ${uiLoginResponse.status}`);
+              
+              // ESXi UI login normalmente devuelve 302 con cookies de sesión
+              const cookies = uiLoginResponse.headers.get('set-cookie');
+              
+              if (uiLoginResponse.status === 302 && cookies) {
+                  console.log(`ESXi UI session obtained via cookies`);
+                  vsphereSubtype = 'esxi';
+                  status = 'connected';
+                  lastSync = new Date();
+              } else {
+                  // Inspeccionar errores UI
+                  console.warn('UI login failed without proper redirect/cookies');
+                  try {
+                      const uiErrorBody = await uiLoginResponse.text();
+                      console.warn(`UI login error details: ${uiErrorBody.substring(0, 200)}...`);
+                  } catch (e) {
+                      console.warn('Could not read UI error response');
+                  }
+              }
+          } catch (uiLoginError) {
+              console.warn(`UI login error: ${uiLoginError.message}`);
           }
       }
+      
+      // 3. Intentar con el endpoint /sdk para ESXi SOAP API (último recurso)
+      if (!status || status !== 'connected') {
+          console.log(`Trying SOAP API check for ESXi: ${vsphereApiUrl}/sdk`);
+          try {
+              const soapCheckResponse = await fetch(`${vsphereApiUrl}/sdk`, {
+                  method: 'GET',
+                  headers: {
+                      'Authorization': `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`
+                  },
+                  agent: agent,
+                  timeout: 10000
+              });
+              
+              console.log(`SOAP API check status: ${soapCheckResponse.status}`);
+              
+              // Si logramos acceder al endpoint SOAP, es una buena señal
+              if (soapCheckResponse.status === 200 || soapCheckResponse.status === 401) { // Accept 401 as endpoint existing
+                // 401 podría significar que necesitamos configurar mejor la autenticación SOAP
+                  // pero al menos el endpoint existe
+                  if (soapCheckResponse.status === 200) {
+                      console.log('SOAP API access verified');
+                      vsphereSubtype = 'esxi';
+                      status = 'connected';
+                      lastSync = new Date();
+                  } else {
+                      console.warn('SOAP API endpoint exists but authentication failed');
+                  }
+              }
+          } catch (soapError) {
+              console.warn(`SOAP API check error: ${soapError.message}`);
+          }
+      }
+      
+      // Si todos los métodos fallan, lanzar error
+      if (!status || status !== 'connected') {
+                    // Don't throw here, just set status to error and let the outer catch handle response
+                    status = 'error';
+                    console.error('Authentication failed with all ESXi 6.7 compatible methods');
+                    // Store the specific error message if needed for the final response
+                    // vsphereError = new Error('Authentication failed with all ESXi 6.7 compatible methods');
+          
+      }
+      
+      //console.log(`Successfully connected to ESXi 6.7 at ${vsphereApiUrl}`);
+      
+  } catch (vsphereError) {
+      console.error(`vSphere connection failed for ${vsphereApiUrl}:`, vsphereError.message);
+      status = 'error';
+      throw new Error(`vSphere connection failed: ${vsphereError.message}`);
+  } finally {
+      // Cerrar sesión si existe sessionId de REST API
+      if (sessionId) {
+          try {
+              console.log(`Logging out vSphere REST API session ${sessionId.substring(0, 10)}...`);
+              await fetch(`${vsphereApiUrl}/rest/com/vmware/cis/session`, {
+                  method: 'DELETE',
+                  headers: { 'vmware-api-session-id': sessionId },
+                  agent: agent
+              });
+          } catch (logoutError) {
+              console.warn(`Failed to logout vSphere session:`, logoutError.message);
+          }
+      }
+  }
+  // Check if connection failed during the process
+  if (status !== 'connected') {
+    // Throw an error here to be caught by the main try...catch block
+    console.log(`Connection failed for ${vsphereSubtype} at ${vsphereApiUrl}`);
+}
+}
       // Errores de conexión generales
       else if (error.code === 'ECONNREFUSED') {
           errorInfo.code = 503;
