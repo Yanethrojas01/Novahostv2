@@ -48,7 +48,7 @@ export interface StorageResource {
 export interface NodeResource {
   id: string;
   name: string;
-  status: 'online' | 'offline' | 'maintenance' | string; // Allow string for flexibility
+  status: 'online' | 'offline' | 'unknown' | string; // Allow string for flexibility, added unknown
   cpu?: { // Make optional as details might fail
     cores: number;
     usage: number; // Fraction 0-1
@@ -58,7 +58,11 @@ export interface NodeResource {
     used: number;
     free: number;
   };
-  // Storage is usually cluster-wide, not per-node in this context
+  // Root filesystem usage for the node itself
+  rootfs?: {
+    total: number; // Bytes
+    used: number; // Bytes
+  };
 }
 
 // Renamed OSTemplate to NodeTemplate for clarity, or use VMTemplate if suitable

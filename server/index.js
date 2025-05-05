@@ -31,7 +31,7 @@ const authenticate = (req, res, next) => {
   const token = authHeader && authHeader.split(' ')[1]; // Expecting "Bearer TOKEN"
 
   if (token == null) {
-    console.log('Auth middleware: No token provided');
+    //console.log('Auth middleware: No token provided');
     return res.status(401).json({ error: 'Unauthorized: No token provided' });
   }
 
@@ -46,7 +46,7 @@ const authenticate = (req, res, next) => {
     }
     // Token is valid, attach user info to the request object
     req.user = user;
-    console.log('Auth middleware: Token verified for user:', user.userId, 'Role:', user.role); // Log user ID and role
+    //console.log('Auth middleware: Token verified for user:', user.userId, 'Role:', user.role); // Log user ID and role
     next(); // Proceed to the next middleware or route handler
   });
 };
@@ -832,7 +832,7 @@ async function getProxmoxClient(hypervisorId) {
 // GET /api/hypervisors/:id/nodes
 app.get('/api/hypervisors/:id/nodes', authenticate, async (req, res) => {
   const { id } = req.params;
-  console.log(`--- GET /api/hypervisors/${id}/nodes ---`);
+  
   try {
     const proxmox = await getProxmoxClient(id);
     const nodes = await proxmox.nodes.$get(); // Fetch nodes from Proxmox
@@ -870,7 +870,7 @@ app.get('/api/hypervisors/:id/nodes', authenticate, async (req, res) => {
 // GET /api/hypervisors/:id/storage
 app.get('/api/hypervisors/:id/storage', authenticate, async (req, res) => {
   const { id } = req.params;
-  console.log(`--- GET /api/hypervisors/${id}/storage ---`);
+ 
   try {
     const proxmox = await getProxmoxClient(id);
     // Fetch storage across the cluster or per node
@@ -900,7 +900,7 @@ app.get('/api/hypervisors/:id/storage', authenticate, async (req, res) => {
 // GET /api/hypervisors/:id/templates
 app.get('/api/hypervisors/:id/templates', authenticate, async (req, res) => {
   const { id } = req.params;
-  console.log(`--- GET /api/hypervisors/${id}/templates ---`);
+ 
   try {
     const proxmox = await getProxmoxClient(id);
     let allTemplates = [];
@@ -1501,9 +1501,10 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
   } catch (err) {
     console.error(`Error fetching hypervisor ${id}:`, err);
     res.status(500).json({ error: 'Failed to retrieve hypervisor' });
- 
+
   }
 });
+
 
 // Helper function to fetch templates (similar to the one in GET /api/hypervisors/:id/templates)
 async function fetchProxmoxTemplates(proxmox) {
@@ -1645,7 +1646,6 @@ app.post('/api/hypervisors/:id/connect', authenticate, requireAdmin, async (req,
 
     let newStatus = 'error';
     let lastSync = null;
-    console.log('Hypervisor:', hypervisor);
 
 
     if (hypervisor.type === 'proxmox') {
@@ -1680,9 +1680,9 @@ app.post('/api/hypervisors/:id/connect', authenticate, requireAdmin, async (req,
       // Verificar permisos del token
       // URL-encode username y token name para la ruta de la API
       const encodedUsername = encodeURIComponent(hypervisor.username);
-      console.log('Encoded Username:', encodedUsername);
+
       const encodedTokenName = encodeURIComponent(hypervisor.token_name);
-      console.log('Encoded Token Name:', encodedTokenName);
+
       console.log('Attempting to get token info...'); // Log antes de la llamada
       
       // Corrección: Usar /access/permissions para obtener los permisos del token actual

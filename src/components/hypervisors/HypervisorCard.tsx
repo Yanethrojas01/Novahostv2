@@ -161,8 +161,9 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
     const usedMemory = onlineNodes.reduce((sum, node) => sum + (node.memory?.used || 0), 0);
 
     // Disk (Storage)
-    const totalDisk = storage?.reduce((sum, s) => sum + (s.size || 0), 0) || 0;
-    const usedDisk = storage?.reduce((sum, s) => sum + (s.used || 0), 0) || 0;
+    // Use rootfs from nodes for '/' usage
+    const totalDisk = onlineNodes.reduce((sum, node) => sum + (node.rootfs?.total || 0), 0);
+    const usedDisk = onlineNodes.reduce((sum, node) => sum + (node.rootfs?.used || 0), 0);
 
     return {
       totalCores,
@@ -284,7 +285,7 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
                       {/* Disk */}
                       <div className="flex items-center space-x-2">
                         <Database className="h-3.5 w-3.5 flex-shrink-0" />
-                        <span>
+                        <span title="Uso del disco raíz ('/') en nodos en línea"> {/* Add tooltip for clarity */}
                           Disco: {formatBytes(stats.usedDisk)} / {formatBytes(stats.totalDisk)} usado ({storage?.length || 0} Pools)
                         </span>
                       </div>
