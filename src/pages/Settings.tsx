@@ -109,7 +109,7 @@ export default function Settings() {
         throw new Error('Failed to fetch plans');
       }
       const data = await response.json();
-      console.log(data) // Keep console log for debugging if needed
+
       setPlans(data || []);
     } catch (error) {
       console.error('Error fetching plans:', error);

@@ -17,7 +17,7 @@ export default function Dashboard() {
   // Define fetchVMs outside useEffect, wrapped in useCallback
   const fetchVMs = useCallback(async () => {
     const token = localStorage.getItem('authToken'); // Recuperar token
-console.log(token)
+
     setIsLoading(true);
     
     try {
