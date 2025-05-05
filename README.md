@@ -70,6 +70,7 @@ Novahost is a modern web application for managing virtual machines across Proxmo
        JWT_SECRET=your_very_strong_and_secret_jwt_key # Needed for signing authentication tokens
        ```
 
+
      - **Generate Default Admin Password Hash:**
        - Run the script to generate a bcrypt hash for your desired default admin password:
 
@@ -79,8 +80,7 @@ Novahost is a modern web application for managing virtual machines across Proxmo
 
        - Copy the generated hash output (the long string starting with `$2b$10$...`).
        - Paste this hash into the `INSERT INTO users` statement within the `migrations/schema.sql` file, replacing the placeholder `'YOUR_BCRYPT_HASH_HERE'`.
-
-       
+psql "postgresql://postgres:ed16740939@localhost:5432/ver2" -f "d:/Github/boltv2/project/migrations/schema.sql
      - Run migrations to create the database schema:
 
        ```bash
@@ -93,15 +93,15 @@ Novahost is a modern web application for managing virtual machines across Proxmo
        npm run migrate:create -- migration_name
        ```
 
-   - **Generate Default Admin Password Hash:**
-     - Run the script to generate a bcrypt hash for your desired default admin password:
+- **Generate Default Admin Password Hash:**
+  - Run the script to generate a bcrypt hash for your desired default admin password:
 
        ```bash
        node server/generate-hash.js your_chosen_password
        ```
 
-     - Copy the generated hash output (the long string starting with `$2b$10$...`).
-     - Paste this hash into the `INSERT INTO users` statement within the `migrations/schema.sql` file, replacing the placeholder `'YOUR_BCRYPT_HASH_HERE'`.
+  - Copy the generated hash output (the long string starting with `$2b$10$...`).
+  - Paste this hash into the `INSERT INTO users` statement within the `migrations/schema.sql` file, replacing the placeholder `'YOUR_BCRYPT_HASH_HERE'`.
 
 4. Start the development server:
 
