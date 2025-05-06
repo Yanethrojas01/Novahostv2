@@ -28,7 +28,8 @@ export interface VMNetworkConfig {
 }
 
 export interface VM {
-  id: string;
+  id: string; // This should be the hypervisor's operational VM ID (e.g., Proxmox VMID)
+  databaseId?: string; // The UUID from the virtual_machines table in your database
   name: string;
   description?: string;
   hypervisorId: string;

@@ -317,7 +317,7 @@ app.get('/api/vsphere/vms', authenticate, (req, res) => {
 // POST /api/vms - Create a new VM
 app.post('/api/vms', authenticate, async (req, res) => {
   // Cast the body to the expected type (ensure VMCreateParams is imported or defined if needed)
-  const params = req.body; // as VMCreateParams; 
+  const params = req.body; // as VMCreateParams;
   console.log('--- Received POST /api/vms --- Params:', params);
 
   // Basic Validation - Check templateId instead of specs.os for template selection
@@ -328,7 +328,7 @@ app.post('/api/vms', authenticate, async (req, res) => {
   try {
     // 1. Get Hypervisor Details
     const { rows: [hypervisor] } = await pool.query(
-      `SELECT id, type, host, username, api_token, token_name, status 
+      `SELECT id, type, host, username, api_token, token_name, status
        FROM hypervisors WHERE id = $1`,
       [params.hypervisorId]
     );
@@ -429,6 +429,40 @@ console.log(hypervisor)
       }
     } // Add else if for vSphere later
     // --- End Proxmox Logic ---
+
+    // --- Insert VM record into the database ---
+    if (newVmId && creationResult) { // Only insert if Proxmox part was initiated
+      console.log(`Inserting VM record into database for Proxmox VMID: ${newVmId}`);
+      console.log('User ID for DB insert:', req.user?.userId); // Add this log
+      try {
+        const insertQuery = `INSERT INTO virtual_machines (name, description, hypervisor_id, hypervisor_vm_id, status, cpu_cores, memory_mb, disk_gb, ticket, final_client_id, created_by_user_id, os)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+           RETURNING id`; // Return the new DB UUID
+        const insertParams = [
+            params.name,
+            params.description || null,
+            params.hypervisorId,
+            newVmId, // Save the Proxmox VMID
+            'creating', // Initial status
+            params.specs.cpu,
+            params.specs.memory,
+            params.specs.disk,
+            params.ticket || null,
+            params.finalClientId || null,
+            req.user.userId, // Get user ID from authenticated request
+            params.specs.os || null, // Or derive from template if possible
+        ];
+        const insertResult = await pool.query(insertQuery, insertParams);
+        console.log(`Successfully inserted VM record with DB ID: ${insertResult.rows[0].id}`);
+      } catch (dbError) {
+        console.error('Error inserting VM record into database after Proxmox creation:', dbError);
+        // Decide how to handle this: maybe log it but still return success to frontend?
+        // Or return a specific error indicating partial success?
+        // For now, we'll log and continue, but the DB record might be missing.
+      }
+    }
+    // --- End Database Insert ---
+
     // Respond with success (including the new VM ID and task ID)
     res.status(202).json({ // 202 Accepted
       id: newVmId,
@@ -468,7 +502,7 @@ app.post('/api/vms/:id/action', authenticate, async (req, res) => { // Make it a
 
     // Let's try Option A for demonstration:
     const { rows: connectedHypervisors } = await pool.query(
-      `SELECT id, type, host, username, api_token, token_name 
+      `SELECT id, type, host, username, api_token, token_name
        FROM hypervisors WHERE status = 'connected'`
     );
 
@@ -565,7 +599,7 @@ app.get('/api/vms', authenticate, async (req, res) => {
   try {
     // 1. Get all connected hypervisors from DB
     const { rows: connectedHypervisors } = await pool.query(
-      `SELECT id, type, host, username, api_token, token_name 
+      `SELECT id, type, host, username, api_token, token_name
        FROM hypervisors WHERE status = 'connected'`
     );
     console.log(`Found ${connectedHypervisors.length} connected hypervisors.`);
@@ -643,7 +677,7 @@ app.get('/api/vms/:id', authenticate, async (req, res) => {
   try {
     // --- Step 1: Find the VM's Hypervisor and Node ---
     const { rows: connectedHypervisors } = await pool.query(
-      `SELECT id, type, host, username, api_token, token_name 
+      `SELECT id, type, host, username, api_token, token_name
        FROM hypervisors WHERE status = 'connected'`
     );
 
@@ -733,7 +767,7 @@ app.get('/api/vms/:id/metrics', authenticate, async (req, res) => {
   try {
     // --- Step 1: Find the VM's Hypervisor and Node (Reusing logic from GET /api/vms/:id) ---
     const { rows: connectedHypervisors } = await pool.query(
-      `SELECT id, type, host, username, api_token, token_name 
+      `SELECT id, type, host, username, api_token, token_name
        FROM hypervisors WHERE status = 'connected'`
     );
 
@@ -809,7 +843,7 @@ app.get('/api/vms/:id/metrics', authenticate, async (req, res) => {
 // Helper function to get authenticated proxmox client
 async function getProxmoxClient(hypervisorId) {
   const { rows: [hypervisor] } = await pool.query(
-    `SELECT id, type, host, username, api_token, token_name, status 
+    `SELECT id, type, host, username, api_token, token_name, status
      FROM hypervisors WHERE id = $1`,
     [hypervisorId]
   );
@@ -833,7 +867,7 @@ async function getProxmoxClient(hypervisorId) {
 // GET /api/hypervisors/:id/nodes
 app.get('/api/hypervisors/:id/nodes', authenticate, async (req, res) => {
   const { id } = req.params;
-  
+  console.log(`--- GET /api/hypervisors/${id}/nodes ---`);
   try {
     const proxmox = await getProxmoxClient(id);
     const nodes = await proxmox.nodes.$get(); // Fetch nodes from Proxmox
@@ -842,19 +876,28 @@ app.get('/api/hypervisors/:id/nodes', authenticate, async (req, res) => {
     // This requires fetching more details per node (status, cpu, mem)
     // Example structure (needs actual API calls for details):
     const formattedNodes = await Promise.all(nodes.map(async (node) => {
-       // Fetch detailed status for each node (e.g., using nodes.<nodeName>.status.$get())
-       // This is a simplified example; you'll need more calls for CPU/Mem usage
+       // Fetch detailed status for each node
        const nodeStatus = await proxmox.nodes.$(node.node).status.$get();
+       // Calculate total logical CPUs (cores * sockets)
+       const totalLogicalCpus = (nodeStatus.cpuinfo?.cores || 0) * (nodeStatus.cpuinfo?.sockets || 1);
+
        return {
          id: node.node,
          name: node.node,
          status: node.status, // 'online', 'offline'
-         cpu: { cores: nodeStatus.cpuinfo?.cores || 0, usage: nodeStatus.cpu || 0 },
+         // Use totalLogicalCpus for the 'cores' field in our type for simplicity,
+         // or adjust the type definition if you want separate physical/logical counts
+         cpu: { cores: totalLogicalCpus, usage: nodeStatus.cpu || 0 },
          memory: {
            total: nodeStatus.memory?.total || 0,
            used: nodeStatus.memory?.used || 0,
            free: nodeStatus.memory?.free || 0,
          },
+         // Add rootfs info if available in nodeStatus
+         rootfs: nodeStatus.rootfs ? {
+           total: nodeStatus.rootfs.total || 0,
+           used: nodeStatus.rootfs.used || 0,
+         } : undefined,
          storage: [], // Fetching storage per node would be another call
        };
     }));
@@ -871,7 +914,7 @@ app.get('/api/hypervisors/:id/nodes', authenticate, async (req, res) => {
 // GET /api/hypervisors/:id/storage
 app.get('/api/hypervisors/:id/storage', authenticate, async (req, res) => {
   const { id } = req.params;
- 
+  console.log(`--- GET /api/hypervisors/${id}/storage ---`);
   try {
     const proxmox = await getProxmoxClient(id);
     // Fetch storage across the cluster or per node
@@ -901,7 +944,7 @@ app.get('/api/hypervisors/:id/storage', authenticate, async (req, res) => {
 // GET /api/hypervisors/:id/templates
 app.get('/api/hypervisors/:id/templates', authenticate, async (req, res) => {
   const { id } = req.params;
- 
+  console.log(`--- GET /api/hypervisors/${id}/templates ---`);
   try {
     const proxmox = await getProxmoxClient(id);
     let allTemplates = [];
@@ -947,7 +990,7 @@ app.get('/api/hypervisors', authenticate, async (req, res) => {
     const result = await pool.query(
       'SELECT id, name, type, host, username, status, last_sync, created_at, updated_at FROM hypervisors ORDER BY created_at DESC'
     );
-    
+
     res.json(result.rows);
   } catch (err) {
     console.error('Error fetching hypervisors from DB:', err);
@@ -960,29 +1003,29 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
 
   // Validación mejorada
   const validationErrors = [];
-  
+
   // Validaciones base
   if (!type) validationErrors.push('Type is required');
   if (!host) validationErrors.push('Host is required');
   if (!username) validationErrors.push('Username is required');
-  
+
   // Validaciones específicas para Proxmox
   if (type === 'proxmox') {
       const hasToken = apiToken && tokenName;
       const hasPassword = !!password;
-      
+
       if (!hasToken && !hasPassword) {
           validationErrors.push('Proxmox requires either password or API token + token name');
       }
-      
+
       if (apiToken && !tokenName) {
           validationErrors.push('Token name is required when using API token');
       }
-      
+
       if (tokenName && !apiToken) {
           validationErrors.push('API token secret is required when using token name');
       }
-      
+
       if (!/^https?:\/\/[\w.-]+(:\d+)?$/.test(host)) {
           validationErrors.push('Invalid host format. Use http(s)://hostname[:port]');
       }
@@ -992,7 +1035,7 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
       if (!password) {
           validationErrors.push('Password is required for vSphere connection');
       }
-      
+
       // Formato más flexible para vSphere (acepta tanto hostname como URL)
       if (!/^[\w.-]+(:\d+)?$/.test(host) && !/^https?:\/\/[\w.-]+(:\d+)?$/.test(host)) {
           validationErrors.push('Invalid host format for vSphere. Use hostname or https://hostname[:port]');
@@ -1043,21 +1086,21 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
           // Verificar nodos usando endpoint /nodes
           try {
             const nodesResponse = await proxmox.nodes.$get();
-            
+
             if (!nodesResponse?.length) {
                 throw new Error('No nodes found in cluster');
             }
-    
+
             // Obtener la versión desde el primer nodo
             const nodeName = nodesResponse[0].node;
             const versionResponse = await proxmox.nodes.$(nodeName).version.$get();
-            
+
             const pveVersion = versionResponse?.version;
-            
+
             if (!pveVersion) {
                 throw new Error('Invalid Proxmox version response');
             }
-    
+
             status = 'connected';
             lastSync = new Date();
             console.log(`Connected to Proxmox ${pveVersion} at ${cleanHost}:${port}`);
@@ -1069,7 +1112,7 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
       } else if (type === 'vsphere') {
           // --- Lógica de Conexión a vSphere (REST API) ---
           console.log(`Attempting vSphere connection to: ${host} with user: ${username}`);
-          
+
           // Normalizar la URL para ESXi/vCenter
           let vsphereApiUrl;
           if (host.startsWith('http')) {
@@ -1082,139 +1125,178 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
               if (hostParts.length > 1 && hostParts[1]) {
                   vsphereApiUrl += `:${hostParts[1]}`;
               }
+              // Si no tiene puerto, añadir el puerto por defecto para ESXi
+              else {
+                  vsphereApiUrl += ':443';
+              }
           }
-          
+
           // Extraer el hostname limpio para la base de datos
-          cleanHost = new URL(vsphereApiUrl).hostname;
-          
-          // Configurar agente para manejar certificados auto-firmados
+          try {
+              cleanHost = new URL(vsphereApiUrl).hostname;
+          } catch (urlError) {
+              console.error(`Invalid URL format: ${vsphereApiUrl}`);
+              throw new Error(`Invalid host format: ${host}`);
+          }
+
+          // Configurar agente para manejar certificados auto-firmados con opciones avanzadas
           const agent = new https.Agent({
-            rejectUnauthorized: false // Para entornos de prueba/desarrollo
+            rejectUnauthorized: false, // Para entornos de prueba/desarrollo
+            secureOptions: cryptoConstants.SSL_OP_NO_SSLv3 | cryptoConstants.SSL_OP_NO_TLSv1, // Use imported constants
+            ciphers: 'ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384',
+            minVersion: 'TLSv1.2'
           });
 
           let sessionId = null;
           vsphereSubtype = 'unknown'; // Valor inicial
 
           try {
-              // 1. Intentar autenticación para ESXi 6.7+ y vCenter - usando el endpoint de REST API moderno
-              console.log(`Authenticating to ${vsphereApiUrl}/rest/com/vmware/cis/session`);
-              const authResponse = await fetch(`${vsphereApiUrl}/rest/com/vmware/cis/session`, {
-                  method: 'POST',
-                  headers: {
-                      'Authorization': `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`,
-                      'Accept': 'application/json'
-                  },
-                  agent: agent
-              });
-              
-              // Para ESXi 6.7 y vCenter 6.7+, esto debería funcionar
-              if (authResponse.ok) {
-                  const sessionData = await authResponse.json();
-                  console.log(authResponse.status, sessionData);
-                  sessionId = sessionData.value;
-                  
-                  if (!sessionId) {
-                      throw new Error('Session ID not received from vSphere');
-                  }
-                  
-                  console.log(`vSphere session obtained: ${sessionId.substring(0, 10)}...`);
-                  
-                  // 2. Detectar si es ESXi o vCenter
-                  try {
-                      // Primero, intentar con un endpoint específico de vCenter
-                      const vcenterCheck = await fetch(`${vsphereApiUrl}/rest/vcenter/deployment/install/initial-data`, {
-                          method: 'GET',
-                          headers: { 'vmware-api-session-id': sessionId, 'Accept': 'application/json' },
-                          agent: agent
-                      });
-                      
-                      if (vcenterCheck.ok || vcenterCheck.status === 403) { // 403 también indica que existe el endpoint
-                          vsphereSubtype = 'vcenter';
-                          console.log(`Determined ${cleanHost} is vCenter`);
-                      } else {
-                          // Si no es vCenter, verificar que sea ESXi
-                          const hostListResponse = await fetch(`${vsphereApiUrl}/rest/vcenter/host`, {
-                              method: 'GET',
-                              headers: { 'vmware-api-session-id': sessionId, 'Accept': 'application/json' },
-                              agent: agent
-                          });
-                          
-                          if (hostListResponse.ok) {
-                              const hostListData = await hostListResponse.json();
-                              
-                              // En ESXi standalone normalmente esto devuelve una lista vacía o un solo host
-                              if (Array.isArray(hostListData.value)) {
-                                  vsphereSubtype = 'esxi';
-                                  console.log(`Determined ${cleanHost} is ESXi`);
-                              }
-                          }
-                      }
-                      
-                      // Si aún no pudimos determinar, intentar otro enfoque para ESXi
-                      if (vsphereSubtype === 'unknown') {
-                          // Intentar acceder a un recurso solo de ESXi
-                          const esxiCheck = await fetch(`${vsphereApiUrl}/rest/host/status`, {
-                              method: 'GET',
-                              headers: { 'vmware-api-session-id': sessionId, 'Accept': 'application/json' },
-                              agent: agent
-                          });
-                          
-                          if (esxiCheck.ok) {
-                              vsphereSubtype = 'esxi';
-                              console.log(`Confirmed ${cleanHost} is ESXi through /rest/host/status endpoint`);
-                          }
-                      }
-                      
-                      // Si todo lo anterior falló pero tenemos conexión, asumir ESXi
-                      if (vsphereSubtype === 'unknown') {
-                          vsphereSubtype = 'esxi';
-                          console.log(`Assuming ${cleanHost} is ESXi (could not determine definitively)`);
-                      }
-                      
-                      status = 'connected';
-                      lastSync = new Date();
-                      console.log(`Successfully connected to ${vsphereSubtype} at ${vsphereApiUrl}`);
-                      
-                  } catch (typeDetectionError) {
-                      console.warn(`Could not determine vSphere type, assuming ESXi:`, typeDetectionError.message);
-                      vsphereSubtype = 'esxi'; // Valor predeterminado si no podemos determinar
-                      status = 'connected'; // Aún así, la conexión fue exitosa
-                  }
-              } else {
-                  // Si falla la autenticación moderna, intentar con endpoints específicos de ESXi 6.5 o anterior
-                  console.log(`Modern auth failed (${authResponse.status}), trying legacy ESXi auth...`);
-                  
-                  // Para ESXi más antiguos que pueden no tener la API REST completa
-                  const legacyAuthResponse = await fetch(`${vsphereApiUrl}/ui/login`, {
+              // Intentar múltiples enfoques de autenticación, empezando con el más probable para ESXi 6.7
+              console.log(`Trying ESXi 6.7 authentication methods for ${vsphereApiUrl}`);
+
+              // 1. Primer intento: REST API (disponible en ESXi 6.7)
+              console.log(`Attempting modern REST API authentication: ${vsphereApiUrl}/rest/com/vmware/cis/session`);
+              let authResponse;
+              try {
+                  authResponse = await fetch(`${vsphereApiUrl}/rest/com/vmware/cis/session`, {
                       method: 'POST',
                       headers: {
-                          'Content-Type': 'application/x-www-form-urlencoded',
+                          'Authorization': `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`,
+                          'Accept': 'application/json',
+                          'Content-Type': 'application/json'
                       },
-                      body: `userName=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`,
+                      body: JSON.stringify({}), // Add empty JSON body
+
                       agent: agent,
-                      redirect: 'manual' // No seguir redirecciones
+                      timeout: 10000 // 10 segundos de timeout
                   });
-                  
-                  // Verificar cookies de sesión
-                  const cookies = legacyAuthResponse.headers.get('set-cookie');
-                  if (legacyAuthResponse.status === 302 && cookies) {
-                      console.log(`Legacy ESXi session obtained via cookies`);
-                      vsphereSubtype = 'esxi-legacy';
-                      status = 'connected';
-                      lastSync = new Date();
+
+                  console.log(`REST API auth response status: ${authResponse.status}`);
+
+                  if (authResponse.ok) {
+                      const sessionData = await authResponse.json();
+                      sessionId = sessionData.value;
+
+                      if (!sessionId) {
+                          console.warn('Session ID not received from vSphere REST API');
+                      } else {
+                          console.log(`vSphere REST API session obtained: ${sessionId.substring(0, 10)}...`);
+                          vsphereSubtype = 'esxi';
+                          status = 'connected';
+                          lastSync = new Date();
+                      }
                   } else {
-                      throw new Error(`Authentication failed for both modern and legacy ESXi interfaces`);
+                      console.warn(`REST API auth failed with status: ${authResponse.status}`);
+                      // Intentar leer el cuerpo de error para más detalles
+                      try {
+                          const errorBody = await authResponse.text();
+                          console.warn(`Auth error details: ${errorBody}`);
+                      } catch (e) {
+                          console.warn('Could not read error response body');
+                      }
+                  }
+              } catch (restAuthError) {
+                  console.warn(`REST API auth error: ${restAuthError.message}`);
+              }
+
+              // 2. Si falla la API REST, intentar con la autenticación de la interfaz web
+              if (!sessionId) {
+                  console.log(`Trying UI login method for ESXi: ${vsphereApiUrl}/ui/login`);
+                  try {
+                      const formData = new URLSearchParams();
+                      formData.append('userName', username);
+                      formData.append('password', password);
+
+                      const uiLoginResponse = await fetch(`${vsphereApiUrl}/ui/login`, {
+                          method: 'POST',
+                          headers: {
+                              'Content-Type': 'application/x-www-form-urlencoded'
+                          },
+                          body: formData.toString(),
+                          agent: agent,
+                          redirect: 'manual', // No seguir redirecciones
+                          timeout: 10000
+                      });
+
+                      console.log(`UI login response status: ${uiLoginResponse.status}`);
+
+                      // ESXi UI login normalmente devuelve 302 con cookies de sesión
+                      const cookies = uiLoginResponse.headers.get('set-cookie');
+
+                      if (uiLoginResponse.status === 302 && cookies) {
+                          console.log(`ESXi UI session obtained via cookies`);
+                          vsphereSubtype = 'esxi';
+                          status = 'connected';
+                          lastSync = new Date();
+                      } else {
+                          // Inspeccionar errores UI
+                          console.warn('UI login failed without proper redirect/cookies');
+                          try {
+                              const uiErrorBody = await uiLoginResponse.text();
+                              console.warn(`UI login error details: ${uiErrorBody.substring(0, 200)}...`);
+                          } catch (e) {
+                              console.warn('Could not read UI error response');
+                          }
+                      }
+                  } catch (uiLoginError) {
+                      console.warn(`UI login error: ${uiLoginError.message}`);
                   }
               }
+
+              // 3. Intentar con el endpoint /sdk para ESXi SOAP API (último recurso)
+              if (!status || status !== 'connected') {
+                  console.log(`Trying SOAP API check for ESXi: ${vsphereApiUrl}/sdk`);
+                  try {
+                      const soapCheckResponse = await fetch(`${vsphereApiUrl}/sdk`, {
+                          method: 'GET',
+                          headers: {
+                              'Authorization': `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`
+                          },
+                          agent: agent,
+                          timeout: 10000
+                      });
+
+                      console.log(`SOAP API check status: ${soapCheckResponse.status}`);
+
+                      // Si logramos acceder al endpoint SOAP, es una buena señal
+                      if (soapCheckResponse.status === 200 || soapCheckResponse.status === 401) { // Accept 401 as endpoint existing
+                        // 401 podría significar que necesitamos configurar mejor la autenticación SOAP
+                          // pero al menos el endpoint existe
+                          if (soapCheckResponse.status === 200) {
+                              console.log('SOAP API access verified');
+                              vsphereSubtype = 'esxi';
+                              status = 'connected';
+                              lastSync = new Date();
+                          } else {
+                              console.warn('SOAP API endpoint exists but authentication failed');
+                          }
+                      }
+                  } catch (soapError) {
+                      console.warn(`SOAP API check error: ${soapError.message}`);
+                  }
+              }
+
+              // Si todos los métodos fallan, lanzar error
+              if (!status || status !== 'connected') {
+                            // Don't throw here, just set status to error and let the outer catch handle response
+                            status = 'error';
+                            console.error('Authentication failed with all ESXi 6.7 compatible methods');
+                            // Store the specific error message if needed for the final response
+                            // vsphereError = new Error('Authentication failed with all ESXi 6.7 compatible methods');
+
+              }
+
+              //console.log(`Successfully connected to ESXi 6.7 at ${vsphereApiUrl}`);
+
           } catch (vsphereError) {
               console.error(`vSphere connection failed for ${vsphereApiUrl}:`, vsphereError.message);
               status = 'error';
               throw new Error(`vSphere connection failed: ${vsphereError.message}`);
           } finally {
-              // Cerrar sesión si existe
+              // Cerrar sesión si existe sessionId de REST API
               if (sessionId) {
                   try {
-                      console.log(`Logging out vSphere session ${sessionId.substring(0, 10)}...`);
+                      console.log(`Logging out vSphere REST API session ${sessionId.substring(0, 10)}...`);
                       await fetch(`${vsphereApiUrl}/rest/com/vmware/cis/session`, {
                           method: 'DELETE',
                           headers: { 'vmware-api-session-id': sessionId },
@@ -1269,7 +1351,7 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
       if (type === 'proxmox' && error.response) {
           errorInfo.code = error.response.status;
           errorInfo.message = error.response.data?.errors?.join(', ') || error.message;
-          
+
           // Errores comunes de Proxmox
           if (errorInfo.code === 401) {
               errorInfo.suggestion = 'Verify token/user permissions in Proxmox';
@@ -1284,7 +1366,7 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
 // --- Lógica de Conexión a vSphere mejorada para ESXi 6.7 ---
 else if (type === 'vsphere') {
   console.log(`Attempting vSphere connection to: ${host} with user: ${username}`);
-  
+
   // Normalizar la URL para ESXi/vCenter
   let vsphereApiUrl;
   if (host.startsWith('http')) {
@@ -1302,7 +1384,7 @@ else if (type === 'vsphere') {
           vsphereApiUrl += ':443';
       }
   }
-  
+
   // Extraer el hostname limpio para la base de datos
   try {
       cleanHost = new URL(vsphereApiUrl).hostname;
@@ -1310,7 +1392,7 @@ else if (type === 'vsphere') {
       console.error(`Invalid URL format: ${vsphereApiUrl}`);
       throw new Error(`Invalid host format: ${host}`);
   }
-  
+
   // Configurar agente para manejar certificados auto-firmados con opciones avanzadas
   const agent = new https.Agent({
     rejectUnauthorized: false, // Para entornos de prueba/desarrollo
@@ -1325,7 +1407,7 @@ else if (type === 'vsphere') {
   try {
       // Intentar múltiples enfoques de autenticación, empezando con el más probable para ESXi 6.7
       console.log(`Trying ESXi 6.7 authentication methods for ${vsphereApiUrl}`);
-      
+
       // 1. Primer intento: REST API (disponible en ESXi 6.7)
       console.log(`Attempting modern REST API authentication: ${vsphereApiUrl}/rest/com/vmware/cis/session`);
       let authResponse;
@@ -1342,13 +1424,13 @@ else if (type === 'vsphere') {
               agent: agent,
               timeout: 10000 // 10 segundos de timeout
           });
-          
+
           console.log(`REST API auth response status: ${authResponse.status}`);
-          
+
           if (authResponse.ok) {
               const sessionData = await authResponse.json();
               sessionId = sessionData.value;
-              
+
               if (!sessionId) {
                   console.warn('Session ID not received from vSphere REST API');
               } else {
@@ -1370,7 +1452,7 @@ else if (type === 'vsphere') {
       } catch (restAuthError) {
           console.warn(`REST API auth error: ${restAuthError.message}`);
       }
-      
+
       // 2. Si falla la API REST, intentar con la autenticación de la interfaz web
       if (!sessionId) {
           console.log(`Trying UI login method for ESXi: ${vsphereApiUrl}/ui/login`);
@@ -1378,7 +1460,7 @@ else if (type === 'vsphere') {
               const formData = new URLSearchParams();
               formData.append('userName', username);
               formData.append('password', password);
-              
+
               const uiLoginResponse = await fetch(`${vsphereApiUrl}/ui/login`, {
                   method: 'POST',
                   headers: {
@@ -1389,12 +1471,12 @@ else if (type === 'vsphere') {
                   redirect: 'manual', // No seguir redirecciones
                   timeout: 10000
               });
-              
+
               console.log(`UI login response status: ${uiLoginResponse.status}`);
-              
+
               // ESXi UI login normalmente devuelve 302 con cookies de sesión
               const cookies = uiLoginResponse.headers.get('set-cookie');
-              
+
               if (uiLoginResponse.status === 302 && cookies) {
                   console.log(`ESXi UI session obtained via cookies`);
                   vsphereSubtype = 'esxi';
@@ -1414,7 +1496,7 @@ else if (type === 'vsphere') {
               console.warn(`UI login error: ${uiLoginError.message}`);
           }
       }
-      
+
       // 3. Intentar con el endpoint /sdk para ESXi SOAP API (último recurso)
       if (!status || status !== 'connected') {
           console.log(`Trying SOAP API check for ESXi: ${vsphereApiUrl}/sdk`);
@@ -1427,9 +1509,9 @@ else if (type === 'vsphere') {
                   agent: agent,
                   timeout: 10000
               });
-              
+
               console.log(`SOAP API check status: ${soapCheckResponse.status}`);
-              
+
               // Si logramos acceder al endpoint SOAP, es una buena señal
               if (soapCheckResponse.status === 200 || soapCheckResponse.status === 401) { // Accept 401 as endpoint existing
                 // 401 podría significar que necesitamos configurar mejor la autenticación SOAP
@@ -1447,7 +1529,7 @@ else if (type === 'vsphere') {
               console.warn(`SOAP API check error: ${soapError.message}`);
           }
       }
-      
+
       // Si todos los métodos fallan, lanzar error
       if (!status || status !== 'connected') {
                     // Don't throw here, just set status to error and let the outer catch handle response
@@ -1455,13 +1537,13 @@ else if (type === 'vsphere') {
                     console.error('Authentication failed with all ESXi 6.7 compatible methods');
                     // Store the specific error message if needed for the final response
                     // vsphereError = new Error('Authentication failed with all ESXi 6.7 compatible methods');
-          
+
       }
-      
+
       //console.log(`Successfully connected to ESXi 6.7 at ${vsphereApiUrl}`);
-      
+
   } catch (vsphereError) {
-      console.error(`vSphere connection failed for ${vsphereApiUrl}:`, vsphereError.message);
+      console.error(`vSphere connection/authentication process failed for ${vsphereApiUrl}:`, vsphereError.message);
       status = 'error';
       throw new Error(`vSphere connection failed: ${vsphereError.message}`);
   } finally {
@@ -1482,7 +1564,7 @@ else if (type === 'vsphere') {
   // Check if connection failed during the process
   if (status !== 'connected') {
     // Throw an error here to be caught by the main try...catch block
-    console
+    throw new Error('vSphere connection failed during authentication attempts.');
 }
 }
       // Errores de conexión generales
@@ -1492,7 +1574,7 @@ else if (type === 'vsphere') {
           errorInfo.suggestion = `Check ${type} service and firewall rules`;
       } else {
           // Otros errores
-          errorInfo.message = error.message || 'An unknown error occurred';
+          errorInfo.message = error.message || 'An unknown error occurred during hypervisor creation/connection.';
       }
 
       console.error(`Hypervisor creation failed: ${errorInfo.message}`, {
@@ -1599,7 +1681,7 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
         );
         console.log(`Fetched ${activePlans.length} active VM plans for capacity calculation.`);
 
-        // Use detailedNodesData for calculation
+        // Use detailedNodesData for calculation AND per-node capacity estimation
         if (detailedNodesData.length > 0) {
             detailedNodesData.forEach(node => {
                 if (!node.detailedStatus) return; // Skip nodes where status fetch failed
@@ -1752,13 +1834,13 @@ function getProxmoxError(error) {
   if (error.response) {
       // Manejar errores de la API de Proxmox
       response.code = error.response.status;
-      
+
       if (error.response.data?.errors) {
           response.message = error.response.data.errors
               .map(err => err.message || err)
               .join(', ');
       }
-      
+
       // Manejar códigos comunes
       if (response.code === 401) {
           response.message = 'Authentication failed';
@@ -1770,8 +1852,8 @@ function getProxmoxError(error) {
       }
       if (response.code === 595) {
           response.message = 'SSL certificate verification failed';
-          response.suggestion = process.env.NODE_ENV === 'production' 
-              ? 'Use valid SSL certificate' 
+          response.suggestion = process.env.NODE_ENV === 'production'
+              ? 'Use valid SSL certificate'
               : 'Set NODE_ENV=development to allow self-signed certs';
       }
   } else if (error.code === 'ECONNREFUSED') {
@@ -1813,7 +1895,7 @@ app.put('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) => 
   } catch (err) {
       console.error(`Error updating hypervisor ${id} in DB:`, err);
       res.status(500).json({ error: 'Failed to update hypervisor' });
- 
+
   }
 });
 
@@ -1832,7 +1914,7 @@ app.delete('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) 
   } catch (err) {
     console.error(`Error deleting hypervisor ${id} from DB:`, err);
     res.status(500).json({ error: 'Failed to delete hypervisor' });
-  
+
   }
 });
 
@@ -1843,7 +1925,7 @@ app.post('/api/hypervisors/:id/connect', authenticate, requireAdmin, async (req,
   console.log(`POST /api/hypervisors/${id}/connect called`);
   try {
     const { rows: [hypervisor] } = await pool.query(
-      `SELECT id, type, host, username, api_token, token_name 
+      `SELECT id, type, host, username, api_token, token_name
        FROM hypervisors WHERE id = $1`,
       [id]
     );
@@ -1890,7 +1972,7 @@ app.post('/api/hypervisors/:id/connect', authenticate, requireAdmin, async (req,
       const encodedTokenName = encodeURIComponent(hypervisor.token_name);
 
       console.log('Attempting to get token info...'); // Log antes de la llamada
-      
+
       // Corrección: Usar /access/permissions para obtener los permisos del token actual
       // Esto evita necesitar permisos específicos sobre el usuario/token y solo requiere
       // que el token sea válido para consultar sus propios permisos.
@@ -1910,7 +1992,7 @@ console.log('Has VM.Allocate privilege:', hasRequiredPrivilege); // Log para ver
         console.warn('Permissions structure:', permissionsInfo); // Log si la estructura es inesperada o falta el permiso
         throw new Error('Token lacks required VM.Allocate privilege or privileges could not be verified.');
       }
-      
+
       newStatus = 'connected';
       lastSync = new Date();
       console.log(`Successfully connected and verified permissions for ${hypervisor.username} on ${cleanHost}:${port}`);
@@ -1918,8 +2000,8 @@ console.log('Has VM.Allocate privilege:', hasRequiredPrivilege); // Log para ver
 
     // Actualizar estado
     const { rows: [updatedHypervisor] } = await pool.query(
-      `UPDATE hypervisors 
-       SET status = $1, last_sync = $2, updated_at = NOW() 
+      `UPDATE hypervisors
+       SET status = $1, last_sync = $2, updated_at = NOW()
        WHERE id = $3 RETURNING *`,
       [newStatus, lastSync, id]
     );
@@ -1967,8 +2049,8 @@ app.post('/api/vm-plans', authenticate, requireAdmin, async (req, res) => { // A
 
   try {
     const result = await pool.query(
-      `INSERT INTO vm_plans (name, description, specs, icon, is_active) 
-       VALUES ($1, $2, $3, $4, $5) 
+      `INSERT INTO vm_plans (name, description, specs, icon, is_active)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING id, name, description, specs, icon, is_active, created_at, updated_at`,
       [name, description, JSON.stringify(specs), icon || null, is_active]
     );
@@ -2254,17 +2336,18 @@ app.get('/api/stats/client-vms/:clientId', authenticate, async (req, res) => {
 
   try {
     const vmsQuery = `
-      SELECT 
-        vm.id, 
-        vm.name, 
-        vm.status, 
+      SELECT
+        vm.id as database_id, -- Keep the UUID if needed elsewhere
+        vm.hypervisor_vm_id as id, -- Use hypervisor_vm_id as the primary ID for linking
+        vm.name,
+        vm.status,
         vm.created_at,
         vm.cpu_cores,
         vm.memory_mb,
         vm.disk_gb,
         vm.os,
         vm.hypervisor_id,
-        h.type as hypervisor_type 
+        h.type as hypervisor_type
       FROM virtual_machines vm
       JOIN hypervisors h ON vm.hypervisor_id = h.id
       WHERE vm.final_client_id = $1
@@ -2281,7 +2364,8 @@ app.get('/api/stats/client-vms/:clientId', authenticate, async (req, res) => {
 
     // Map to VM type structure expected by frontend
     const formattedVms = vmsResult.rows.map(dbVm => ({
-      id: dbVm.id,
+      id: dbVm.id, // This is now the hypervisor_vm_id
+      databaseId: dbVm.database_id, // The UUID from the DB
       name: dbVm.name,
       status: dbVm.status,
       createdAt: dbVm.created_at,
@@ -2304,7 +2388,7 @@ app.get('/api/stats/client-vms/:clientId', authenticate, async (req, res) => {
 });
 
 // --- End Final Client CRUD API Routes ---
- 
+
 
 // Start the server
 app.listen(port, () => {
