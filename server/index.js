@@ -840,7 +840,7 @@ async function getProxmoxClient(hypervisorId) {
 
 // Helper function to get authenticated vSphere client
 async function getVSphereClient(hypervisorId) {
-  const { rows: [hypervisor] } = await pool.query( // Ensure you select vsphere_subtype
+  const { rows: [hypervisor] } = await pool.query(
     `SELECT id, type, host, username, api_token, status, vsphere_subtype
      FROM hypervisors WHERE id = $1`,
     [hypervisorId]
@@ -851,6 +851,7 @@ async function getVSphereClient(hypervisorId) {
   if (hypervisor.type !== 'vsphere') throw new Error('Not a vSphere hypervisor');
   if (!hypervisor.api_token) throw new Error('vSphere password (api_token) not found in database for this hypervisor.');
 
+  // Normalizar la URL
   let vsphereApiUrl;
   if (hypervisor.host.startsWith('http')) {
     vsphereApiUrl = hypervisor.host.replace(/^http:/, 'https:');
@@ -864,6 +865,9 @@ async function getVSphereClient(hypervisorId) {
     }
   }
 
+  // Eliminar la barra final si existe
+  vsphereApiUrl = vsphereApiUrl.replace(/\/$/, '');
+
   const agent = new https.Agent({
     rejectUnauthorized: false,
     secureOptions: cryptoConstants.SSL_OP_NO_SSLv3 | cryptoConstants.SSL_OP_NO_TLSv1,
@@ -872,61 +876,244 @@ async function getVSphereClient(hypervisorId) {
   });
 
   console.log(`vSphere Client: Attempting to authenticate to ${vsphereApiUrl} for user ${hypervisor.username}`);
-  const authResponse = await fetch(`${vsphereApiUrl}/rest/com/vmware/cis/session`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Basic ${Buffer.from(`${hypervisor.username}:${hypervisor.api_token}`).toString('base64')}`,
-      'Accept': 'application/json',
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({}),
-    agent: agent,
-    timeout: 10000
-  });
+  
+  // Determinar el método de autenticación basado en vsphere_subtype
+  const isEsxi = hypervisor.vsphere_subtype?.toLowerCase()?.includes('esxi');
+  let sessionId = null;
+  
+  // 1. Intentar autenticación REST API (debería funcionar para ESXi 6.7+)
+  try {
+    const authResponse = await fetch(`${vsphereApiUrl}/rest/com/vmware/cis/session`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${Buffer.from(`${hypervisor.username}:${hypervisor.api_token}`).toString('base64')}`,
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({}), // Algunos endpoints pueden requerir un cuerpo vacío
+      agent: agent,
+      timeout: 15000
+    });
 
-  if (!authResponse.ok) {
-    const errorBody = await authResponse.text().catch(() => 'Could not read error body');
-    console.error(`vSphere authentication failed: ${authResponse.status}`, errorBody);
-    throw new Error(`vSphere authentication failed: ${authResponse.status}. ${errorBody.substring(0,100)}`);
+    console.log(`REST API auth response status: ${authResponse.status}`);
+    
+    if (authResponse.ok) {
+      const sessionData = await authResponse.json();
+      sessionId = sessionData.value;
+      
+      if (!sessionId) {
+        console.warn('Session ID not received from vSphere REST API');
+      } else {
+        console.log(`vSphere Client: Session obtained ${sessionId.substring(0,5)}...`);
+      }
+    } else {
+      // Solo para depuración
+      const errorBody = await authResponse.text().catch(() => 'Could not read error body');
+      console.warn(`REST API auth failed: ${authResponse.status} - ${errorBody.substring(0, 100)}`);
+    }
+  } catch (restAuthError) {
+    console.warn(`REST API auth error: ${restAuthError.message}`);
   }
 
-  const sessionData = await authResponse.json();
-  const sessionId = sessionData.value;
+  // 2. Si falla REST API y es ESXi, intentar autenticación SOAP
+  if (!sessionId && isEsxi) {
+    console.log(`Trying SOAP API auth for ESXi: ${vsphereApiUrl}/sdk/`);
+    try {
+      // Crear payload XML para la autenticación SOAP
+      const soapEnvelope = `<?xml version="1.0" encoding="UTF-8"?>
+        <Envelope xmlns="http://schemas.xmlsoap.org/soap/envelope/"
+                 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                 xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+          <Body>
+            <Login xmlns="urn:vim25">
+              <_this type="SessionManager">SessionManager</_this>
+              <userName>${hypervisor.username}</userName>
+              <password>${hypervisor.api_token}</password>
+            </Login>
+          </Body>
+        </Envelope>`;
+        
+      // Realizar la solicitud SOAP
+      const soapResponse = await fetch(`${vsphereApiUrl}/sdk/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/xml; charset=utf-8',
+          'SOAPAction': 'urn:vim25/6.7'
+        },
+        body: soapEnvelope,
+        agent: agent,
+        timeout: 15000
+      });
+      
+      console.log(`SOAP API auth status: ${soapResponse.status}`);
+      
+      // Si recibimos una respuesta 200 OK, la autenticación tuvo éxito
+      if (soapResponse.status === 200) {
+        const soapResponseText = await soapResponse.text();
+        
+        // Verificar si hay errores en la respuesta XML
+        if (soapResponseText.includes('<fault>') || soapResponseText.includes('Fault>')) {
+          console.warn('SOAP authentication failed - fault in response');
+          const errorSnippet = soapResponseText.substring(0, 200);
+          console.warn(errorSnippet);
+          throw new Error(`SOAP authentication failed: ${errorSnippet}`);
+        } else {
+          // Extraer el sessionId del XML (esto es simplificado y podría necesitar un parser XML)
+          const sessionMatch = soapResponseText.match(/<returnval[^>]*>([^<]+)<\/returnval>/);
+          if (sessionMatch && sessionMatch[1]) {
+            sessionId = sessionMatch[1];
+            console.log(`vSphere Client: SOAP session obtained ${sessionId.substring(0,5)}...`);
+          } else {
+            console.log('SOAP API authentication successful but no session ID found in response');
+            // Crear un ID de sesión simulado para SOAP ya que no siempre se devuelve explícitamente
+            sessionId = 'soap-' + Date.now();
+          }
+        }
+      } else {
+        const errorText = await soapResponse.text().catch(() => 'Could not read error body');
+        throw new Error(`SOAP API authentication failed: ${soapResponse.status} - ${errorText.substring(0, 100)}`);
+      }
+    } catch (soapError) {
+      if (!sessionId) { // Solo lanzar error si no tenemos sesión
+        console.error('SOAP API auth error:', soapError);
+        throw new Error(`All vSphere authentication methods failed. Last error: ${soapError.message}`);
+      }
+    }
+  }
 
+  // Si llegamos aquí sin sessionId, significa que ambos métodos fallaron
   if (!sessionId) {
-    throw new Error('Session ID not received from vSphere REST API');
+    throw new Error('vSphere authentication failed with all available methods');
   }
-  console.log(`vSphere Client: Session obtained ${sessionId.substring(0,5)}...`);
 
+  // Client con soporte para ambos tipos de API
   return {
     sessionId,
     vsphereApiUrl,
     agent,
     hypervisorId: hypervisor.id,
-    vsphereSubtype: hypervisor.vsphere_subtype, // 'vcenter' or 'esxi'
+    vsphereSubtype: hypervisor.vsphere_subtype, // 'vcenter' o 'esxi'
+    isSoapSession: sessionId.startsWith('soap-'),
+    
     async logout() {
-      if (this.sessionId) {
-        console.log(`vSphere Client: Logging out session ${this.sessionId.substring(0,5)}...`);
-        try {
+      if (!this.sessionId) return;
+      
+      console.log(`vSphere Client: Logging out session ${this.sessionId.substring(0,5)}...`);
+      
+      try {
+        // Si es sesión SOAP, usar el endpoint SOAP
+        if (this.isSoapSession) {
+          const soapLogout = `<?xml version="1.0" encoding="UTF-8"?>
+            <Envelope xmlns="http://schemas.xmlsoap.org/soap/envelope/"
+                     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                     xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+              <Body>
+                <Logout xmlns="urn:vim25">
+                  <_this type="SessionManager">SessionManager</_this>
+                </Logout>
+              </Body>
+            </Envelope>`;
+            
+          await fetch(`${this.vsphereApiUrl}/sdk/`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'text/xml; charset=utf-8',
+              'SOAPAction': 'urn:vim25/6.7',
+              'Cookie': `vmware_soap_session="${this.sessionId}"`
+            },
+            body: soapLogout,
+            agent: this.agent
+          });
+        } 
+        // Si es sesión REST, usar el endpoint REST
+        else {
           await fetch(`${this.vsphereApiUrl}/rest/com/vmware/cis/session`, {
             method: 'DELETE',
             headers: { 'vmware-api-session-id': this.sessionId },
             agent: this.agent
           });
-          this.sessionId = null; // Clear session ID after logout
-        } catch (logoutError) {
-          console.warn(`vSphere Client: Failed to logout session:`, logoutError.message);
         }
+        
+        this.sessionId = null; // Limpiar ID de sesión después del logout
+      } catch (logoutError) {
+        console.warn(`vSphere Client: Failed to logout session:`, logoutError.message);
       }
     },
+    
     async get(path) {
+      // Asegurarse de que el path comienza con /
+      if (!path.startsWith('/')) {
+        path = '/' + path;
+      }
+      
+      // Si es una sesión SOAP y el path no es un endpoint REST específico,
+      // podríamos necesitar implementar llamadas SOAP aquí
+      if (this.isSoapSession && !path.startsWith('/rest/')) {
+        throw new Error(`SOAP API calls not implemented for this path: ${path}`);
+      }
+      
       const response = await fetch(`${this.vsphereApiUrl}${path}`, {
         method: 'GET',
-        headers: { 'vmware-api-session-id': this.sessionId, 'Accept': 'application/json' },
-        agent: this.agent
+        headers: this.isSoapSession 
+          ? { 'Cookie': `vmware_soap_session="${this.sessionId}"`, 'Accept': 'application/json' }
+          : { 'vmware-api-session-id': this.sessionId, 'Accept': 'application/json' },
+        agent: this.agent,
+        timeout: 30000
       });
-      if (!response.ok) throw new Error(`vSphere API GET ${path} failed: ${response.status} ${await response.text()}`);
-      return response.json();
+      
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => 'Unable to read error response');
+        throw new Error(`vSphere API GET ${path} failed: ${response.status} - ${errorText.substring(0, 100)}`);
+      }
+      
+      // Intentar parsear como JSON, con fallback a texto
+      try {
+        return await response.json();
+      } catch (jsonError) {
+        console.warn(`Response not in JSON format for ${path}`, jsonError.message);
+        return { text: await response.text() };
+      }
+    },
+    
+    // Método POST para la API REST
+    async post(path, data = {}) {
+      if (!path.startsWith('/')) {
+        path = '/' + path;
+      }
+      
+      if (this.isSoapSession && !path.startsWith('/rest/')) {
+        throw new Error(`SOAP API calls not implemented for this path: ${path}`);
+      }
+      
+      const response = await fetch(`${this.vsphereApiUrl}${path}`, {
+        method: 'POST',
+        headers: this.isSoapSession
+          ? { 
+              'Cookie': `vmware_soap_session="${this.sessionId}"`,
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
+            }
+          : { 
+              'vmware-api-session-id': this.sessionId,
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
+            },
+        body: JSON.stringify(data),
+        agent: this.agent,
+        timeout: 30000
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => 'Unable to read error response');
+        throw new Error(`vSphere API POST ${path} failed: ${response.status} - ${errorText.substring(0, 100)}`);
+      }
+      
+      try {
+        return await response.json();
+      } catch (jsonError) {
+        console.warn(`Response not in JSON format for ${path}`, jsonError.message);
+        return { text: await response.text() };
+      }
     }
   };
 }
@@ -1285,7 +1472,7 @@ app.get('/api/hypervisors', authenticate, async (req, res) => {
 });
 // POST /api/hypervisors - Create new hyperviso
 app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
-  const { type, host, username, password, apiToken, tokenName } = req.body;
+  const { host, username, password, apiToken, tokenName, type, vsphere_subtype } = req.body;
 
   // Validación mejorada
   const validationErrors = [];
@@ -1608,8 +1795,8 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
               // Guardar host según el tipo
               type === 'proxmox' ? `${cleanHost}:8006` : cleanHost,
               username,
-              apiToken || null,
-              tokenName || null,
+              (type === 'vsphere' ? password : (apiToken || null)), // api_token: vSphere password or Proxmox token secret
+              (type === 'proxmox' ? (tokenName || null) : null),     
               vsphereSubtype, // Guardar el subtipo detectado para vSphere
               status,
               lastSync
