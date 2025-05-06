@@ -160,10 +160,18 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
     const totalMemory = onlineNodes.reduce((sum, node) => sum + (node.memory?.total || 0), 0);
     const usedMemory = onlineNodes.reduce((sum, node) => sum + (node.memory?.used || 0), 0);
 
-    // Disk (Storage)
-    // Use rootfs from nodes for '/' usage
-    const totalDisk = onlineNodes.reduce((sum, node) => sum + (node.rootfs?.total || 0), 0);
-    const usedDisk = onlineNodes.reduce((sum, node) => sum + (node.rootfs?.used || 0), 0);
+    let totalDisk = 0;
+    let usedDisk = 0;
+
+    if (hypervisor.type === 'vsphere') {
+      // For vSphere, use the fetched storage (datastores) data
+      totalDisk = storage?.reduce((sum, s) => sum + (s.size || 0), 0) || 0;
+      usedDisk = storage?.reduce((sum, s) => sum + (s.used || 0), 0) || 0;
+    } else {
+      // For Proxmox (and potentially other types in the future), use rootfs from nodes
+      totalDisk = onlineNodes.reduce((sum, node) => sum + (node.rootfs?.total || 0), 0);
+      usedDisk = onlineNodes.reduce((sum, node) => sum + (node.rootfs?.used || 0), 0);
+    }
 
     return {
       totalCores,
