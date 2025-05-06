@@ -842,45 +842,86 @@ app.get('/api/hypervisors/:id/nodes', authenticate, async (req, res) => {
   const { id } = req.params;
   console.log(`--- GET /api/hypervisors/${id}/nodes ---`);
   try {
-    const proxmox = await getProxmoxClient(id);
-    const nodes = await proxmox.nodes.$get(); // Fetch nodes from Proxmox
+    // 1. Get Hypervisor info from DB
+    const { rows: [hypervisorInfo] } = await pool.query(
+      'SELECT id, type, status FROM hypervisors WHERE id = $1',
+      [id]
+    );
 
-    // --- Map Proxmox node data to NodeResource[] ---
-    // This requires fetching more details per node (status, cpu, mem)
-    // Example structure (needs actual API calls for details):
-    const formattedNodes = await Promise.all(nodes.map(async (node) => {
-       // Fetch detailed status for each node
-       const nodeStatus = await proxmox.nodes.$(node.node).status.$get();
-       // Calculate total logical CPUs (cores * sockets)
-       const totalLogicalCpus = (nodeStatus.cpuinfo?.cores || 0) * (nodeStatus.cpuinfo?.sockets || 1);
+    if (!hypervisorInfo) {
+      return res.status(404).json({ error: 'Hypervisor not found.' });
+    }
 
-       return {
-         id: node.node,
-         name: node.node,
-         status: node.status, // 'online', 'offline'
-         // Use totalLogicalCpus for the 'cores' field in our type for simplicity,
-         // or adjust the type definition if you want separate physical/logical counts
-         cpu: { cores: totalLogicalCpus, usage: nodeStatus.cpu || 0 },
-         memory: {
-           total: nodeStatus.memory?.total || 0,
-           used: nodeStatus.memory?.used || 0,
-           free: nodeStatus.memory?.free || 0,
-         },
-         // Add rootfs info if available in nodeStatus
-         rootfs: nodeStatus.rootfs ? {
-           total: nodeStatus.rootfs.total || 0,
-           used: nodeStatus.rootfs.used || 0,
-         } : undefined,
-         storage: [], // Fetching storage per node would be another call
-       };
-    }));
-    // --- End Mapping ---
+    if (hypervisorInfo.status !== 'connected') {
+      return res.status(409).json({ error: `Hypervisor ${hypervisorInfo.name} (${id}) is not connected. Cannot fetch nodes.` });
+    }
 
+    let formattedNodes = [];
+
+    if (hypervisorInfo.type === 'proxmox') {
+      console.log(`Fetching Proxmox nodes for hypervisor ${id}`);
+      try {
+        const proxmox = await getProxmoxClient(id); // This helper already checks type and status
+        const nodes = await proxmox.nodes.$get();
+
+        formattedNodes = await Promise.all(nodes.map(async (node) => {
+          const nodeStatus = await proxmox.nodes.$(node.node).status.$get();
+          const totalLogicalCpus = (nodeStatus.cpuinfo?.cores || 0) * (nodeStatus.cpuinfo?.sockets || 1);
+          return {
+            id: node.node,
+            name: node.node,
+            status: node.status,
+            cpu: { cores: totalLogicalCpus, usage: nodeStatus.cpu || 0 },
+            memory: {
+              total: nodeStatus.memory?.total || 0,
+              used: nodeStatus.memory?.used || 0,
+              free: nodeStatus.memory?.free || 0,
+            },
+            rootfs: nodeStatus.rootfs ? {
+              total: nodeStatus.rootfs.total || 0,
+              used: nodeStatus.rootfs.used || 0,
+            } : undefined,
+            // storage: [], // Fetching storage per node would be another call if needed here
+          };
+        }));
+        console.log(`Fetched ${formattedNodes.length} Proxmox nodes for hypervisor ${id}`);
+      } catch (proxmoxError) {
+        console.error(`Error fetching Proxmox nodes for hypervisor ${id}:`, proxmoxError.message);
+        const errorDetails = getProxmoxError(proxmoxError);
+        return res.status(errorDetails.code).json({ error: 'Failed to retrieve Proxmox nodes', details: errorDetails.message });
+      }
+    } else if (hypervisorInfo.type === 'vsphere') {
+      console.log(`Fetching vSphere nodes for hypervisor ${id} (placeholder)...`);
+      // TODO: Implement vSphere API calls to fetch hosts/nodes
+      // This will involve:
+      // 1. Getting a vSphere client instance (similar to getProxmoxClient but for vSphere).
+      //    This client would handle authentication (e.g., using the stored password or a session mechanism).
+      // 2. Calling the appropriate vSphere API endpoint to list hosts (ESXi servers) or clusters.
+      //    - For vCenter, you might list hosts within a datacenter/cluster.
+      //    - For a standalone ESXi, you'd query that host directly.
+      // 3. Mapping the vSphere host data to your `NodeResource` interface.
+      //    This includes fetching CPU, memory, and potentially some storage info if relevant at the node level.
+      //    vSphere APIs for host details: /rest/vcenter/host, /rest/esx/settings/hosts/{host}
+      // Example:
+      // const vsphereClient = await getVSphereClient(id); // You'd need a vSphere client helper
+      // const vsphereNodes = await vsphereClient.getHosts(); // or getClusters().then(getHostsInCluster)
+      // formattedNodes = vsphereNodes.map(vsNode => ({
+      //   id: vsNode.id, name: vsNode.name, status: vsNode.status,
+      //   cpu: { cores: vsNode.cpuCores, usage: vsNode.cpuUsagePercent / 100 },
+      //   memory: { total: vsNode.memoryTotalBytes, used: vsNode.memoryUsedBytes, free: vsNode.memoryTotalBytes - vsNode.memoryUsedBytes },
+      //   // rootfs might not be directly applicable or needs different mapping
+      // }));
+      formattedNodes = []; // Placeholder
+      console.log(`Placeholder: ${formattedNodes.length} vSphere nodes for hypervisor ${id}`);
+    } else {
+      console.warn(`Unknown hypervisor type '${hypervisorInfo.type}' for ID ${id} when fetching nodes.`);
+      return res.status(400).json({ error: `Unsupported hypervisor type: ${hypervisorInfo.type}` });
+    }
     res.json(formattedNodes);
   } catch (error) {
-    console.error(`Error fetching nodes for hypervisor ${id}:`, error);
-    const errorDetails = getProxmoxError(error);
-    res.status(errorDetails.code || 500).json({ error: 'Failed to retrieve nodes', details: errorDetails.message });
+    console.error(`Error fetching nodes for hypervisor ${id}:`, error.message);
+    const errorDetails = error.response && error.response.status ? getProxmoxError(error) : { code: 500, message: error.message || 'Failed to retrieve nodes' };
+    res.status(errorDetails.code).json({ error: 'Failed to retrieve nodes', details: errorDetails.message });
   }
 });
 
@@ -889,28 +930,66 @@ app.get('/api/hypervisors/:id/storage', authenticate, async (req, res) => {
   const { id } = req.params;
   console.log(`--- GET /api/hypervisors/${id}/storage ---`);
   try {
-    const proxmox = await getProxmoxClient(id);
-    // Fetch storage across the cluster or per node
-    // Example: Get storage defined at the cluster level
-    const storageResources = await proxmox.storage.$get();
+    // 1. Get Hypervisor info from DB (similar to other endpoints)
+    const { rows: [hypervisorInfo] } = await pool.query(
+      'SELECT id, name, type, status FROM hypervisors WHERE id = $1',
+      [id]
+    );
 
-    // --- Map Proxmox storage data to StorageResource[] ---
-    const formattedStorage = storageResources.map(storage => ({
-      id: storage.storage, // The storage ID/name
-      name: storage.storage,
-      type: storage.type, // e.g., 'lvm', 'nfs', 'dir'
-      size: storage.total || 0,
-      used: storage.used || 0,
-      available: storage.avail || 0,
-      path: storage.path, // May not always be present
-    }));
-    // --- End Mapping ---
+    if (!hypervisorInfo) {
+      return res.status(404).json({ error: 'Hypervisor not found.' });
+    }
+
+    if (hypervisorInfo.status !== 'connected') {
+      return res.status(409).json({ error: `Hypervisor ${hypervisorInfo.name} (${id}) is not connected. Cannot fetch storage.` });
+    }
+
+    let formattedStorage = [];
+
+    if (hypervisorInfo.type === 'proxmox') {
+      console.log(`Fetching Proxmox storage for hypervisor ${id}`);
+      try {
+        const proxmox = await getProxmoxClient(id); // This helper already checks type and status
+        const storageResources = await proxmox.storage.$get();
+        formattedStorage = storageResources.map(storage => ({
+          id: storage.storage,
+          name: storage.storage,
+          type: storage.type,
+          size: storage.total || 0,
+          used: storage.used || 0,
+          available: storage.avail || 0,
+          path: storage.path,
+        }));
+        console.log(`Fetched ${formattedStorage.length} Proxmox storage resources for hypervisor ${id}`);
+      } catch (proxmoxError) {
+        console.error(`Error fetching Proxmox storage for hypervisor ${id}:`, proxmoxError.message);
+        const errorDetails = getProxmoxError(proxmoxError);
+        return res.status(errorDetails.code).json({ error: 'Failed to retrieve Proxmox storage', details: errorDetails.message });
+      }
+    } else if (hypervisorInfo.type === 'vsphere') {
+      console.log(`Fetching vSphere storage for hypervisor ${id} (placeholder)...`);
+      // TODO: Implement vSphere API calls to fetch datastores
+      // vSphere API: /rest/vcenter/datastore
+      // Example:
+      // const vsphereClient = await getVSphereClient(id);
+      // const datastores = await vsphereClient.getDatastores();
+      // formattedStorage = datastores.map(ds => ({
+      //   id: ds.datastore, name: ds.name, type: ds.type,
+      //   size: ds.capacity, used: ds.capacity - ds.free_space, available: ds.free_space,
+      //   path: null, // Path might not be directly applicable or available
+      // }));
+      formattedStorage = []; // Placeholder
+      console.log(`Placeholder: ${formattedStorage.length} vSphere storage resources for hypervisor ${id}`);
+    } else {
+      console.warn(`Unknown hypervisor type '${hypervisorInfo.type}' for ID ${id} when fetching storage.`);
+      return res.status(400).json({ error: `Unsupported hypervisor type: ${hypervisorInfo.type}` });
+    }
 
     res.json(formattedStorage);
   } catch (error) {
     console.error(`Error fetching storage for hypervisor ${id}:`, error);
-    const errorDetails = getProxmoxError(error);
-    res.status(errorDetails.code || 500).json({ error: 'Failed to retrieve storage', details: errorDetails.message });
+    const errorDetails = error.response && error.response.status ? getProxmoxError(error) : { code: 500, message: error.message || 'Failed to retrieve storage' };
+    res.status(errorDetails.code).json({ error: 'Failed to retrieve storage', details: errorDetails.message });
   }
 });
 
@@ -919,39 +998,68 @@ app.get('/api/hypervisors/:id/templates', authenticate, async (req, res) => {
   const { id } = req.params;
   console.log(`--- GET /api/hypervisors/${id}/templates ---`);
   try {
-    const proxmox = await getProxmoxClient(id);
+    // 1. Get Hypervisor info from DB
+    const { rows: [hypervisorInfo] } = await pool.query(
+      'SELECT id, name, type, status FROM hypervisors WHERE id = $1',
+      [id]
+    );
+
+    if (!hypervisorInfo) {
+      return res.status(404).json({ error: 'Hypervisor not found.' });
+    }
+
+    if (hypervisorInfo.status !== 'connected') {
+      return res.status(409).json({ error: `Hypervisor ${hypervisorInfo.name} (${id}) is not connected. Cannot fetch templates.` });
+    }
+
     let allTemplates = [];
 
-    // Need to iterate through nodes and their storage to find templates/isos
-    const nodes = await proxmox.nodes.$get();
-    for (const node of nodes) {
-      const storageList = await proxmox.nodes.$(node.node).storage.$get();
-      for (const storage of storageList) {
-        // Only check storage types that can contain templates/ISOs
-        if (storage.content.includes('iso') || storage.content.includes('vztmpl')) {
-          const content = await proxmox.nodes.$(node.node).storage.$(storage.storage).content.$get();
-          const templates = content
-            .filter(item => item.content === 'iso' || item.content === 'vztmpl')
-            .map(item => ({
-              id: item.volid, // e.g., local:iso/ubuntu.iso
-              name: item.volid.split('/')[1] || item.volid, // Basic name extraction
-              description: item.volid, // Use volid as description for now
-              size: item.size,
-              path: item.volid,
-              type: item.content === 'iso' ? 'iso' : 'template',
-              version: item.format, // e.g., 'raw', 'qcow2' - might need better version logic
-              storage: storage.storage,
-            }));
-          allTemplates = allTemplates.concat(templates);
-        }
+    if (hypervisorInfo.type === 'proxmox') {
+      console.log(`Fetching Proxmox templates for hypervisor ${id}`);
+      try {
+        const proxmox = await getProxmoxClient(id); // This helper already checks type and status
+        // Use the more robust fetchProxmoxTemplates helper function
+        allTemplates = await fetchProxmoxTemplates(proxmox);
+        console.log(`Fetched ${allTemplates.length} Proxmox templates for hypervisor ${id}`);
+      } catch (proxmoxError) {
+        console.error(`Error fetching Proxmox templates for hypervisor ${id}:`, proxmoxError.message);
+        const errorDetails = getProxmoxError(proxmoxError);
+        return res.status(errorDetails.code).json({ error: 'Failed to retrieve Proxmox templates', details: errorDetails.message });
       }
+    } else if (hypervisorInfo.type === 'vsphere') {
+      console.log(`Fetching vSphere templates for hypervisor ${id} (placeholder)...`);
+      // TODO: Implement vSphere API calls to fetch templates/ISOs
+      // This will involve:
+      // 1. Getting a vSphere client.
+      // 2. Querying for VM templates:
+      //    - vSphere API: /rest/vcenter/vm-template/library-item or /rest/vcenter/vm?filter.templates=true
+      // 3. Querying for ISOs:
+      //    - This is often done by listing files in datastores that have an .iso extension.
+      //    - vSphere API: /rest/vcenter/datastore/{datastore_id}/files (then filter by .iso)
+      //    - Or, if using Content Libraries: /rest/com/vmware/content/library/item/file
+      // 4. Mapping the results to your `VMTemplate` or a similar interface.
+      // Example:
+      // const vsphereClient = await getVSphereClient(id);
+      // const vmTemplates = await vsphereClient.getVMTemplates();
+      // const isoFiles = await vsphereClient.getIsoFiles();
+      // allTemplates = vmTemplates.concat(isoFiles).map(item => ({
+      //   id: item.id, name: item.name, description: item.description || item.name,
+      //   size: item.size_bytes, path: item.path_on_datastore,
+      //   type: item.type, // 'template' or 'iso'
+      //   storage: item.datastore_name,
+      // }));
+      allTemplates = []; // Placeholder
+      console.log(`Placeholder: ${allTemplates.length} vSphere templates for hypervisor ${id}`);
+    } else {
+      console.warn(`Unknown hypervisor type '${hypervisorInfo.type}' for ID ${id} when fetching templates.`);
+      return res.status(400).json({ error: `Unsupported hypervisor type: ${hypervisorInfo.type}` });
     }
 
     res.json(allTemplates);
   } catch (error) {
     console.error(`Error fetching templates for hypervisor ${id}:`, error);
-    const errorDetails = getProxmoxError(error);
-    res.status(errorDetails.code || 500).json({ error: 'Failed to retrieve templates', details: errorDetails.message });
+    const errorDetails = error.response && error.response.status ? getProxmoxError(error) : { code: 500, message: error.message || 'Failed to retrieve templates' };
+    res.status(errorDetails.code).json({ error: 'Failed to retrieve templates', details: errorDetails.message });
   }
 });
 
@@ -1579,11 +1687,10 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
 
     const hypervisor = result.rows[0];
 
-    // If connected, try to fetch details
+    // If connected, try to fetch details based on type
     if (hypervisor.status === 'connected' && hypervisor.type === 'proxmox') {
       console.log(`Hypervisor ${id} is connected, fetching details...`);
       try {
-        // Use the existing helper function or replicate logic
         const [dbHost, dbPortStr] = hypervisor.host.split(':');
         const port = dbPortStr ? parseInt(dbPortStr, 10) : 8006;
         const cleanHost = dbHost;
@@ -1594,105 +1701,78 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
         };
         const proxmox = proxmoxApi(proxmoxConfig);
 
-        // Fetch basic node list, storage, templates in parallel
         const [basicNodesData, storageData, templatesData] = await Promise.all([
           proxmox.nodes.$get().catch(e => { console.error(`Error fetching basic node list for ${id}:`, e.message); return []; }), // Fetch basic node list
           proxmox.storage.$get().catch(e => { console.error(`Error fetching storage for ${id}:`, e.message); return []; }), // Fetch storage
           fetchProxmoxTemplates(proxmox).catch(e => { console.error(`Error fetching templates for ${id}:`, e.message); return []; }) // Use helper for templates
         ]);
 
-        // --- Fetch DETAILED status for each node ---
         const detailedNodesData = await Promise.all(
           basicNodesData.map(async (node) => {
             try {
               const nodeStatus = await proxmox.nodes.$(node.node).status.$get();
-              // Fetch physical disk info
               const diskInfo = await proxmox.nodes.$(node.node).disks.list.$get().catch(diskError => {
                 console.error(`Error fetching disks for node ${node.node}:`, diskError.message);
                 return []; // Return empty array on error
               });
-
-              // Calculate total logical CPUs
               const totalLogicalCpus = (nodeStatus.cpuinfo?.cores || 0) * (nodeStatus.cpuinfo?.sockets || 1);
-
-              return { // Combine basic info, detailed status, and disk info
-                ...node, // Keep basic info like 'node' name
-                detailedStatus: nodeStatus, // Add detailed status under a new key
-                physicalDisks: diskInfo, // Add physical disk info
-                // Add calculated/formatted fields matching NodeResource type
-                status: node.status, // From basicNodesData
+              return {
+                ...node,
+                detailedStatus: nodeStatus,
+                physicalDisks: diskInfo,
+                status: node.status,
                 cpu: { cores: totalLogicalCpus, usage: nodeStatus.cpu || 0 },
                 memory: { total: nodeStatus.memory?.total || 0, used: nodeStatus.memory?.used || 0, free: nodeStatus.memory?.free || 0 },
                 rootfs: nodeStatus.rootfs ? { total: nodeStatus.rootfs.total || 0, used: nodeStatus.rootfs.used || 0 } : undefined,
               };
             } catch (nodeStatusError) {
               console.error(`Error fetching status for node ${node.node}:`, nodeStatusError.message);
-              return { ...node, detailedStatus: null, physicalDisks: [], status: 'unknown', cpu: undefined, memory: undefined, rootfs: undefined }; // Return basic info with null/empty details on error
+              return { ...node, detailedStatus: null, physicalDisks: [], status: 'unknown', cpu: undefined, memory: undefined, rootfs: undefined };
             }
           })
         );
-        // --- End Detailed Node Fetch ---
 
-        // Add details to the hypervisor object
-        hypervisor.nodes = detailedNodesData; // Use detailedNodesData which now includes status, cpu, mem, rootfs, disks
-        hypervisor.storage = storageData; // Assuming API returns structure matching StorageResource
-        hypervisor.templates = templatesData; // Assuming helper returns structure matching VMTemplate/NodeTemplate
-        // hypervisor.planCapacityEstimates = []; // Remove hypervisor-level estimates initialization
+        hypervisor.nodes = detailedNodesData;
+        hypervisor.storage = storageData;
+        hypervisor.templates = templatesData;
         console.log(`Fetched details for ${id}: ${detailedNodesData.length} nodes, ${storageData.length} storage, ${templatesData.length} templates`);
 
-        // --- Calculate Aggregated Resources for Display ---
         let aggTotalCpuCores = 0;
-        let aggUsedCpuCores = 0; // Based on usage fraction * cores
+        let aggUsedCpuCores = 0;
         let aggTotalMemoryBytes = 0;
         let aggUsedMemoryBytes = 0;
         let aggTotalDiskBytes = 0;
         let aggUsedDiskBytes = 0;
 
-        // --- Fetch Active VM Plans (needed for per-node calculation) ---
         const { rows: activePlans } = await pool.query(
           'SELECT id, name, specs FROM vm_plans WHERE is_active = true ORDER BY name'
         );
         console.log(`Fetched ${activePlans.length} active VM plans for capacity calculation.`);
 
-        // Use detailedNodesData for calculation AND per-node capacity estimation
         if (detailedNodesData.length > 0) {
             detailedNodesData.forEach(node => {
                 if (!node.detailedStatus) return; // Skip nodes where status fetch failed
-                // Use the calculated totalLogicalCpus from the node object
-                const nodeTotalLogicalCpus = node.cpu?.cores || 0; // Already calculated as cores * sockets
+                const nodeTotalLogicalCpus = node.cpu?.cores || 0;
                 aggTotalCpuCores += nodeTotalLogicalCpus;
-                // Use node.cpu usage (fraction 0-1) * cores for used estimate
-                aggUsedCpuCores += (node.cpu?.usage || 0) * nodeTotalLogicalCpus; // Use node.cpu.usage
-                aggTotalMemoryBytes += node.memory?.total || 0; // Use node.memory.total
-                aggUsedMemoryBytes += node.memory?.used || 0; // Use node.memory.used
+                aggUsedCpuCores += (node.cpu?.usage || 0) * nodeTotalLogicalCpus;
+                aggTotalMemoryBytes += node.memory?.total || 0;
+                aggUsedMemoryBytes += node.memory?.used || 0;
 
-                // --- Calculate Available Resources and Plan Capacity *for this node* ---
                 const nodeAvailableCpuCores = Math.max(0, (node.cpu?.cores || 0) * (1 - (node.cpu?.usage || 0)));
                 const nodeAvailableMemoryBytes = node.memory?.free || 0;
-                // Use rootfs for disk capacity on the node
                 const nodeAvailableDiskBytes = Math.max(0, (node.rootfs?.total || 0) - (node.rootfs?.used || 0));
 
                 node.planCapacityEstimates = activePlans.map(plan => {
                   const planCpu = plan.specs?.cpu || 0;
                   const planMemoryMB = plan.specs?.memory || 0;
                   const planDiskGB = plan.specs?.disk || 0;
-
-                  // Convert plan specs to comparable units (Bytes for memory/disk)
                   const planMemoryBytes = planMemoryMB * 1024 * 1024;
                   const planDiskBytes = planDiskGB * 1024 * 1024 * 1024;
-
-                  // Calculate max possible based on *node's* resources
                   const maxByCpu = planCpu > 0 ? Math.floor(nodeAvailableCpuCores / planCpu) : Infinity;
                   const maxByMemory = planMemoryBytes > 0 ? Math.floor(nodeAvailableMemoryBytes / planMemoryBytes) : Infinity;
-                  // Use node's rootfs available disk for calculation
                   const maxByDisk = planDiskBytes > 0 ? Math.floor(nodeAvailableDiskBytes / planDiskBytes) : Infinity;
-
-                  // The estimate is the minimum of the three constraints for this node
                   const estimatedCount = Math.min(maxByCpu, maxByMemory, maxByDisk);
-
-                  // Handle Infinity case
                   const finalCount = estimatedCount === Infinity ? 0 : estimatedCount;
-
                   return {
                     planId: plan.id,
                     planName: plan.name,
@@ -1700,27 +1780,18 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
                     specs: plan.specs
                   };
                 });
-                // --- End Per-Node Capacity Calculation ---
-
-                // Add node's rootfs usage to the aggregated disk calculation (if needed elsewhere, otherwise remove)
-                // aggTotalDiskBytes += node.rootfs?.total || 0;
-                // aggUsedDiskBytes += node.rootfs?.used || 0;
-
             });
-        } // End calculation using detailedNodesData
+        }
 
         if (storageData.length > 0) {
             storageData.forEach(storage => {
-                // Ensure 'size' and 'used' are numbers before adding
-                aggTotalDiskBytes += Number(storage.total) || 0; // Use 'total' from proxmox storage response
+                aggTotalDiskBytes += Number(storage.total) || 0;
                 aggUsedDiskBytes += Number(storage.used) || 0;
             });
         }
 
         const aggAvgCpuUsagePercent = aggTotalCpuCores > 0 ? (aggUsedCpuCores / aggTotalCpuCores) * 100 : 0;
-        // --- End Aggregated Resources Calculation ---
 
-        // Add aggregated stats to the hypervisor object for frontend display
         hypervisor.aggregatedStats = {
             totalCores: aggTotalCpuCores,
             avgCpuUsagePercent: aggAvgCpuUsagePercent,
@@ -1731,12 +1802,60 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
             storagePoolCount: storageData.length
         };
         console.log(`Added aggregated stats for ${id}:`, hypervisor.aggregatedStats);
+
       } catch (detailError) {
-        console.error(`Failed to fetch details for connected hypervisor ${id}:`, detailError);
-        // Optionally add an error flag to the response or just return basic info
+        console.error(`Failed to fetch Proxmox details for connected hypervisor ${id}:`, detailError);
         hypervisor.detailsError = detailError.message || 'Failed to load details';
       }
-    } // Add else if for vSphere details fetching here
+    } else if (hypervisor.status === 'connected' && hypervisor.type === 'vsphere') {
+      console.log(`Hypervisor ${id} is connected, fetching vSphere details (placeholder)...`);
+      try {
+        // TODO: Implement vSphere API calls to fetch similar details
+        // For now, we'll set them to empty or default values.
+
+        // Example: Fetching vSphere datacenters, clusters, hosts (nodes), datastores (storage), templates
+        // const vsphereClient = await getVSphereClient(hypervisor.id); // You'd need a helper for vSphere
+        // hypervisor.nodes = await vsphereClient.getNodes(); // Placeholder
+        // hypervisor.storage = await vsphereClient.getStorage(); // Placeholder
+        // hypervisor.templates = await vsphereClient.getTemplates(); // Placeholder
+
+        hypervisor.nodes = []; // Placeholder
+        hypervisor.storage = []; // Placeholder
+        hypervisor.templates = []; // Placeholder
+
+        // Placeholder for aggregated stats for vSphere
+        hypervisor.aggregatedStats = {
+            totalCores: 0,
+            avgCpuUsagePercent: 0,
+            totalMemoryBytes: 0,
+            usedMemoryBytes: 0,
+            totalDiskBytes: 0,
+            usedDiskBytes: 0,
+            storagePoolCount: 0
+        };
+        // Placeholder for plan capacity estimates on vSphere nodes
+        // This would require fetching active plans and then iterating through vSphere nodes/clusters
+        // and their available resources.
+        if (hypervisor.nodes.length > 0) {
+            const { rows: activePlans } = await pool.query(
+              'SELECT id, name, specs FROM vm_plans WHERE is_active = true ORDER BY name'
+            );
+            hypervisor.nodes.forEach(node => {
+                node.planCapacityEstimates = activePlans.map(plan => ({
+                    planId: plan.id,
+                    planName: plan.name,
+                    estimatedCount: 0, // Placeholder: actual calculation needed
+                    specs: plan.specs
+                }));
+            });
+        }
+
+        console.log(`Placeholder details set for vSphere hypervisor ${id}`);
+      } catch (detailError) {
+        console.error(`Failed to fetch vSphere details for connected hypervisor ${id}:`, detailError);
+        hypervisor.detailsError = detailError.message || 'Failed to load vSphere details';
+      }
+    }
 
     // Remove sensitive info before sending
     delete hypervisor.api_token;
@@ -1750,7 +1869,6 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
 
   }
 });
-
 
 // Helper function to fetch templates (similar to the one in GET /api/hypervisors/:id/templates)
 async function fetchProxmoxTemplates(proxmox) {
