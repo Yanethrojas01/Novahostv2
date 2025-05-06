@@ -1087,19 +1087,38 @@ app.get('/api/hypervisors/:id/storage', authenticate, async (req, res) => {
         return res.status(errorDetails.code).json({ error: 'Failed to retrieve Proxmox storage', details: errorDetails.message });
       }
     } else if (hypervisorInfo.type === 'vsphere') {
-      console.log(`Fetching vSphere storage for hypervisor ${id} (placeholder)...`);
-      // TODO: Implement vSphere API calls to fetch datastores
-      // vSphere API: /rest/vcenter/datastore
-      // Example:
-      // const vsphereClient = await getVSphereClient(id);
-      // const datastores = await vsphereClient.getDatastores();
-      // formattedStorage = datastores.map(ds => ({
-      //   id: ds.datastore, name: ds.name, type: ds.type,
-      //   size: ds.capacity, used: ds.capacity - ds.free_space, available: ds.free_space,
-      //   path: null, // Path might not be directly applicable or available
-      // }));
-      formattedStorage = []; // Placeholder
-      console.log(`Placeholder: ${formattedStorage.length} vSphere storage resources for hypervisor ${id}`);
+      console.log(`Fetching vSphere storage (datastores) for hypervisor ${id}`);
+      let vsphereClient;
+      try {
+        vsphereClient = await getVSphereClient(id);
+        // The /rest/vcenter/datastore endpoint is standard for vCenter.
+        // For standalone ESXi, this specific endpoint might not be available or might behave differently.
+        // If vsphereClient.vsphereSubtype === 'esxi', you might need an alternative way or accept limited info.
+        const datastoresResponse = await vsphereClient.get('/rest/vcenter/datastore');
+        const datastores = datastoresResponse.value || datastoresResponse; // Response structure can vary (sometimes .value)
+
+        if (Array.isArray(datastores)) {
+          formattedStorage = datastores.map(ds => ({
+            id: ds.datastore, // e.g., "datastore-123"
+            name: ds.name,
+            type: ds.type, // e.g., "VMFS", "NFS"
+            size: ds.capacity || 0, // Bytes
+            used: (ds.capacity && ds.free_space !== undefined) ? (ds.capacity - ds.free_space) : 0, // Bytes
+            available: ds.free_space || 0, // Bytes
+            path: null, // Path is not typically relevant for vSphere datastores in the same way as Proxmox storage paths
+          }));
+          console.log(`Fetched ${formattedStorage.length} vSphere datastores for hypervisor ${id}`);
+        } else {
+          console.warn(`Unexpected response structure for vSphere datastores:`, datastores);
+        }
+      } catch (vsphereError) {
+        console.error(`Error fetching vSphere storage for hypervisor ${id}:`, vsphereError.message);
+        // Error already logged by getVSphereClient or during API calls
+      } finally {
+        if (vsphereClient) {
+          await vsphereClient.logout();
+        }
+      }
     } else {
       console.warn(`Unknown hypervisor type '${hypervisorInfo.type}' for ID ${id} when fetching storage.`);
       return res.status(400).json({ error: `Unsupported hypervisor type: ${hypervisorInfo.type}` });
