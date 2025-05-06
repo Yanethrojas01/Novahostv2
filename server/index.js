@@ -2080,7 +2080,7 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
     const hypervisor = result.rows[0];
 
     // If connected, try to fetch details based on type
-    if (hypervisor.status === 'connected' && hypervisor.type === 'proxmox') {
+    if (hypervisor.status === 'connected' && hypervisor.type === 'proxmox') { // Proxmox Logic
       console.log(`Hypervisor ${id} is connected, fetching details...`);
       try {
         const [dbHost, dbPortStr] = hypervisor.host.split(':');
@@ -2199,53 +2199,112 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
         console.error(`Failed to fetch Proxmox details for connected hypervisor ${id}:`, detailError);
         hypervisor.detailsError = detailError.message || 'Failed to load details';
       }
-    } else if (hypervisor.status === 'connected' && hypervisor.type === 'vsphere') {
-      console.log(`Hypervisor ${id} is connected, fetching vSphere details (placeholder)...`);
+    } else if (hypervisor.status === 'connected' && hypervisor.type === 'vsphere') { // vSphere Logic
+      console.log(`Hypervisor ${id} is connected, fetching vSphere details...`);
+      let vsphereClient;
       try {
-        // TODO: Implement vSphere API calls to fetch similar details
-        // For now, we'll set them to empty or default values.
+        vsphereClient = await getVSphereClient(hypervisor.id);
 
-        // Example: Fetching vSphere datacenters, clusters, hosts (nodes), datastores (storage), templates
-        // const vsphereClient = await getVSphereClient(hypervisor.id); // You'd need a helper for vSphere
-        // hypervisor.nodes = await vsphereClient.getNodes(); // Placeholder
-        // hypervisor.storage = await vsphereClient.getStorage(); // Placeholder
-        // hypervisor.templates = await vsphereClient.getTemplates(); // Placeholder
-
-        hypervisor.nodes = []; // Placeholder
-        hypervisor.storage = []; // Placeholder
-        hypervisor.templates = []; // Placeholder
-
-        // Placeholder for aggregated stats for vSphere
-        hypervisor.aggregatedStats = {
-            totalCores: 0,
-            avgCpuUsagePercent: 0,
-            totalMemoryBytes: 0,
-            usedMemoryBytes: 0,
-            totalDiskBytes: 0,
-            usedDiskBytes: 0,
-            storagePoolCount: 0
-        };
-        // Placeholder for plan capacity estimates on vSphere nodes
-        // This would require fetching active plans and then iterating through vSphere nodes/clusters
-        // and their available resources.
-        if (hypervisor.nodes.length > 0) {
-            const { rows: activePlans } = await pool.query(
-              'SELECT id, name, specs FROM vm_plans WHERE is_active = true ORDER BY name'
-            );
-            hypervisor.nodes.forEach(node => {
-                node.planCapacityEstimates = activePlans.map(plan => ({
-                    planId: plan.id,
-                    planName: plan.name,
-                    estimatedCount: 0, // Placeholder: actual calculation needed
-                    specs: plan.specs
-                }));
-            });
+        // Fetch Nodes (ESXi Hosts)
+        let vsphereHostsRaw = [];
+        if (vsphereClient.vsphereSubtype === 'vcenter') {
+          const hostsResponse = await vsphereClient.get('/rest/vcenter/host');
+          vsphereHostsRaw = hostsResponse.value || [];
+        } else if (vsphereClient.vsphereSubtype === 'esxi') {
+          // Represent the ESXi itself as a node
+          vsphereHostsRaw = [{ // Simplified representation for standalone ESXi
+            host: hypervisor.id, name: hypervisor.name || 'ESXi Host',
+            connection_state: 'CONNECTED', power_state: 'POWERED_ON',
+            cpu_count: 0, memory_size: 0, // Placeholders, ideally fetch real stats
+          }];
         }
+        hypervisor.nodes = vsphereHostsRaw.map(h => ({
+          id: h.host, name: h.name,
+          status: h.connection_state === 'CONNECTED' && h.power_state === 'POWERED_ON' ? 'online' : 'offline',
+          cpu: { cores: h.cpu_count || 0, usage: 0 }, // Usage would need perf counters
+          memory: { total: h.memory_size || 0, used: 0, free: 0 }, // Usage would need perf counters
+        }));
 
-        console.log(`Placeholder details set for vSphere hypervisor ${id}`);
+        // Fetch Storage (Datastores)
+        const datastoresResponse = await vsphereClient.get('/rest/vcenter/datastore');
+        const vsphereDatastoresRaw = datastoresResponse.value || datastoresResponse;
+        hypervisor.storage = Array.isArray(vsphereDatastoresRaw) ? vsphereDatastoresRaw.map(ds => ({
+          id: ds.datastore, name: ds.name, type: ds.type,
+          size: ds.capacity || 0,
+          used: (ds.capacity && ds.free_space !== undefined) ? (ds.capacity - ds.free_space) : 0,
+          available: ds.free_space || 0,
+        })) : [];
+
+        // Fetch Templates & ISOs
+        const vmTemplates = await fetchVSphereVMTemplates(vsphereClient);
+        const isoFiles = await fetchVSphereIsoFiles(vsphereClient);
+        hypervisor.templates = vmTemplates.concat(isoFiles);
+
+        console.log(`Fetched vSphere details for ${id}: ${hypervisor.nodes.length} nodes, ${hypervisor.storage.length} storage, ${hypervisor.templates.length} templates`);
+
+        // Calculate Aggregated Stats for vSphere
+        let aggTotalCpuCores = 0;
+        let aggTotalMemoryBytes = 0;
+        let aggUsedMemoryBytes = 0; // Placeholder, real usage is complex
+
+        hypervisor.nodes.forEach(node => {
+          aggTotalCpuCores += node.cpu?.cores || 0;
+          aggTotalMemoryBytes += node.memory?.total || 0;
+          // Note: Accurate used CPU/Memory for vSphere often requires querying performance counters,
+          // which is more involved. For now, avgCpuUsagePercent will be 0.
+        });
+
+        let aggTotalDiskBytes = 0;
+        let aggUsedDiskBytes = 0;
+        hypervisor.storage.forEach(s => {
+          aggTotalDiskBytes += s.size || 0;
+          aggUsedDiskBytes += s.used || 0;
+        });
+
+        hypervisor.aggregatedStats = {
+          totalCores: aggTotalCpuCores,
+          avgCpuUsagePercent: 0, // Placeholder for vSphere, as detailed usage is complex
+          totalMemoryBytes: aggTotalMemoryBytes,
+          usedMemoryBytes: aggUsedMemoryBytes, // Placeholder
+          totalDiskBytes: aggTotalDiskBytes,
+          usedDiskBytes: aggUsedDiskBytes,
+          storagePoolCount: hypervisor.storage.length
+        };
+        console.log(`Added vSphere aggregated stats for ${id}:`, hypervisor.aggregatedStats);
+
+        // Plan Capacity Estimates for vSphere Nodes (Simplified)
+        if (hypervisor.nodes.length > 0) {
+          const { rows: activePlans } = await pool.query(
+            'SELECT id, name, specs FROM vm_plans WHERE is_active = true ORDER BY name'
+          );
+          hypervisor.nodes.forEach(node => {
+            const nodeAvailableCpuCores = node.cpu?.cores || 0; // Simplified: assumes all cores are available
+            const nodeAvailableMemoryBytes = node.memory?.total || 0; // Simplified: assumes all memory is available
+
+            node.planCapacityEstimates = activePlans.map(plan => {
+              const planCpu = plan.specs?.cpu || 0;
+              const planMemoryMB = plan.specs?.memory || 0;
+              const planMemoryBytes = planMemoryMB * 1024 * 1024;
+              // Disk capacity for vSphere is typically from shared datastores, so per-node disk estimate is less direct.
+              // We'll focus on CPU/Memory for per-node estimate here.
+              const maxByCpu = planCpu > 0 ? Math.floor(nodeAvailableCpuCores / planCpu) : Infinity;
+              const maxByMemory = planMemoryBytes > 0 ? Math.floor(nodeAvailableMemoryBytes / planMemoryBytes) : Infinity;
+              const estimatedCount = Math.min(maxByCpu, maxByMemory);
+              return {
+                planId: plan.id, planName: plan.name,
+                estimatedCount: estimatedCount === Infinity ? 0 : estimatedCount,
+                specs: plan.specs
+              };
+            });
+          });
+        }
       } catch (detailError) {
         console.error(`Failed to fetch vSphere details for connected hypervisor ${id}:`, detailError);
         hypervisor.detailsError = detailError.message || 'Failed to load vSphere details';
+      } finally {
+        if (vsphereClient) {
+          await vsphereClient.logout();
+        }
       }
     }
 
