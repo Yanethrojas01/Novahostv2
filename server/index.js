@@ -270,16 +270,11 @@ app.get('/api/users', authenticate, requireAdmin, async (req, res) => {
 });
 
 
-
-
-
 // Routes
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
-
-
 
 
 // vSphere API routes
@@ -290,29 +285,7 @@ app.get('/api/vsphere/datacenters', authenticate, (req, res) => {
   ]);
 });
 
-app.get('/api/vsphere/vms', authenticate, (req, res) => {
-  // This would make a request to the vSphere API
-  res.json([
-    {
-      id: 'vm-101',
-      name: 'windows-server',
-      status: 'poweredOn',
-      datacenter: 'datacenter-1',
-      cpu: 2,
-      memory: 4096,
-      disk: 80,
-    },
-    {
-      id: 'vm-102',
-      name: 'monitoring',
-      status: 'poweredOn',
-      datacenter: 'datacenter-1',
-      cpu: 2,
-      memory: 4096,
-      disk: 60,
-    },
-  ]);
-});
+
 
 // POST /api/vms - Create a new VM
 app.post('/api/vms', authenticate, async (req, res) => {
