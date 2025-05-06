@@ -101,6 +101,7 @@ export default function Hypervisors() {
           },
           body: JSON.stringify(payload), // Send potentially modified payload
         });
+        console.log( 'Response status:', response); // Debugging line
 
         if (!response.ok) {
            const errorData = await response.json().catch(() => ({ error: 'Failed to parse error response' }));

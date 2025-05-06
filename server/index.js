@@ -1109,6 +1109,7 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
               // Para ESXi 6.7 y vCenter 6.7+, esto debería funcionar
               if (authResponse.ok) {
                   const sessionData = await authResponse.json();
+                  console.log(authResponse.status, sessionData);
                   sessionId = sessionData.value;
                   
                   if (!sessionId) {
