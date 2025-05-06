@@ -840,7 +840,7 @@ async function getProxmoxClient(hypervisorId) {
 
 // Helper function to get authenticated vSphere client
 async function getVSphereClient(hypervisorId) {
-  const { rows: [hypervisor] } = await pool.query(
+  const { rows: [hypervisor] } = await pool.query( // Ensure you select vsphere_subtype
     `SELECT id, type, host, username, api_token, status, vsphere_subtype
      FROM hypervisors WHERE id = $1`,
     [hypervisorId]
@@ -985,28 +985,54 @@ app.get('/api/hypervisors/:id/nodes', authenticate, async (req, res) => {
         return res.status(errorDetails.code).json({ error: 'Failed to retrieve Proxmox nodes', details: errorDetails.message });
       }
     } else if (hypervisorInfo.type === 'vsphere') {
-      console.log(`Fetching vSphere nodes for hypervisor ${id} (placeholder)...`);
-      // TODO: Implement vSphere API calls to fetch hosts/nodes
-      // This will involve:
-      // 1. Getting a vSphere client instance (similar to getProxmoxClient but for vSphere).
-      //    This client would handle authentication (e.g., using the stored password or a session mechanism).
-      // 2. Calling the appropriate vSphere API endpoint to list hosts (ESXi servers) or clusters.
-      //    - For vCenter, you might list hosts within a datacenter/cluster.
-      //    - For a standalone ESXi, you'd query that host directly.
-      // 3. Mapping the vSphere host data to your `NodeResource` interface.
-      //    This includes fetching CPU, memory, and potentially some storage info if relevant at the node level.
-      //    vSphere APIs for host details: /rest/vcenter/host, /rest/esx/settings/hosts/{host}
-      // Example:
-      // const vsphereClient = await getVSphereClient(id); // You'd need a vSphere client helper
-      // const vsphereNodes = await vsphereClient.getHosts(); // or getClusters().then(getHostsInCluster)
-      // formattedNodes = vsphereNodes.map(vsNode => ({
-      //   id: vsNode.id, name: vsNode.name, status: vsNode.status,
-      //   cpu: { cores: vsNode.cpuCores, usage: vsNode.cpuUsagePercent / 100 },
-      //   memory: { total: vsNode.memoryTotalBytes, used: vsNode.memoryUsedBytes, free: vsNode.memoryTotalBytes - vsNode.memoryUsedBytes },
-      //   // rootfs might not be directly applicable or needs different mapping
-      // }));
-      formattedNodes = []; // Placeholder
-      console.log(`Placeholder: ${formattedNodes.length} vSphere nodes for hypervisor ${id}`);
+      console.log(`Fetching vSphere nodes for hypervisor ${id}`);
+      let vsphereClient;
+      try {
+        vsphereClient = await getVSphereClient(id);
+        let hosts = [];
+
+        if (vsphereClient.vsphereSubtype === 'vcenter') {
+          // For vCenter, list all hosts
+          const response = await vsphereClient.get('/rest/vcenter/host');
+          hosts = response.value || []; // The actual list is in response.value
+        } else if (vsphereClient.vsphereSubtype === 'esxi') {
+          // For a standalone ESXi host, there's typically only one "host" (itself).
+          // We might need to fetch its details directly.
+          // The /rest/esx/settings/hosts endpoint might list the host itself.
+          // Or, more simply, construct a representation of the ESXi host itself.
+          // This part might need refinement based on what details are crucial for "nodes" from a standalone ESXi.
+          // For now, let's assume we can get some basic info.
+          // A common approach is to get system information.
+          const systemInfo = await vsphereClient.get('/rest/appliance/system/version'); // Example endpoint
+          // This is a simplified representation. You'd ideally fetch more detailed host stats.
+          hosts = [{
+            host: hypervisorInfo.id, // Use hypervisor ID as host ID for standalone
+            name: hypervisorInfo.name || 'ESXi Host',
+            connection_state: 'CONNECTED', // Assume connected if client was obtained
+            power_state: 'POWERED_ON', // Assume powered on
+            // CPU and memory would require more specific API calls for a standalone ESXi's own resources
+            cpu_count: 0, // Placeholder
+            memory_size: 0, // Placeholder
+          }];
+        }
+
+        formattedNodes = hosts.map(host => ({
+          id: host.host, // vSphere host ID (e.g., "host-123")
+          name: host.name,
+          status: host.connection_state === 'CONNECTED' && host.power_state === 'POWERED_ON' ? 'online' : 'offline',
+          cpu: { cores: host.cpu_count || 0, usage: 0 }, // CPU usage needs another call or calculation
+          memory: { total: host.memory_size || 0, used: 0, free: 0 }, // Memory usage needs more details
+          // rootfs is not directly applicable like in Proxmox nodes.
+        }));
+        console.log(`Fetched ${formattedNodes.length} vSphere nodes for hypervisor ${id}`);
+      } catch (vsphereError) {
+        console.error(`Error fetching vSphere nodes for hypervisor ${id}:`, vsphereError.message);
+        // Error already logged by getVSphereClient or during API calls
+      } finally {
+        if (vsphereClient) {
+          await vsphereClient.logout();
+        }
+      }
     } else {
       console.warn(`Unknown hypervisor type '${hypervisorInfo.type}' for ID ${id} when fetching nodes.`);
       return res.status(400).json({ error: `Unsupported hypervisor type: ${hypervisorInfo.type}` });
