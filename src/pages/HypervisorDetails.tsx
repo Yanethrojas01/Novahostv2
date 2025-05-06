@@ -92,7 +92,7 @@ export default function HypervisorDetails() {
   }
 
   // Use pre-calculated stats from backend if available (though we removed the display for aggregated)
-  // const stats: AggregatedStats | null = hypervisor.aggregatedStats || null;
+  const aggregatedStats: AggregatedStats | null | undefined = hypervisor.aggregatedStats;
 
   // Custom formatDistanceToNow implementation
   function formatDistanceToNow(date: Date, options: { addSuffix: boolean }): string {
@@ -150,10 +150,37 @@ export default function HypervisorDetails() {
         </div>
       </div>
 
+      {/* Aggregated Stats Section (if available) */}
+      {hypervisor.status === 'connected' && aggregatedStats && (
+        <div className="bg-white dark:bg-slate-800 shadow rounded-lg border border-slate-200 dark:border-slate-700 p-6 mb-6">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4 flex items-center">
+            <Calculator className="h-5 w-5 mr-2 text-primary-600 dark:text-primary-400" />
+            Estadísticas Agregadas del Cluster/Host
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+            <div className="p-3 bg-slate-50 dark:bg-slate-700/50 rounded-md">
+              <p className="flex items-center text-slate-500 dark:text-slate-400 mb-1"><Cpu className="h-4 w-4 mr-1.5"/>CPU Total</p>
+              <p className="font-semibold text-slate-700 dark:text-slate-200">{aggregatedStats.totalCores} Núcleos</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Uso Promedio: {aggregatedStats.avgCpuUsagePercent.toFixed(1)}%</p>
+            </div>
+            <div className="p-3 bg-slate-50 dark:bg-slate-700/50 rounded-md">
+              <p className="flex items-center text-slate-500 dark:text-slate-400 mb-1"><MemoryStick className="h-4 w-4 mr-1.5"/>Memoria Total</p>
+              <p className="font-semibold text-slate-700 dark:text-slate-200">{formatBytes(aggregatedStats.totalMemoryBytes)}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Usada: {formatBytes(aggregatedStats.usedMemoryBytes)}</p>
+            </div>
+            <div className="p-3 bg-slate-50 dark:bg-slate-700/50 rounded-md">
+              <p className="flex items-center text-slate-500 dark:text-slate-400 mb-1"><Database className="h-4 w-4 mr-1.5"/>Almacenamiento Total</p>
+              <p className="font-semibold text-slate-700 dark:text-slate-200">{formatBytes(aggregatedStats.totalDiskBytes)}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Usado: {formatBytes(aggregatedStats.usedDiskBytes)} ({aggregatedStats.storagePoolCount} Pools)</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Resource Details Section */}
       <div className="bg-white dark:bg-slate-800 shadow rounded-lg border border-slate-200 dark:border-slate-700 p-6">
-        <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Detalles del Recurso</h2>
-        {hypervisor.status === 'connected' && hypervisor.nodes && hypervisor.storage ? (
+      <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Detalles por Nodo/Recurso</h2>
+      {hypervisor.status === 'connected' && hypervisor.nodes && hypervisor.storage ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
             {/* Nodes Summary */}
             <div>
