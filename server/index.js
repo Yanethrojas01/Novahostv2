@@ -837,6 +837,100 @@ async function getProxmoxClient(hypervisorId) {
   return proxmoxApi(proxmoxConfig);
 }
 // --- Hypervisor CRUD API Routes ---
+
+// Helper function to get authenticated vSphere client
+async function getVSphereClient(hypervisorId) {
+  const { rows: [hypervisor] } = await pool.query(
+    `SELECT id, type, host, username, api_token, status, vsphere_subtype
+     FROM hypervisors WHERE id = $1`,
+    [hypervisorId]
+  );
+
+  if (!hypervisor) throw new Error('Hypervisor not found');
+  if (hypervisor.status !== 'connected') throw new Error('Hypervisor not connected');
+  if (hypervisor.type !== 'vsphere') throw new Error('Not a vSphere hypervisor');
+  if (!hypervisor.api_token) throw new Error('vSphere password (api_token) not found in database for this hypervisor.');
+
+  let vsphereApiUrl;
+  if (hypervisor.host.startsWith('http')) {
+    vsphereApiUrl = hypervisor.host.replace(/^http:/, 'https:');
+  } else {
+    const hostParts = hypervisor.host.split(':');
+    vsphereApiUrl = `https://${hostParts[0]}`;
+    if (hostParts.length > 1 && hostParts[1]) {
+      vsphereApiUrl += `:${hostParts[1]}`;
+    } else {
+      vsphereApiUrl += ':443'; // Default HTTPS port
+    }
+  }
+
+  const agent = new https.Agent({
+    rejectUnauthorized: false,
+    secureOptions: cryptoConstants.SSL_OP_NO_SSLv3 | cryptoConstants.SSL_OP_NO_TLSv1,
+    ciphers: 'ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384',
+    minVersion: 'TLSv1.2'
+  });
+
+  console.log(`vSphere Client: Attempting to authenticate to ${vsphereApiUrl} for user ${hypervisor.username}`);
+  const authResponse = await fetch(`${vsphereApiUrl}/rest/com/vmware/cis/session`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Basic ${Buffer.from(`${hypervisor.username}:${hypervisor.api_token}`).toString('base64')}`,
+      'Accept': 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({}),
+    agent: agent,
+    timeout: 10000
+  });
+
+  if (!authResponse.ok) {
+    const errorBody = await authResponse.text().catch(() => 'Could not read error body');
+    console.error(`vSphere authentication failed: ${authResponse.status}`, errorBody);
+    throw new Error(`vSphere authentication failed: ${authResponse.status}. ${errorBody.substring(0,100)}`);
+  }
+
+  const sessionData = await authResponse.json();
+  const sessionId = sessionData.value;
+
+  if (!sessionId) {
+    throw new Error('Session ID not received from vSphere REST API');
+  }
+  console.log(`vSphere Client: Session obtained ${sessionId.substring(0,5)}...`);
+
+  return {
+    sessionId,
+    vsphereApiUrl,
+    agent,
+    hypervisorId: hypervisor.id,
+    vsphereSubtype: hypervisor.vsphere_subtype, // 'vcenter' or 'esxi'
+    async logout() {
+      if (this.sessionId) {
+        console.log(`vSphere Client: Logging out session ${this.sessionId.substring(0,5)}...`);
+        try {
+          await fetch(`${this.vsphereApiUrl}/rest/com/vmware/cis/session`, {
+            method: 'DELETE',
+            headers: { 'vmware-api-session-id': this.sessionId },
+            agent: this.agent
+          });
+          this.sessionId = null; // Clear session ID after logout
+        } catch (logoutError) {
+          console.warn(`vSphere Client: Failed to logout session:`, logoutError.message);
+        }
+      }
+    },
+    async get(path) {
+      const response = await fetch(`${this.vsphereApiUrl}${path}`, {
+        method: 'GET',
+        headers: { 'vmware-api-session-id': this.sessionId, 'Accept': 'application/json' },
+        agent: this.agent
+      });
+      if (!response.ok) throw new Error(`vSphere API GET ${path} failed: ${response.status} ${await response.text()}`);
+      return response.json();
+    }
+  };
+}
+
 // GET /api/hypervisors/:id/nodes
 app.get('/api/hypervisors/:id/nodes', authenticate, async (req, res) => {
   const { id } = req.params;
@@ -925,7 +1019,7 @@ app.get('/api/hypervisors/:id/nodes', authenticate, async (req, res) => {
   }
 });
 
-// GET /api/hypervisors/:id/storage
+//Get the hypervisor info from the request body
 app.get('/api/hypervisors/:id/storage', authenticate, async (req, res) => {
   const { id } = req.params;
   console.log(`--- GET /api/hypervisors/${id}/storage ---`);
@@ -993,6 +1087,77 @@ app.get('/api/hypervisors/:id/storage', authenticate, async (req, res) => {
   }
 });
 
+// Helper function to fetch VM Templates from vSphere
+async function fetchVSphereVMTemplates(vsphereClient) {
+  console.log(`vSphere Templates: Fetching VM templates for ${vsphereClient.hypervisorId}`);
+  try {
+    // This endpoint is typically for vCenter. ESXi might require different handling or may not list "templates" in the same way.
+    const response = await vsphereClient.get('/rest/vcenter/vm?filter.templates=true');
+    return response.map(vm => ({
+      id: vm.vm, // vSphere VM ID (e.g., "vm-123")
+      name: vm.name,
+      description: `vSphere VM Template: ${vm.name}`,
+      size: vm.memory_size_MiB * 1024 * 1024, // Example: use memory size, disk size not directly available here
+      path: vm.vm, // Use VM ID as path identifier
+      type: 'template',
+      storage: 'vSphere Managed', // Placeholder, actual datastore might need another call
+    }));
+  } catch (error) {
+    console.error(`vSphere Templates: Error fetching VM templates for ${vsphereClient.hypervisorId}:`, error.message);
+    return [];
+  }
+}
+
+// Helper function to fetch ISO files from vSphere datastores (simplified)
+async function fetchVSphereIsoFiles(vsphereClient) {
+  console.log(`vSphere ISOs: Fetching ISO files for ${vsphereClient.hypervisorId}`);
+  let isoFiles = [];
+  try {
+    const datastores = await vsphereClient.get('/rest/vcenter/datastore');
+    console.log(`vSphere ISOs: Found ${datastores.length} datastores.`);
+
+    for (const ds of datastores) {
+      console.log(`vSphere ISOs: Scanning datastore ${ds.name} (ID: ${ds.datastore}) for ISOs...`);
+      try {
+        // Attempt to list files in a common 'ISO' or 'ISOs' directory, or root.
+        // This is a simplification; a full recursive browse can be very slow.
+        // Common paths to check:
+        const commonIsoPaths = ['/ISOs/', '/ISO/', '/']; // Check root as a last resort
+        let filesInDs = [];
+
+        for (const searchPath of commonIsoPaths) {
+            try {
+                const files = await vsphereClient.get(`/rest/vcenter/datastore/${ds.datastore}/files?path=${encodeURIComponent(searchPath)}`);
+                filesInDs = filesInDs.concat(files.filter(file => file.name.toLowerCase().endsWith('.iso')));
+                if (filesInDs.length > 0 && searchPath !== '/') break; // Stop if ISOs found in a subfolder
+            } catch (pathError) {
+                // console.warn(`vSphere ISOs: Could not list path '${searchPath}' in datastore ${ds.name}: ${pathError.message.substring(0,100)}`);
+            }
+        }
+
+        filesInDs.forEach(file => {
+          isoFiles.push({
+            id: `${ds.datastore}:${file.path}`, // Unique ID: datastore_id:full_file_path
+            name: file.name,
+            description: `ISO file from datastore ${ds.name}`,
+            size: file.size,
+            path: file.path,
+            type: 'iso',
+            storage: ds.name,
+          });
+        });
+      } catch (dsError) {
+        console.error(`vSphere ISOs: Error processing datastore ${ds.name}:`, dsError.message);
+      }
+    }
+  } catch (error) {
+    console.error(`vSphere ISOs: Error fetching datastores for ${vsphereClient.hypervisorId}:`, error.message);
+  }
+  console.log(`vSphere ISOs: Found ${isoFiles.length} ISO files in total.`);
+  return isoFiles;
+}
+
+
 // GET /api/hypervisors/:id/templates
 app.get('/api/hypervisors/:id/templates', authenticate, async (req, res) => {
   const { id } = req.params;
@@ -1027,29 +1192,24 @@ app.get('/api/hypervisors/:id/templates', authenticate, async (req, res) => {
         return res.status(errorDetails.code).json({ error: 'Failed to retrieve Proxmox templates', details: errorDetails.message });
       }
     } else if (hypervisorInfo.type === 'vsphere') {
-      console.log(`Fetching vSphere templates for hypervisor ${id} (placeholder)...`);
-      // TODO: Implement vSphere API calls to fetch templates/ISOs
-      // This will involve:
-      // 1. Getting a vSphere client.
-      // 2. Querying for VM templates:
-      //    - vSphere API: /rest/vcenter/vm-template/library-item or /rest/vcenter/vm?filter.templates=true
-      // 3. Querying for ISOs:
-      //    - This is often done by listing files in datastores that have an .iso extension.
-      //    - vSphere API: /rest/vcenter/datastore/{datastore_id}/files (then filter by .iso)
-      //    - Or, if using Content Libraries: /rest/com/vmware/content/library/item/file
-      // 4. Mapping the results to your `VMTemplate` or a similar interface.
-      // Example:
-      // const vsphereClient = await getVSphereClient(id);
-      // const vmTemplates = await vsphereClient.getVMTemplates();
-      // const isoFiles = await vsphereClient.getIsoFiles();
-      // allTemplates = vmTemplates.concat(isoFiles).map(item => ({
-      //   id: item.id, name: item.name, description: item.description || item.name,
-      //   size: item.size_bytes, path: item.path_on_datastore,
-      //   type: item.type, // 'template' or 'iso'
-      //   storage: item.datastore_name,
-      // }));
-      allTemplates = []; // Placeholder
-      console.log(`Placeholder: ${allTemplates.length} vSphere templates for hypervisor ${id}`);
+      console.log(`Fetching vSphere templates and ISOs for hypervisor ${id}`);
+      let vsphereClient;
+      try {
+        vsphereClient = await getVSphereClient(id);
+        const vmTemplates = await fetchVSphereVMTemplates(vsphereClient);
+        const isoFiles = await fetchVSphereIsoFiles(vsphereClient); // Simplified ISO fetching
+        allTemplates = vmTemplates.concat(isoFiles);
+        console.log(`Fetched ${allTemplates.length} vSphere templates/ISOs for hypervisor ${id}`);
+      } catch (vsphereError) {
+        console.error(`Error fetching vSphere templates/ISOs for hypervisor ${id}:`, vsphereError.message);
+        // Do not return yet, try to logout if client was obtained
+      } finally {
+        if (vsphereClient) {
+          await vsphereClient.logout();
+        }
+      }
+      // If an error occurred during fetching and allTemplates is still empty, we might want to return an error response
+      // For now, it will return an empty array if fetching failed.
     } else {
       console.warn(`Unknown hypervisor type '${hypervisorInfo.type}' for ID ${id} when fetching templates.`);
       return res.status(400).json({ error: `Unsupported hypervisor type: ${hypervisorInfo.type}` });
