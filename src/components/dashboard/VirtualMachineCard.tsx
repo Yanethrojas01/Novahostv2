@@ -94,12 +94,12 @@ export default function VirtualMachineCard({ vm, onAction }: VirtualMachineCardP
               </div>
             )}
             {/* Optional: Show Client ID if name is not available */}
-            {/* {!vm.finalClientName && vm.finalClientId && (
+            {!vm.finalClientName && vm.finalClientId && (
               <div className="flex items-center space-x-2">
                 <User className="h-4 w-4 text-slate-400" />
                 <span className="text-xs text-slate-500 dark:text-slate-400">Client ID: {vm.finalClientId.substring(0, 8)}...</span>
               </div>
-            )} */}
+            )}
           </div>
         )}
         

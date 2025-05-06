@@ -67,6 +67,7 @@ CREATE TABLE virtual_machines (
     name text NOT NULL,
     description text,
     hypervisor_id uuid REFERENCES hypervisors(id) ON DELETE CASCADE,
+    hypervisor_vm_id text, -- Stores the ID from the hypervisor (e.g., Proxmox VMID)
     status text NOT NULL DEFAULT 'stopped',
     cpu_cores integer NOT NULL,
     memory_mb integer NOT NULL,

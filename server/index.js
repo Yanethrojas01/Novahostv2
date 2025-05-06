@@ -2239,6 +2239,69 @@ app.get('/api/stats/vm-creation-count', authenticate, async (req, res) => {
   }
 });
 
+// GET /api/stats/client-vms/:clientId - Get VMs for a specific client with pagination
+app.get('/api/stats/client-vms/:clientId', authenticate, async (req, res) => {
+  const { clientId } = req.params;
+  const page = parseInt(req.query.page || '1', 10);
+  const limit = parseInt(req.query.limit || '5', 10); // Default to 5 VMs per page
+  const offset = (page - 1) * limit;
+
+  console.log(`--- GET /api/stats/client-vms/${clientId} --- Page: ${page}, Limit: ${limit}`);
+
+  if (!clientId) {
+    return res.status(400).json({ error: 'Client ID is required.' });
+  }
+
+  try {
+    const vmsQuery = `
+      SELECT 
+        vm.id, 
+        vm.name, 
+        vm.status, 
+        vm.created_at,
+        vm.cpu_cores,
+        vm.memory_mb,
+        vm.disk_gb,
+        vm.os,
+        vm.hypervisor_id,
+        h.type as hypervisor_type 
+      FROM virtual_machines vm
+      JOIN hypervisors h ON vm.hypervisor_id = h.id
+      WHERE vm.final_client_id = $1
+      ORDER BY vm.created_at DESC
+      LIMIT $2 OFFSET $3
+    `;
+    const vmsResult = await pool.query(vmsQuery, [clientId, limit, offset]);
+
+    const countQuery = 'SELECT COUNT(*) FROM virtual_machines WHERE final_client_id = $1';
+    const countResult = await pool.query(countQuery, [clientId]);
+
+    const totalItems = parseInt(countResult.rows[0].count, 10);
+    const totalPages = Math.ceil(totalItems / limit);
+
+    // Map to VM type structure expected by frontend
+    const formattedVms = vmsResult.rows.map(dbVm => ({
+      id: dbVm.id,
+      name: dbVm.name,
+      status: dbVm.status,
+      createdAt: dbVm.created_at,
+      hypervisorId: dbVm.hypervisor_id,
+      hypervisorType: dbVm.hypervisor_type,
+      specs: {
+        cpu: dbVm.cpu_cores,
+        memory: dbVm.memory_mb,
+        disk: dbVm.disk_gb,
+        os: dbVm.os,
+      }
+      // nodeName, tags, ipAddresses are not in the DB table directly
+    }));
+
+    res.json({ items: formattedVms, pagination: { currentPage: page, totalPages, totalItems, limit } });
+  } catch (err) {
+    console.error(`Error fetching VMs for client ${clientId}:`, err);
+    res.status(500).json({ error: 'Failed to retrieve VMs for the client.' });
+  }
+});
 
 // --- End Final Client CRUD API Routes ---
  

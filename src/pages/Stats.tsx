@@ -1,15 +1,19 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Calendar } from 'lucide-react';
+import { Calendar, Users, Server, ChevronLeft, ChevronRight } from 'lucide-react'; // Added Users, Server, Chevrons
 import { toast } from 'react-hot-toast';
 import {
-  BarChart,
-  Bar,
+  LineChart, // Changed from BarChart
+  Line,      // Changed from Bar
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  Legend,    // Optional: if you want a legend
 } from 'recharts';
+import { Link } from 'react-router-dom'; // Import Link from react-router-dom
+import { FinalClient } from '../types/client'; // Import FinalClient type
+import { VM } from '../types/vm'; // Import VM type
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL; // Read from .env
 
@@ -31,6 +35,14 @@ export default function StatsPage() {
   const [stats, setStats] = useState<VMCreationStats | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  // State for Client VMs section
+  const [finalClients, setFinalClients] = useState<FinalClient[]>([]);
+  const [selectedClientId, setSelectedClientId] = useState<string>('');
+  const [clientVms, setClientVms] = useState<VM[]>([]);
+  const [clientVmsPagination, setClientVmsPagination] = useState<{ currentPage: number, totalPages: number, totalItems: number, limit: number } | null>(null);
+  const [isFetchingClients, setIsFetchingClients] = useState<boolean>(true);
+  const [isFetchingClientVms, setIsFetchingClientVms] = useState<boolean>(false);
 
   const fetchStats = useCallback(async () => {
     setIsLoading(true);
@@ -79,6 +91,65 @@ export default function StatsPage() {
    useEffect(() => {
      fetchStats();
    }, [fetchStats]); // fetchStats está envuelto en useCallback
+
+  // Fetch Final Clients
+  useEffect(() => {
+    const fetchClients = async () => {
+      setIsFetchingClients(true);
+      const token = localStorage.getItem('authToken');
+      try {
+        const response = await fetch(`${API_BASE_URL}/final-clients?limit=1000`, { // Fetch a large number for dropdown
+          headers: { ...(token && { 'Authorization': `Bearer ${token}` }) },
+        });
+        if (!response.ok) throw new Error('Failed to fetch final clients');
+        const data = await response.json();
+        setFinalClients(data.items || []);
+      } catch (err) {
+        console.error('Error fetching final clients for stats:', err);
+        toast.error('No se pudieron cargar los clientes finales.');
+      } finally {
+        setIsFetchingClients(false);
+      }
+    };
+    fetchClients();
+  }, []);
+
+  // Fetch VMs for selected client
+  const fetchClientVms = useCallback(async (clientId: string, page = 1) => {
+    if (!clientId) {
+      setClientVms([]);
+      setClientVmsPagination(null);
+      return;
+    }
+    setIsFetchingClientVms(true);
+    const token = localStorage.getItem('authToken');
+    try {
+      const response = await fetch(`${API_BASE_URL}/stats/client-vms/${clientId}?page=${page}&limit=5`, {
+        headers: { ...(token && { 'Authorization': `Bearer ${token}` }) },
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ message: 'Error desconocido del servidor' }));
+        throw new Error(errorData.message || `Error HTTP: ${response.status}`);
+      }
+      const data = await response.json();
+      setClientVms(data.items || []);
+      setClientVmsPagination(data.pagination || null);
+    } catch (err: unknown) {
+      console.error(`Error fetching VMs for client ${clientId}:`, err);
+      const message = err instanceof Error ? err.message : 'Ocurrió un error inesperado.';
+      toast.error(`No se pudieron cargar las VMs del cliente: ${message}`);
+      setClientVms([]);
+      setClientVmsPagination(null);
+    } finally {
+      setIsFetchingClientVms(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedClientId) {
+      fetchClientVms(selectedClientId, 1); // Fetch first page when client changes
+    }
+  }, [selectedClientId, fetchClientVms]);
 
   return (
     <div>
@@ -129,22 +200,31 @@ export default function StatsPage() {
           </p>
           <p className="text-4xl font-bold text-primary-600 dark:text-primary-400 mt-2">{stats.count}</p>
           <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">máquinas virtuales.</p>
-a
+
           {/* Gráfico de Barras si hay datos diarios */}
           {stats.dailyCounts && stats.dailyCounts.length > 0 && (
             <div className="mt-8">
               <h3 className="text-md font-medium text-slate-900 dark:text-white mb-4">Creaciones por Día</h3>
               <ResponsiveContainer width="100%" height={300}>
-                <BarChart
+                <LineChart // Changed from BarChart
                   data={stats.dailyCounts}
                   margin={{ top: 5, right: 20, left: -10, bottom: 5 }} // Ajusta márgenes si es necesario
                 >
                   <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2} />
                   <XAxis dataKey="date" tick={{ fontSize: 12 }} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
-                  <Tooltip contentStyle={{ backgroundColor: 'rgba(30, 41, 59, 0.8)', borderColor: 'rgba(71, 85, 105, 0.8)', borderRadius: '0.375rem' }} itemStyle={{ color: '#cbd5e1' }} labelStyle={{ color: '#f1f5f9', fontWeight: 'bold' }} />
-                  <Bar dataKey="count" fill="var(--color-primary-500)" name="VMs Creadas" />
-                </BarChart>
+                  <Tooltip 
+                    contentStyle={{ 
+                      backgroundColor: 'rgba(30, 41, 59, 0.8)', // bg-slate-800 with opacity
+                      borderColor: 'rgba(71, 85, 105, 0.8)', // border-slate-600 with opacity
+                      borderRadius: '0.375rem' // rounded-md
+                    }} 
+                    itemStyle={{ color: '#cbd5e1' }} // text-slate-300
+                    labelStyle={{ color: '#f1f5f9', fontWeight: 'bold' }} // text-slate-100
+                  />
+                <Legend /> 
+                  <Line type="monotone" dataKey="count" stroke="var(--color-primary-500)" strokeWidth={2} activeDot={{ r: 6 }} name="VMs Creadas" /> {/* Changed from Bar */}
+                </LineChart>
               </ResponsiveContainer>
             </div>
           )}
@@ -156,6 +236,84 @@ a
            Selecciona un rango de fechas y haz clic en 'Consultar' para ver las estadísticas.
          </div>
        )}
+
+      {/* VMs por Cliente Final Section */}
+      <div className="mt-10">
+        <div className="mb-6">
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center">
+            <Users className="h-6 w-6 mr-2 text-primary-600 dark:text-primary-400" />
+            Máquinas Virtuales por Cliente Final
+          </h2>
+          <p className="text-slate-500 dark:text-slate-400 mt-1">
+            Selecciona un cliente para ver sus máquinas virtuales asociadas.
+          </p>
+        </div>
+
+        <div className="bg-white dark:bg-slate-800 shadow rounded-lg border border-slate-200 dark:border-slate-700 p-6">
+          <div>
+            <label htmlFor="finalClientSelect" className="form-label">Seleccionar Cliente Final</label>
+            <select
+              id="finalClientSelect"
+              className="form-select"
+              value={selectedClientId}
+              onChange={(e) => setSelectedClientId(e.target.value)}
+              disabled={isFetchingClients}
+            >
+              <option value="">{isFetchingClients ? 'Cargando clientes...' : 'Selecciona un cliente'}</option>
+              {finalClients.map(client => (
+                <option key={client.id} value={client.id}>{client.name} ({client.rif})</option>
+              ))}
+            </select>
+          </div>
+
+          {isFetchingClientVms && <div className="text-center p-4 mt-4">Cargando VMs del cliente...</div>}
+          
+          {!isFetchingClientVms && selectedClientId && clientVms.length === 0 && (
+            <p className="text-slate-500 dark:text-slate-400 mt-4 text-center">Este cliente no tiene máquinas virtuales registradas.</p>
+          )}
+
+          {!isFetchingClientVms && clientVms.length > 0 && (
+            <div className="mt-6">
+              <ul className="space-y-3">
+                {clientVms.map(vm => (
+                  <li key={vm.id} className="p-3 bg-slate-50 dark:bg-slate-700/50 rounded-md border border-slate-200 dark:border-slate-600 hover:shadow-sm transition-shadow">
+                    <Link to={`/vm/${vm.id}`} className="block group">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center">
+                          <Server className="h-5 w-5 mr-2 text-primary-500 group-hover:text-primary-600" />
+                          <span className="font-medium text-slate-800 dark:text-slate-100 group-hover:text-primary-600 dark:group-hover:text-primary-400">{vm.name}</span>
+                        </div>
+                        <span className={`px-2 py-0.5 text-xs rounded-full ${vm.status === 'running' ? 'bg-success-100 text-success-700 dark:bg-success-800 dark:text-success-200' : 'bg-slate-100 text-slate-600 dark:bg-slate-600 dark:text-slate-200'}`}>
+                          {vm.status}
+                        </span>
+                      </div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                        <span>Hypervisor: {vm.hypervisorType}</span> | <span>Creada: {new Date(vm.createdAt).toLocaleDateString()}</span>
+                      </div>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+              {/* Pagination for Client VMs */}
+              {clientVmsPagination && clientVmsPagination.totalPages > 1 && (
+                <div className="mt-6 flex justify-center items-center space-x-2">
+                  <button
+                    onClick={() => fetchClientVms(selectedClientId, clientVmsPagination.currentPage - 1)}
+                    disabled={clientVmsPagination.currentPage === 1 || isFetchingClientVms}
+                    className="btn btn-sm btn-outline p-1.5"
+                  ><ChevronLeft className="h-4 w-4" /></button>
+                  <span className="text-sm text-slate-600 dark:text-slate-300">Página {clientVmsPagination.currentPage} de {clientVmsPagination.totalPages}</span>
+                  <button
+                    onClick={() => fetchClientVms(selectedClientId, clientVmsPagination.currentPage + 1)}
+                    disabled={clientVmsPagination.currentPage === clientVmsPagination.totalPages || isFetchingClientVms}
+                    className="btn btn-sm btn-outline p-1.5"
+                  ><ChevronRight className="h-4 w-4" /></button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
