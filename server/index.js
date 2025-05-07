@@ -2545,7 +2545,7 @@ app.delete('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) 
   }
 });
 
-// POST /api/hypervisors/:id/connect - Versión Corregida
+// POST /api/hypervisors/:id/connect
 // Connect to hypervisor
 app.post('/api/hypervisors/:id/connect', authenticate, requireAdmin, async (req, res) => { // Added requireAdmin
   const { id } = req.params;
@@ -2848,28 +2848,28 @@ app.put('/api/final-clients/:id', authenticate, requireAdmin, async (req, res) =
 
 // DELETE /api/final-clients/:id - Delete a final client
 app.delete('/api/final-clients/:id', authenticate, requireAdmin, async (req, res) => {
-const { id } = req.params;
-console.log(`--- DELETE /api/final-clients/${id} ---`);
-
-try {
-  // Check if client is associated with any VMs before deleting? Optional.
-  // const vmCheck = await pool.query('SELECT 1 FROM virtual_machines WHERE final_client_id = $1 LIMIT 1', [id]);
-  // if (vmCheck.rows.length > 0) {
-  //   return res.status(409).json({ error: 'Cannot delete client associated with existing VMs.' });
-  // }
-
-  const result = await pool.query('DELETE FROM final_clients WHERE id = $1 RETURNING id', [id]);
-
-  if (result.rowCount === 0) {
-    return res.status(404).json({ error: 'Final client not found' });
+  const { id } = req.params;
+  console.log(`--- DELETE /api/final-clients/${id} ---`);
+  
+  try {
+    // Check if client is associated with any VMs before deleting? Optional.
+    // const vmCheck = await pool.query('SELECT 1 FROM virtual_machines WHERE final_client_id = $1 LIMIT 1', [id]);
+    // if (vmCheck.rows.length > 0) {
+    //   return res.status(409).json({ error: 'Cannot delete client associated with existing VMs.' });
+    // }
+  
+    const result = await pool.query('DELETE FROM final_clients WHERE id = $1 RETURNING id', [id]);
+  
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Final client not found' });
+    }
+    res.status(204).send(); // No Content
+  } catch (err) {
+    console.error(`Error deleting final client ${id}:`, err);
+    // Handle potential foreign key constraint errors if not using ON DELETE SET NULL/CASCADE appropriately
+    res.status(500).json({ error: 'Failed to delete final client' });
   }
-  res.status(204).send(); // No Content
-} catch (err) {
-  console.error(`Error deleting final client ${id}:`, err);
-  // Handle potential foreign key constraint errors if not using ON DELETE SET NULL/CASCADE appropriately
-  res.status(500).json({ error: 'Failed to delete final client' });
-}
-});
+  });
 
 // --- Statistics Routes ---
 
