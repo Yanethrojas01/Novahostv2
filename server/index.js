@@ -1473,7 +1473,6 @@ async function fetchVSphereIsoFiles(vsphereClient) {
   return isoFiles;
 }
 
-
 // GET /api/hypervisors/:id/templates
 app.get('/api/hypervisors/:id/templates', authenticate, async (req, res) => {
   const { id } = req.params;
