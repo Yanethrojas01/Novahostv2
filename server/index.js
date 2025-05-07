@@ -840,284 +840,196 @@ async function getProxmoxClient(hypervisorId) {
 
 // Helper function to get authenticated vSphere client
 async function getVSphereClient(hypervisorId) {
+  console.log(`Creating vSphere client for hypervisor ${hypervisorId}`);
+  
+  // 1. Get hypervisor connection details from database
   const { rows: [hypervisor] } = await pool.query(
-    `SELECT id, type, host, username, api_token, status, vsphere_subtype
-     FROM hypervisors WHERE id = $1`,
-    [hypervisorId]
+    'SELECT id, name, host, username, api_token, vsphere_subtype FROM hypervisors WHERE id = $1 AND type = $2',
+    [hypervisorId, 'vsphere']
   );
-
-  if (!hypervisor) throw new Error('Hypervisor not found');
-  if (hypervisor.status !== 'connected') throw new Error('Hypervisor not connected');
-  if (hypervisor.type !== 'vsphere') throw new Error('Not a vSphere hypervisor');
-  if (!hypervisor.api_token) throw new Error('vSphere password (api_token) not found in database for this hypervisor.');
-
-  // Normalizar la URL
-  let vsphereApiUrl;
-  if (hypervisor.host.startsWith('http')) {
-    vsphereApiUrl = hypervisor.host.replace(/^http:/, 'https:');
+  
+  if (!hypervisor) {
+    console.error(`vSphere hypervisor ${hypervisorId} not found or not of type vSphere`);
+    throw new Error('vSphere hypervisor not found');
+  }
+  
+  // 2. Extract connection details
+ // Use api_token for vSphere password, as it's stored in that column
+ let { host, username, api_token: password, vsphere_subtype } = hypervisor; 
+  // Trim whitespace from credentials to prevent auth issues
+  username = username ? username.trim() : null;
+  password = password ? password.trim() : null;
+  
+  if (!['vcenter', 'esxi'].includes(vsphere_subtype)) {
+    throw new Error(`Invalid vSphere subtype: ${vsphere_subtype}`);
+  }
+  
+  // Normalize the URL
+  let vsphereUrl;
+  if (host.startsWith('http')) {
+    vsphereUrl = host.replace(/^http:/, 'https:');
   } else {
-    const hostParts = hypervisor.host.split(':');
-    vsphereApiUrl = `https://${hostParts[0]}`;
+    // If no protocol, add https://
+    const hostParts = host.split(':');
+    vsphereUrl = `https://${hostParts[0]}`;
+    // Add port if specified
     if (hostParts.length > 1 && hostParts[1]) {
-      vsphereApiUrl += `:${hostParts[1]}`;
+      vsphereUrl += `:${hostParts[1]}`;
     } else {
-      vsphereApiUrl += ':443'; // Default HTTPS port
+      vsphereUrl += ':443'; // Default HTTPS port
     }
   }
-
-  // Eliminar la barra final si existe
-  vsphereApiUrl = vsphereApiUrl.replace(/\/$/, '');
-
+  
+  // 3. Configure HTTPS agent for self-signed certificates
   const agent = new https.Agent({
-    rejectUnauthorized: false,
+    rejectUnauthorized: false, // Accept self-signed certs
     secureOptions: cryptoConstants.SSL_OP_NO_SSLv3 | cryptoConstants.SSL_OP_NO_TLSv1,
     ciphers: 'ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384',
     minVersion: 'TLSv1.2'
   });
-
-  console.log(`vSphere Client: Attempting to authenticate to ${vsphereApiUrl} for user ${hypervisor.username}`);
   
-  // Determinar el método de autenticación basado en vsphere_subtype
-  const isEsxi = hypervisor.vsphere_subtype?.toLowerCase()?.includes('esxi');
-  let sessionId = null;
+  // 4. Authenticate and create session
+  console.log(`[getVSphereClient] Attempting to authenticate to vSphere.`);
+  console.log(`[getVSphereClient] URL: ${vsphereUrl}`);
+  console.log(`[getVSphereClient] Username (trimmed): '${username}'`); 
+  // Cuidado al loguear contraseñas, incluso en desarrollo. Considera loguear solo su longitud o un hash si es necesario en producción.
+  // Para depuración local, loguear el valor puede ser útil temporalmente.
+  console.log(`[getVSphereClient] Password (api_token) (trimmed): '${password ? "********" : "NOT FOUND"}'`); 
   
-  // 1. Intentar autenticación REST API (debería funcionar para ESXi 6.7+)
-  try {
-    const authResponse = await fetch(`${vsphereApiUrl}/rest/com/vmware/cis/session`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Basic ${Buffer.from(`${hypervisor.username}:${hypervisor.api_token}`).toString('base64')}`,
-        'Accept': 'application/json',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({}), // Algunos endpoints pueden requerir un cuerpo vacío
-      agent: agent,
-      timeout: 15000
-    });
+  
+  // Try to authenticate with the REST API
+  const authResponse = await fetch(`${vsphereUrl}/rest/com/vmware/cis/session`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`,
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+      'vmware-use-header-authn': 'true' // Asegurar autenticación por cabecera
+    },
+    body: JSON.stringify({}), // Empty body for POST
+    agent: agent,
+    timeout: 15000
+  });
+  console.log(`Getvsclient REST API auth response status: ${authResponse.status}`);
 
-    console.log(`REST API auth response status: ${authResponse.status}`);
-    
-    if (authResponse.ok) {
-      const sessionData = await authResponse.json();
-      sessionId = sessionData.value;
-      
-      if (!sessionId) {
-        console.warn('Session ID not received from vSphere REST API');
-      } else {
-        console.log(`vSphere Client: Session obtained ${sessionId.substring(0,5)}...`);
-      }
-    } else {
-      // Solo para depuración
-      const errorBody = await authResponse.text().catch(() => 'Could not read error body');
-      console.warn(`REST API auth failed: ${authResponse.status} - ${errorBody.substring(0, 100)}`);
-    }
-  } catch (restAuthError) {
-    console.warn(`REST API auth error: ${restAuthError.message}`);
-  }
-
-  // 2. Si falla REST API y es ESXi, intentar autenticación SOAP
-  if (!sessionId && isEsxi) {
-    console.log(`Trying SOAP API auth for ESXi: ${vsphereApiUrl}/sdk/`);
+  if (!authResponse.ok) {
+    let errorBody = 'Could not read error body.'; // Mensaje por defecto
     try {
-      // Crear payload XML para la autenticación SOAP
-      const soapEnvelope = `<?xml version="1.0" encoding="UTF-8"?>
-        <Envelope xmlns="http://schemas.xmlsoap.org/soap/envelope/"
-                 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                 xmlns:xsd="http://www.w3.org/2001/XMLSchema">
-          <Body>
-            <Login xmlns="urn:vim25">
-              <_this type="SessionManager">SessionManager</_this>
-              <userName>${hypervisor.username}</userName>
-              <password>${hypervisor.api_token}</password>
-            </Login>
-          </Body>
-        </Envelope>`;
-        
-      // Realizar la solicitud SOAP
-      const soapResponse = await fetch(`${vsphereApiUrl}/sdk/`, {
+      const textBody = await authResponse.text(); // Intenta leer el cuerpo como texto
+      // Intenta parsear como JSON si es posible, si no, usa el texto.
+      try {
+        const jsonBody = JSON.parse(textBody);
+        errorBody = JSON.stringify(jsonBody, null, 2); // Formatea el JSON para mejor lectura
+      } catch (parseError) {
+        errorBody = textBody; // Si no es JSON, usa el texto tal cual
+      }
+    } catch (readError) {
+      console.warn('Failed to read error response body:', readError.message);
+    }
+    console.error(`vSphere authentication failed: ${authResponse.status} ${authResponse.statusText}. Response body: ${errorBody}`);
+    throw new Error(`vSphere authentication failed: ${authResponse.status} ${authResponse.statusText}. Details: ${errorBody}`);
+ 
+  }
+  
+  const sessionData = await authResponse.json();
+  const sessionId = sessionData.value;
+  
+  if (!sessionId) {
+    throw new Error('Failed to obtain vSphere session ID');
+  }
+  
+  console.log(`Successfully authenticated to vSphere as ${username}`);
+  
+  // 5. Create and return client object with helper methods
+  return {
+    vsphereSubtype: vsphere_subtype || 'esxi', // Default to ESXi if not specified
+    sessionId,
+    baseUrl: vsphereUrl,
+   
+    // Helper method for GET requests
+    async get(path, options = {}) {
+      const url = `${this.baseUrl}${path}`;
+      console.log(`GET ${url}`);
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'vmware-api-session-id': this.sessionId,
+          'Accept': 'application/json',
+          ...options.headers
+        },
+        agent,
+        timeout: options.timeout || 30000
+      });
+      
+      if (!response.ok) {
+        throw new Error(`vSphere API GET failed: ${response.status} ${response.statusText} for ${url}`);
+      }
+      
+      return response.json();
+    },
+    
+    // Helper method for POST requests
+    async post(path, options = {}) {
+      const url = `${this.baseUrl}${path}`;
+      console.log(`POST ${url}`);
+      
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
-          'Content-Type': 'text/xml; charset=utf-8',
-          'SOAPAction': 'urn:vim25/6.7'
+          'vmware-api-session-id': this.sessionId,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          ...options.headers
         },
-        body: soapEnvelope,
-        agent: agent,
-        timeout: 15000
+        body: options.body || JSON.stringify({}),
+        agent,
+        timeout: options.timeout || 30000
       });
       
-      console.log(`SOAP API auth status: ${soapResponse.status}`);
+      if (!response.ok) {
+        throw new Error(`vSphere API POST failed: ${response.status} ${response.statusText} for ${url}`);
+      }
       
-      // Si recibimos una respuesta 200 OK, la autenticación tuvo éxito
-      if (soapResponse.status === 200) {
-        const soapResponseText = await soapResponse.text();
-        
-        // Verificar si hay errores en la respuesta XML
-        if (soapResponseText.includes('<fault>') || soapResponseText.includes('Fault>')) {
-          console.warn('SOAP authentication failed - fault in response');
-          const errorSnippet = soapResponseText.substring(0, 200);
-          console.warn(errorSnippet);
-          throw new Error(`SOAP authentication failed: ${errorSnippet}`);
-        } else {
-          // Extraer el sessionId del XML (esto es simplificado y podría necesitar un parser XML)
-          const sessionMatch = soapResponseText.match(/<returnval[^>]*>([^<]+)<\/returnval>/);
-          if (sessionMatch && sessionMatch[1]) {
-            sessionId = sessionMatch[1];
-            console.log(`vSphere Client: SOAP session obtained ${sessionId.substring(0,5)}...`);
-          } else {
-            console.log('SOAP API authentication successful but no session ID found in response');
-            // Crear un ID de sesión simulado para SOAP ya que no siempre se devuelve explícitamente
-            sessionId = 'soap-' + Date.now();
-          }
-        }
-      } else {
-        const errorText = await soapResponse.text().catch(() => 'Could not read error body');
-        throw new Error(`SOAP API authentication failed: ${soapResponse.status} - ${errorText.substring(0, 100)}`);
-      }
-    } catch (soapError) {
-      if (!sessionId) { // Solo lanzar error si no tenemos sesión
-        console.error('SOAP API auth error:', soapError);
-        throw new Error(`All vSphere authentication methods failed. Last error: ${soapError.message}`);
-      }
-    }
-  }
-
-  // Si llegamos aquí sin sessionId, significa que ambos métodos fallaron
-  if (!sessionId) {
-    throw new Error('vSphere authentication failed with all available methods');
-  }
-
-  // Client con soporte para ambos tipos de API
-  return {
-    sessionId,
-    vsphereApiUrl,
-    agent,
-    hypervisorId: hypervisor.id,
-    vsphereSubtype: hypervisor.vsphere_subtype, // 'vcenter' o 'esxi'
-    isSoapSession: sessionId.startsWith('soap-'),
+      return response.json();
+    },
     
+    // Helper method for DELETE requests
+    async delete(path, options = {}) {
+      const url = `${this.baseUrl}${path}`;
+      console.log(`DELETE ${url}`);
+      
+      const response = await fetch(url, {
+        method: 'DELETE',
+        headers: {
+          'vmware-api-session-id': this.sessionId,
+          ...options.headers
+        },
+        agent,
+        timeout: options.timeout || 15000
+      });
+      
+      if (!response.ok) {
+        throw new Error(`vSphere API DELETE failed: ${response.status} ${response.statusText} for ${url}`);
+      }
+      
+      return true;
+    },
+    
+    // Logout method to clean up session
     async logout() {
-      if (!this.sessionId) return;
-      
-      console.log(`vSphere Client: Logging out session ${this.sessionId.substring(0,5)}...`);
-      
       try {
-        // Si es sesión SOAP, usar el endpoint SOAP
-        if (this.isSoapSession) {
-          const soapLogout = `<?xml version="1.0" encoding="UTF-8"?>
-            <Envelope xmlns="http://schemas.xmlsoap.org/soap/envelope/"
-                     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                     xmlns:xsd="http://www.w3.org/2001/XMLSchema">
-              <Body>
-                <Logout xmlns="urn:vim25">
-                  <_this type="SessionManager">SessionManager</_this>
-                </Logout>
-              </Body>
-            </Envelope>`;
-            
-          await fetch(`${this.vsphereApiUrl}/sdk/`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'text/xml; charset=utf-8',
-              'SOAPAction': 'urn:vim25/6.7',
-              'Cookie': `vmware_soap_session="${this.sessionId}"`
-            },
-            body: soapLogout,
-            agent: this.agent
-          });
-        } 
-        // Si es sesión REST, usar el endpoint REST
-        else {
-          await fetch(`${this.vsphereApiUrl}/rest/com/vmware/cis/session`, {
-            method: 'DELETE',
-            headers: { 'vmware-api-session-id': this.sessionId },
-            agent: this.agent
-          });
-        }
-        
-        this.sessionId = null; // Limpiar ID de sesión después del logout
-      } catch (logoutError) {
-        console.warn(`vSphere Client: Failed to logout session:`, logoutError.message);
-      }
-    },
-    
-    async get(path) {
-      // Asegurarse de que el path comienza con /
-      if (!path.startsWith('/')) {
-        path = '/' + path;
-      }
-      
-      // Si es una sesión SOAP y el path no es un endpoint REST específico,
-      // podríamos necesitar implementar llamadas SOAP aquí
-      if (this.isSoapSession && !path.startsWith('/rest/')) {
-        throw new Error(`SOAP API calls not implemented for this path: ${path}`);
-      }
-      
-      const response = await fetch(`${this.vsphereApiUrl}${path}`, {
-        method: 'GET',
-        headers: this.isSoapSession 
-          ? { 'Cookie': `vmware_soap_session="${this.sessionId}"`, 'Accept': 'application/json' }
-          : { 'vmware-api-session-id': this.sessionId, 'Accept': 'application/json' },
-        agent: this.agent,
-        timeout: 30000
-      });
-      
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unable to read error response');
-        throw new Error(`vSphere API GET ${path} failed: ${response.status} - ${errorText.substring(0, 100)}`);
-      }
-      
-      // Intentar parsear como JSON, con fallback a texto
-      try {
-        return await response.json();
-      } catch (jsonError) {
-        console.warn(`Response not in JSON format for ${path}`, jsonError.message);
-        return { text: await response.text() };
-      }
-    },
-    
-    // Método POST para la API REST
-    async post(path, data = {}) {
-      if (!path.startsWith('/')) {
-        path = '/' + path;
-      }
-      
-      if (this.isSoapSession && !path.startsWith('/rest/')) {
-        throw new Error(`SOAP API calls not implemented for this path: ${path}`);
-      }
-      
-      const response = await fetch(`${this.vsphereApiUrl}${path}`, {
-        method: 'POST',
-        headers: this.isSoapSession
-          ? { 
-              'Cookie': `vmware_soap_session="${this.sessionId}"`,
-              'Content-Type': 'application/json',
-              'Accept': 'application/json'
-            }
-          : { 
-              'vmware-api-session-id': this.sessionId,
-              'Content-Type': 'application/json',
-              'Accept': 'application/json'
-            },
-        body: JSON.stringify(data),
-        agent: this.agent,
-        timeout: 30000
-      });
-      
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unable to read error response');
-        throw new Error(`vSphere API POST ${path} failed: ${response.status} - ${errorText.substring(0, 100)}`);
-      }
-      
-      try {
-        return await response.json();
-      } catch (jsonError) {
-        console.warn(`Response not in JSON format for ${path}`, jsonError.message);
-        return { text: await response.text() };
+        console.log(`Logging out vSphere session for ${username}`);
+        await this.delete('/rest/com/vmware/cis/session');
+        console.log('vSphere logout successful');
+        return true;
+      } catch (error) {
+        console.warn(`Error during vSphere logout: ${error.message}`);
+        return false;
       }
     }
   };
 }
-
 // GET /api/hypervisors/:id/nodes
 app.get('/api/hypervisors/:id/nodes', authenticate, async (req, res) => {
   const { id } = req.params;
@@ -1125,7 +1037,7 @@ app.get('/api/hypervisors/:id/nodes', authenticate, async (req, res) => {
   try {
     // 1. Get Hypervisor info from DB
     const { rows: [hypervisorInfo] } = await pool.query(
-      'SELECT id, type, status FROM hypervisors WHERE id = $1',
+      'SELECT id, type, name, status FROM hypervisors WHERE id = $1',
       [id]
     );
 
@@ -1176,54 +1088,226 @@ app.get('/api/hypervisors/:id/nodes', authenticate, async (req, res) => {
       let vsphereClient;
       try {
         vsphereClient = await getVSphereClient(id);
-        let hosts = [];
+        const subtype = vsphereClient.vsphereSubtype;
+        console.log(`Working with vSphere subtype: ${subtype}`);
 
-        if (vsphereClient.vsphereSubtype === 'vcenter') {
-          // For vCenter, list all hosts
-          const response = await vsphereClient.get('/rest/vcenter/host');
-          hosts = response.value || []; // The actual list is in response.value
-        } else if (vsphereClient.vsphereSubtype === 'esxi') {
-          // For a standalone ESXi host, there's typically only one "host" (itself).
-          // We might need to fetch its details directly.
-          // The /rest/esx/settings/hosts endpoint might list the host itself.
-          // Or, more simply, construct a representation of the ESXi host itself.
-          // This part might need refinement based on what details are crucial for "nodes" from a standalone ESXi.
-          // For now, let's assume we can get some basic info.
-          // A common approach is to get system information.
-          const systemInfo = await vsphereClient.get('/rest/appliance/system/version'); // Example endpoint
-          // This is a simplified representation. You'd ideally fetch more detailed host stats.
-          hosts = [{
-            host: hypervisorInfo.id, // Use hypervisor ID as host ID for standalone
-            name: hypervisorInfo.name || 'ESXi Host',
-            connection_state: 'CONNECTED', // Assume connected if client was obtained
-            power_state: 'POWERED_ON', // Assume powered on
-            // CPU and memory would require more specific API calls for a standalone ESXi's own resources
-            cpu_count: 0, // Placeholder
-            memory_size: 0, // Placeholder
-          }];
+        if (subtype === 'esxi') {
+          // vCenter API handling
+          try {
+            // Get all hosts managed by vCenter
+            const response = await vsphereClient.get('/rest/vcenter/host');
+            const hosts = response.value || [];
+            console.log(`Found ${hosts.length} hosts in vCenter`);
+
+            formattedNodes = await Promise.all(hosts.map(async (host) => {
+              try {
+                // Get detailed info for each host
+                const hostDetails = await vsphereClient.get(`/rest/vcenter/host/${host.host}`);
+                
+                // Get CPU info
+                let cpuInfo = { cores: 0, usage: 0 };
+                try {
+                  const cpuStats = await vsphereClient.get(`/rest/vcenter/host/${host.host}/hardware/cpu`);
+                  cpuInfo.cores = cpuStats.count || 0;
+                  // Getting usage might require different endpoint or calculation
+                } catch (cpuError) {
+                  console.warn(`Could not fetch CPU stats for host ${host.host}:`, cpuError.message);
+                }
+                
+                // Get Memory info
+                let memoryInfo = { total: 0, used: 0, free: 0 };
+                try {
+                  const memoryStats = await vsphereClient.get(`/rest/vcenter/host/${host.host}/hardware/memory`);
+                  memoryInfo.total = memoryStats.size_MiB * 1024 * 1024 || 0;
+                  // Need additional calls for used/free memory
+                } catch (memoryError) {
+                  console.warn(`Could not fetch memory stats for host ${host.host}:`, memoryError.message);
+                }
+                
+                // Get Storage info
+                let storageInfo = { total: 0, used: 0, free: 0 };
+                try {
+                  const datastores = await vsphereClient.get(`/rest/vcenter/datastore?filter.hosts=${host.host}`);
+                  for (const datastore of datastores.value || []) {
+                    const datastoreDetail = await vsphereClient.get(`/rest/vcenter/datastore/${datastore.datastore}`);
+                    storageInfo.total += datastoreDetail.capacity || 0;
+                    storageInfo.free += datastoreDetail.free_space || 0;
+                  }
+                  storageInfo.used = storageInfo.total - storageInfo.free;
+                } catch (storageError) {
+                  console.warn(`Could not fetch storage stats for host ${host.host}:`, storageError.message);
+                }
+
+                return {
+                  id: host.host,
+                  name: host.name,
+                  status: host.connection_state === 'CONNECTED' ? 'online' : 'offline',
+                  cpu: cpuInfo,
+                  memory: memoryInfo,
+                  storage: storageInfo
+                };
+              } catch (hostError) {
+                console.error(`Error fetching details for host ${host.host}:`, hostError.message);
+                // Return basic info if detailed fetch fails
+                return {
+                  id: host.host,
+                  name: host.name,
+                  status: host.connection_state === 'CONNECTED' ? 'online' : 'offline',
+                  cpu: { cores: 0, usage: 0 },
+                  memory: { total: 0, used: 0, free: 0 },
+                  storage: { total: 0, used: 0, free: 0 }
+                };
+              }
+            }));
+          } catch (vcenterError) {
+            console.error(`Error in vCenter API calls:`, vcenterError.message);
+            throw vcenterError;
+          }
+        } else {
+          // ESXi direct API handling - ESXi has different endpoints
+          try {
+            console.log('Using ESXi direct API endpoints');
+            
+            // Get Host Summary info
+            const hostSummary = await vsphereClient.get('/api/host');
+            
+            // Get Hardware info
+            let hardwareInfo = { cpuCores: 0, memory: 0 };
+            try {
+              const hardware = await vsphereClient.get('/api/host/hardware');
+              hardwareInfo.cpuCores = hardware.cpuPkgs * hardware.cpuCoresPerPkg || 0;
+              hardwareInfo.memory = hardware.memorySize || 0;
+            } catch (hwError) {
+              console.warn('Failed to get hardware info:', hwError.message);
+            }
+            
+            // Get CPU Usage
+            let cpuUsage = 0;
+            try {
+              const cpuStats = await vsphereClient.get('/api/host/stats');
+              cpuUsage = cpuStats.cpu?.usage?.latest || 0;
+            } catch (cpuError) {
+              console.warn('Failed to get CPU stats:', cpuError.message);
+            }
+            
+            // Get Memory info
+            let memoryStats = { total: hardwareInfo.memory, used: 0, free: 0 };
+            try {
+              const memInfo = await vsphereClient.get('/api/host/stats');
+              memoryStats.used = memInfo.mem?.used?.latest || 0;
+              memoryStats.free = memoryStats.total - memoryStats.used;
+            } catch (memError) {
+              console.warn('Failed to get memory stats:', memError.message);
+            }
+            
+            // Get Storage info
+            let storageInfo = { total: 0, used: 0, free: 0 };
+            try {
+              const datastores = await vsphereClient.get('/api/host/datastore');
+              
+              // Process each datastore
+              for (const ds of datastores.value || []) {
+                try {
+                  const dsInfo = await vsphereClient.get(`/api/host/datastore/${ds.datastore}`);
+                  storageInfo.total += dsInfo.capacity || 0;
+                  storageInfo.free += dsInfo.freeSpace || 0;
+                } catch (dsError) {
+                  console.warn(`Failed to get datastore info for ${ds.name}:`, dsError.message);
+                }
+              }
+              storageInfo.used = storageInfo.total - storageInfo.free;
+            } catch (storageError) {
+              console.warn('Failed to get storage stats:', storageError.message);
+            }
+            
+            // Fallback if no name is available
+            const hostName = hostSummary.name || hypervisorInfo.name || 'ESXi Host';
+            
+            formattedNodes = [{
+              id: hypervisorInfo.id,
+              name: hostName,
+              status: 'online', // Assume online if we can connect
+              cpu: {
+                cores: hardwareInfo.cpuCores,
+                usage: cpuUsage
+              },
+              memory: memoryStats,
+              storage: storageInfo
+            }];
+          } catch (esxiError) {
+            console.error('Error in ESXi API calls:', esxiError.message);
+            
+            // Try fallback to ESXi legacy endpoints if modern API fails
+            try {
+              console.log('Attempting fallback to legacy ESXi API endpoints');
+              
+              // Basic host info
+              const hostInfo = await vsphereClient.get('/sdk/vimServiceVersions.xml');
+              let name = hypervisorInfo.name || 'ESXi Host';
+              
+              formattedNodes = [{
+                id: hypervisorInfo.id,
+                name: name,
+                status: 'online', // If we can connect, it's online
+                cpu: { cores: 0, usage: 0 },
+                memory: { total: 0, used: 0, free: 0 },
+                storage: { total: 0, used: 0, free: 0 }
+              }];
+              
+            } catch (fallbackError) {
+              console.error('Fallback ESXi API also failed:', fallbackError.message);
+              throw esxiError; // Throw the original error
+            }
+          }
         }
 
-        formattedNodes = hosts.map(host => ({
-          id: host.host, // vSphere host ID (e.g., "host-123")
-          name: host.name,
-          status: host.connection_state === 'CONNECTED' && host.power_state === 'POWERED_ON' ? 'online' : 'offline',
-          cpu: { cores: host.cpu_count || 0, usage: 0 }, // CPU usage needs another call or calculation
-          memory: { total: host.memory_size || 0, used: 0, free: 0 }, // Memory usage needs more details
-          // rootfs is not directly applicable like in Proxmox nodes.
-        }));
         console.log(`Fetched ${formattedNodes.length} vSphere nodes for hypervisor ${id}`);
       } catch (vsphereError) {
         console.error(`Error fetching vSphere nodes for hypervisor ${id}:`, vsphereError.message);
-        // Error already logged by getVSphereClient or during API calls
+        return res.status(500).json({
+          error: 'Failed to retrieve vSphere nodes',
+          details: vsphereError.message
+        });
       } finally {
         if (vsphereClient) {
-          await vsphereClient.logout();
+          await vsphereClient.logout().catch(err => {
+            console.warn(`Error during logout: ${err.message}`);
+          });
         }
       }
     } else {
       console.warn(`Unknown hypervisor type '${hypervisorInfo.type}' for ID ${id} when fetching nodes.`);
       return res.status(400).json({ error: `Unsupported hypervisor type: ${hypervisorInfo.type}` });
     }
+    
+    // Format and sanitize the output
+    formattedNodes = formattedNodes.map(node => {
+      // Ensure we have valid values for all properties
+      return {
+        id: node.id || '',
+        name: node.name || '',
+        status: node.status || 'unknown',
+        cpu: {
+          cores: node.cpu?.cores || 0,
+          usage: node.cpu?.usage || 0
+        },
+        memory: {
+          total: node.memory?.total || 0,
+          used: node.memory?.used || 0,
+          free: node.memory?.free || 0
+        },
+        storage: node.storage ? {
+          total: node.storage.total || 0,
+          used: node.storage.used || 0,
+          free: node.storage.free || 0
+        } : {
+          total: 0,
+          used: 0, 
+          free: 0
+        }
+      };
+    });
+    
     res.json(formattedNodes);
   } catch (error) {
     console.error(`Error fetching nodes for hypervisor ${id}:`, error.message);
@@ -1461,7 +1545,7 @@ app.get('/api/hypervisors', authenticate, async (req, res) => {
   try {
     // Select all relevant fields, excluding sensitive ones like password or full token details
     const result = await pool.query(
-      'SELECT id, name, type, host, username, status, last_sync, created_at, updated_at FROM hypervisors ORDER BY created_at DESC'
+      'SELECT id, name, type, host, username, status, last_sync, vsphere_subtype, created_at, updated_at FROM hypervisors ORDER BY created_at DESC'
     );
 
     res.json(result.rows);
@@ -1603,7 +1687,6 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
                   vsphereApiUrl += ':443';
               }
           }
-
           // Extraer el hostname limpio para la base de datos
           try {
               cleanHost = new URL(vsphereApiUrl).hostname;
@@ -1636,7 +1719,8 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
                       headers: {
                           'Authorization': `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`,
                           'Accept': 'application/json',
-                          'Content-Type': 'application/json'
+                          'Content-Type': 'application/json',
+                          'vmware-use-header-authn': 'true'
                       },
                       body: JSON.stringify({}), // Add empty JSON body
 
@@ -1759,7 +1843,7 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
 
               }
 
-              //console.log(`Successfully connected to ESXi 6.7 at ${vsphereApiUrl}`);
+              console.log(`Successfully connected to ESXi 6.7 at ${vsphereApiUrl}`);
 
           } catch (vsphereError) {
               console.error(`vSphere connection failed for ${vsphereApiUrl}:`, vsphereError.message);
@@ -1890,7 +1974,8 @@ else if (type === 'vsphere') {
               headers: {
                   'Authorization': `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`,
                   'Accept': 'application/json',
-                  'Content-Type': 'application/json'
+                  'Content-Type': 'application/json',
+                  'vmware-use-header-authn': 'true'
               },
               body: JSON.stringify({}), // Add empty JSON body
 
@@ -2240,7 +2325,7 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
         const isoFiles = await fetchVSphereIsoFiles(vsphereClient);
         hypervisor.templates = vmTemplates.concat(isoFiles);
 
-        console.log(`Fetched vSphere details for ${id}: ${hypervisor.nodes.length} nodes, ${hypervisor.storage.length} storage, ${hypervisor.templates.length} templates`);
+        console.log(`Fetched vSphere details for ${id}: ${hypervisor.nodes.length} nodes, ${hypervisor.storage.length} templates`);
 
         // Calculate Aggregated Stats for vSphere
         let aggTotalCpuCores = 0;
