@@ -2348,7 +2348,7 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
         console.error(`Failed to fetch Proxmox details for connected hypervisor ${id}:`, detailError);
         hypervisor.detailsError = detailError.message || 'Failed to load details';
       }
-    } else if (hypervisor.status === 'connected' && hypervisor.type === 'vsphere') { // vSphere Logic
+    }  else if (hypervisor.status === 'connected' && hypervisor.type === 'vsphere') { // vSphere Logic
       console.log(`Hypervisor ${id} is connected, fetching vSphere details...`);
       let vsphereClient;
       try {
@@ -2358,7 +2358,10 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => { // Removed r
         let vsphereHostsRaw = [];
         if (vsphereClient.vsphereSubtype === 'vcenter') {
           const hostsResponse = await vsphereClient.get('/rest/vcenter/host');
+          console.log('este vSphere GET /rest/vcenter/host raw response:', JSON.stringify(hostsResponse, null, 2)); // Log raw response
+
           vsphereHostsRaw = hostsResponse.value || [];
+
         } else if (vsphereClient.vsphereSubtype === 'esxi') {
           // Represent the ESXi itself as a node
           vsphereHostsRaw = [{ // Simplified representation for standalone ESXi
