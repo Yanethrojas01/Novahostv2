@@ -1,4 +1,4 @@
-# Novahost
+# Novahost (anteriormente VM-Forge)
 
 Novahost is a modern web application for managing virtual machines across Proxmox and vSphere environments. It provides a unified interface for creating, monitoring, and managing VMs across different hypervisor platforms.
 
@@ -12,13 +12,13 @@ Novahost is a modern web application for managing virtual machines across Proxmo
 - 👤 User profile management page (`Profile.tsx`)
 - 🔐 Secure authentication and role-based access control
 - 🌙 Dark mode support
-- 🔄 Real-time updates and notifications
+- 🔄 Real-time updates (algunas funcionalidades)
 
 ## Tech Stack
 
 - Frontend: React + TypeScript + Vite
 - Styling: Tailwind CSS
-- State Management: React Query + Jotai
+- State Management: React Query (Jotai podría considerarse para estado global simple)
 - Database: Supabase or PostgreSQL
 - Authentication: Supabase Auth (when using Supabase)
 - API: Express.js
@@ -27,7 +27,7 @@ Novahost is a modern web application for managing virtual machines across Proxmo
 
 - Node.js 18.x or higher
 - npm 9.x or higher
-- A Supabase account (if using Supabase)
+- A Supabase account (if using Supabase for DB and Auth) or a PostgreSQL instance.
 
 ## Development Setup
 
@@ -169,6 +169,71 @@ The application uses the following main tables:
     - `virtual_machines`
     - `vm_metrics`
     - `users` (authentication needs to be handled separately)
+
+vSphere Microservice
+The vSphere Microservice is a separate Python Flask application that provides VM management capabilities for vSphere hypervisors. It allows listing virtual machines and controlling their power state.
+
+Running the Microservice
+Navigate to the vsphere-microservice directory.
+
+Install the required Python dependencies (preferably in a virtual environment):
+
+
+pip install flask pyvmomi
+Run the microservice:
+
+
+python app.py
+The microservice will start and listen on http://0.0.0.0:5000.
+
+API Endpoints
+List VMs
+
+GET /vms
+
+Query parameters:
+
+host: vSphere host address
+
+user: vSphere username
+
+password: vSphere password
+
+Example:
+
+
+GET http://localhost:5000/vms?host=your_host&user=your_user&password=your_password
+Power Control VM
+
+POST /vm/<vm_uuid>/power
+
+JSON body parameters:
+
+host: vSphere host address
+
+user: vSphere username
+
+password: vSphere password
+
+action: "on" to power on, "off" to power off
+
+Example:
+
+
+POST http://localhost:5000/vm/your_vm_uuid/power
+Content-Type: application/json
+
+{
+  "host": "your_host",
+  "user": "your_user",
+  "password": "your_password",
+  "action": "on"
+}
+Notes
+Ensure the vSphere credentials have sufficient permissions to perform the requested operations.
+
+This microservice is intended to be used alongside the main Novahost application for managing vSphere VMs.
+
 
 ## Contributing
 
