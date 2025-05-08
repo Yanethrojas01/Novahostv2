@@ -1736,27 +1736,47 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
                       if (!sessionId) {
                           console.warn('Session ID not received from vSphere REST API');
                       } else {
-                          console.log(`vSphere REST API session obtained: ${sessionId.substring(0, 10)}...`);
-                          vsphereSubtype = 'esxi';
-                          status = 'connected';
-                          lastSync = new Date();
+                        console.log(`vSphere REST API session obtained: ${sessionId.substring(0, 10)}...`);
+                        // Autenticación exitosa, ahora sondear para diferenciar vCenter de ESXi
+                        try {
+                            console.log(`Probing for vCenter specific endpoint: ${vsphereApiUrl}/rest/vcenter`);
+                            const probeResponse = await fetch(`${vsphereApiUrl}/rest/vcenter`, { // Endpoint base de vCenter
+                                method: 'GET',
+                                headers: { 'vmware-api-session-id': sessionId, 'Accept': 'application/json' },
+                                agent: agent,
+                                timeout: 7000 // Timeout corto para el sondeo
+                            });
+                            console.log(`vCenter probe response status: ${probeResponse.status}`);
+                            if (probeResponse.ok) { // Si /rest/vcenter es accesible, es vCenter
+                                vsphereSubtype = 'vcenter';
+                                console.log('Determined subtype: vCenter based on probe.');
+                            } else {
+                                vsphereSubtype = 'esxi'; // Sino, es un ESXi moderno
+                                console.log(`Determined subtype: ESXi (modern) - probe to /rest/vcenter status ${probeResponse.status}.`);
+                            }
+                        } catch (probeError) {
+                            console.warn(`vCenter probe error: ${probeError.message}. Assuming ESXi (modern).`);
+                            vsphereSubtype = 'esxi';
+                        }
+                        status = 'connected';
+                        lastSync = new Date();
                       }
                   } else {
                       console.warn(`REST API auth failed with status: ${authResponse.status}`);
                       // Intentar leer el cuerpo de error para más detalles
                       try {
                           const errorBody = await authResponse.text();
-                          console.warn(`Auth error details: ${errorBody}`);
+                          console.warn(`Auth error details: ${errorBody.substring(0, 500)}`);
                       } catch (e) {
                           console.warn('Could not read error response body');
                       }
                   }
               } catch (restAuthError) {
-                  console.warn(`REST API auth error: ${restAuthError.message}`);
+                  console.warn(`REST API auth connection error: ${restAuthError.message}`);
               }
 
               // 2. Si falla la API REST, intentar con la autenticación de la interfaz web
-              if (!sessionId) {
+              if (status !== 'connected') { // Solo intentar si el método anterior falló en conectar
                   console.log(`Trying UI login method for ESXi: ${vsphereApiUrl}/ui/login`);
                   try {
                       const formData = new URLSearchParams();
@@ -1800,7 +1820,7 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
               }
 
               // 3. Intentar con el endpoint /sdk para ESXi SOAP API (último recurso)
-              if (!status || status !== 'connected') {
+              if (status !== 'connected') { // Solo intentar si los métodos anteriores fallaron
                   console.log(`Trying SOAP API check for ESXi: ${vsphereApiUrl}/sdk`);
                   try {
                       const soapCheckResponse = await fetch(`${vsphereApiUrl}/sdk`, {
@@ -1841,8 +1861,6 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
                             // vsphereError = new Error('Authentication failed with all ESXi 6.7 compatible methods');
 
               }
-
-              console.log(`Successfully connected to ESXi 6.7 at ${vsphereApiUrl}`);
 
           } catch (vsphereError) {
               console.error(`vSphere connection failed for ${vsphereApiUrl}:`, vsphereError.message);
@@ -2096,8 +2114,6 @@ else if (type === 'vsphere') {
                     // vsphereError = new Error('Authentication failed with all ESXi 6.7 compatible methods');
 
       }
-
-      //console.log(`Successfully connected to ESXi 6.7 at ${vsphereApiUrl}`);
 
   } catch (vsphereError) {
       console.error(`vSphere connection/authentication process failed for ${vsphereApiUrl}:`, vsphereError.message);
