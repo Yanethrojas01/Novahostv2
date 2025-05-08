@@ -799,8 +799,43 @@ app.get('/api/vms', authenticate, async (req, res) => {
           allVms = allVms.concat(proxmoxVms);
 
         } else if (hypervisor.type === 'vsphere') {
-          // TODO: Implement vSphere VM fetching logic here
-          console.log(`vSphere VM fetching not yet implemented for ${hypervisor.host}`);
+          console.log(`Fetching VMs from vSphere hypervisor: ${hypervisor.host} (ID: ${hypervisor.id})`);
+          let vsphereClient;
+          try {
+            vsphereClient = await getVSphereClient(hypervisor.id);
+            const vmListResponse = await vsphereClient.get('/rest/vcenter/vm');
+            // The response might be { value: [...] } or just [...]
+            const vsphereVmsRaw = vmListResponse.value || vmListResponse;
+
+            if (Array.isArray(vsphereVmsRaw)) {
+              const vsphereVms = vsphereVmsRaw.map(vm => ({
+                id: vm.vm, // e.g., "vm-123"
+                name: vm.name,
+                status: vm.power_state === 'POWERED_ON' ? 'running' : (vm.power_state === 'POWERED_OFF' ? 'stopped' : vm.power_state.toLowerCase()),
+                nodeName: hypervisor.name, // Simplified: use hypervisor name as node. For vCenter, actual host is per-VM.
+                specs: {
+                  cpu: vm.cpu_count || 0,
+                  memory: vm.memory_size_MiB || 0,
+                  disk: 0, // Disk size from /rest/vcenter/vm is not available. Set to 0 for list view.
+                  // os: could be fetched if needed, but not in summary
+                },
+                hypervisorType: 'vsphere',
+                hypervisorId: hypervisor.id,
+                createdAt: new Date(), // Placeholder, vSphere summary doesn't provide this easily
+              }));
+              allVms = allVms.concat(vsphereVms);
+              console.log(`Fetched ${vsphereVms.length} VMs from vSphere ${hypervisor.host}`);
+            } else {
+              console.warn(`Unexpected response structure for vSphere VMs from ${hypervisor.host}:`, vsphereVmsRaw);
+            }
+          } catch (vsphereError) {
+            console.error(`Error fetching VMs from vSphere hypervisor ${hypervisor.id} (${hypervisor.host}):`, vsphereError.message);
+            // Log error but continue with other hypervisors
+          } finally {
+            if (vsphereClient) {
+              await vsphereClient.logout().catch(err => console.warn(`Error logging out vSphere client for ${hypervisor.id}: ${err.message}`));
+            }
+          }
         }
       } catch (hypervisorError) {
         // Log error for this specific hypervisor but continue with others
