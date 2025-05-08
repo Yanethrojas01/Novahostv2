@@ -858,17 +858,18 @@ app.get('/api/vms/:id', authenticate, async (req, res) => {
   const { id: vmId } = req.params;
   console.log(`--- Received GET /api/vms/${vmId} ---`);
 
+  let targetHypervisor = null;
+  let targetNode = null; // For Proxmox: the node name
+  let proxmoxClientInstance = null; // For Proxmox client
+  let vsphereClientInstance = null; // For vSphere client
+  let foundVmPayload = null; // Store the resource info (Proxmox) or VM summary (vSphere)
+
   try {
-    // --- Step 1: Find the VM's Hypervisor and Node ---
+    // --- Step 1: Find the VM's Hypervisor ---
     const { rows: connectedHypervisors } = await pool.query(
-      `SELECT id, type, host, username, api_token, token_name
+      `SELECT id, type, host, username, api_token, token_name, name, vsphere_subtype
        FROM hypervisors WHERE status = 'connected'`
     );
-
-    let targetHypervisor = null;
-    let targetNode = null;
-    let proxmoxClient = null;
-    let foundVmResource = null; // Store the resource info
 
     for (const hypervisor of connectedHypervisors) {
       if (hypervisor.type === 'proxmox') {
@@ -881,83 +882,186 @@ app.get('/api/vms/:id', authenticate, async (req, res) => {
           tokenID: `${hypervisor.username}!${hypervisor.token_name}`,
           tokenSecret: hypervisor.api_token, timeout: 10000, rejectUnauthorized: false
         };
-        const proxmox = proxmoxApi(proxmoxConfig);
+        const currentProxmoxClient = proxmoxApi(proxmoxConfig);
 
         try {
-          const vmResources = await proxmox.cluster.resources.$get({ type: 'vm' });
+          const vmResources = await currentProxmoxClient.cluster.resources.$get({ type: 'vm' });
           const foundVm = vmResources.find(vm => vm.vmid.toString() === vmId);
 
           if (foundVm) {
             targetHypervisor = hypervisor;
-            targetNode = foundVm.node;
-            proxmoxClient = proxmox;
-            foundVmResource = foundVm; // Save resource data
-            console.log(`Found VM ${vmId} on node ${targetNode} of hypervisor ${hypervisor.id}`);
+            targetNode = foundVm.node; // Specific to Proxmox
+            foundVmPayload = foundVm; // Save Proxmox resource data
+            proxmoxClientInstance = currentProxmoxClient; // Keep this client
+            console.log(`Found VM ${vmId} on Proxmox node ${targetNode} of hypervisor ${hypervisor.id}`);
             break;
           }
         } catch (findError) {
-          console.warn(`Could not check hypervisor ${hypervisor.id} for VM ${vmId}:`, findError.message);
+          console.warn(`Could not check Proxmox hypervisor ${hypervisor.id} for VM ${vmId}:`, findError.message);
+        }
+      } else if (hypervisor.type === 'vsphere') {
+        let tempVsphereClient;
+        try {
+          tempVsphereClient = await getVSphereClient(hypervisor.id);
+          // For vSphere, vmId is typically like "vm-123"
+          const vmDataResponse = await tempVsphereClient.get(`/rest/vcenter/vm/${vmId}`);
+          const vmData = vmDataResponse.value || vmDataResponse;
+
+          if (vmData && (vmData.vm === vmId || (typeof vmData === 'object' && vmData.name))) {
+            targetHypervisor = hypervisor;
+            foundVmPayload = vmData; // Save vSphere VM summary data
+            vsphereClientInstance = tempVsphereClient; // Keep this client
+            tempVsphereClient = null; // Prevent logout in this iteration's finally
+            console.log(`Found VM ${vmId} on vSphere hypervisor ${hypervisor.id} (${hypervisor.name})`);
+            break;
+          }
+        } catch (vsphereFindError) {
+          // Only log errors that are not 404 (Not Found)
+          if (vsphereFindError.message && !vsphereFindError.message.includes('404') &&
+              !(vsphereFindError.response && vsphereFindError.response.status === 404)) {
+            console.warn(`Error checking vSphere hypervisor ${hypervisor.id} for VM ${vmId}:`, vsphereFindError.message);
+          }
+        } finally {
+          if (tempVsphereClient) {
+            await tempVsphereClient.logout().catch(e => console.warn(`Logout error during vSphere VM search for ${hypervisor.id}: ${e.message}`));
+          }
         }
       }
-      // TODO: Add vSphere logic here if needed
     }
 
-    if (!targetHypervisor || !targetNode || !proxmoxClient || !foundVmResource) {
-      return res.status(404).json({ error: `VM ${vmId} not found on any connected Proxmox hypervisor.` });
+    if (!targetHypervisor || !foundVmPayload) {
+      if (vsphereClientInstance) await vsphereClientInstance.logout().catch(e => console.warn(`Logout error (VM not found scenario): ${e.message}`));
+      return res.status(404).json({ error: `VM ${vmId} not found on any connected hypervisor.` });
     }
 
-    // --- Step 2: Get VM Config and Current Status ---
-    const vmConfig = await proxmoxClient.nodes.$(targetNode).qemu.$(vmId).config.$get();
-    const vmStatus = await proxmoxClient.nodes.$(targetNode).qemu.$(vmId).status.current.$get();
+    // --- Step 2: Get VM Config and Current Status based on hypervisor type ---
+    let vmDetails;
 
-    // --- Step 3: Map data to our VM type ---
-    const vmDetails = {
-      id: vmId,
-      name: vmConfig.name || foundVmResource.name, // Prefer config name, fallback to resource name
-      description: vmConfig.description || '',
-      hypervisorId: targetHypervisor.id,
-      hypervisorType: 'proxmox',
-      nodeName: targetNode,
-      status: vmStatus.status, // 'running', 'stopped', etc.
-      specs: {
-        cpu: vmConfig.cores * (vmConfig.sockets || 1), // Calculate total cores
-        memory: Math.round(vmConfig.memory || foundVmResource.maxmem / (1024 * 1024)), // Prefer config memory (MB), fallback to resource
-        disk: Math.round(foundVmResource.maxdisk / (1024 * 1024 * 1024)), // Disk size usually comes from resources (GB)
-        // os: vmConfig.ostype, // Map os type if needed
-      },
-      createdAt: new Date(vmStatus.uptime ? Date.now() - (vmStatus.uptime * 1000) : Date.now()), // Estimate create time from uptime or use now
-      tags: vmConfig.tags ? vmConfig.tags.split(';') : [], // Parse tags if needed
-      // ipAddresses: [], // Getting IPs often requires the guest agent
-    };
+    if (targetHypervisor.type === 'proxmox') {
+      const vmConfig = await proxmoxClientInstance.nodes.$(targetNode).qemu.$(vmId).config.$get();
+      const vmStatus = await proxmoxClientInstance.nodes.$(targetNode).qemu.$(vmId).status.current.$get();
+
+      vmDetails = {
+        id: vmId, // Proxmox VMID
+        name: vmConfig.name || foundVmPayload.name,
+        description: vmConfig.description || '',
+        hypervisorId: targetHypervisor.id,
+        hypervisorType: 'proxmox',
+        nodeName: targetNode,
+        status: vmStatus.status,
+        specs: {
+          cpu: vmConfig.cores * (vmConfig.sockets || 1),
+          memory: Math.round(vmConfig.memory || foundVmPayload.maxmem / (1024 * 1024)), // MB
+          disk: Math.round(foundVmPayload.maxdisk / (1024 * 1024 * 1024)), // GB
+          os: vmConfig.ostype,
+        },
+        createdAt: new Date(vmStatus.uptime ? Date.now() - (vmStatus.uptime * 1000) : Date.now()),
+        tags: vmConfig.tags ? vmConfig.tags.split(';') : [],
+      };
+    } else if (targetHypervisor.type === 'vsphere') {
+      // foundVmPayload is the basic VM info (e.g., from /rest/vcenter/vm/{vmId})
+      // vsphereClientInstance is already authenticated
+      let totalDiskGb = 0;
+      try {
+        const diskHardwareResponse = await vsphereClientInstance.get(`/rest/vcenter/vm/${vmId}/hardware/disk`);
+        const disks = diskHardwareResponse.value || diskHardwareResponse;
+        if (Array.isArray(disks)) {
+          const totalDiskBytes = disks.reduce((sum, disk) => sum + (disk.capacity || 0), 0);
+          totalDiskGb = Math.round(totalDiskBytes / (1024 * 1024 * 1024));
+        }
+      } catch (diskError) {
+        console.warn(`Could not fetch disk details for vSphere VM ${vmId} on ${targetHypervisor.name}: ${diskError.message}`);
+      }
+
+      let actualNodeName = targetHypervisor.name; // Default for ESXi or if host lookup fails
+      if (vsphereClientInstance.vsphereSubtype === 'vcenter' && foundVmPayload.host) {
+        try {
+          // foundVmPayload.host is the ID of the ESXi host (e.g., "host-10")
+          const hostDetailsResponse = await vsphereClientInstance.get(`/rest/vcenter/host/${foundVmPayload.host}`);
+          const hostDetails = hostDetailsResponse.value || hostDetailsResponse;
+          actualNodeName = hostDetails.name || foundVmPayload.host; // Use host name if available
+        } catch (hostError) {
+          console.warn(`Could not fetch host details for ${foundVmPayload.host} on vCenter ${targetHypervisor.name}: ${hostError.message}`);
+        }
+      }
+
+      vmDetails = {
+        id: foundVmPayload.vm || vmId, // vSphere specific ID (e.g., "vm-123")
+        name: foundVmPayload.name,
+        description: '', // vSphere summary doesn't have a direct description field
+        hypervisorId: targetHypervisor.id,
+        hypervisorType: 'vsphere',
+        nodeName: actualNodeName,
+        status: foundVmPayload.power_state === 'POWERED_ON' ? 'running'
+                : foundVmPayload.power_state === 'POWERED_OFF' ? 'stopped'
+                : foundVmPayload.power_state.toLowerCase(),
+        specs: {
+          cpu: foundVmPayload.cpu_count || 0,
+          memory: foundVmPayload.memory_size_MiB || 0,
+          disk: totalDiskGb,
+          os: foundVmPayload.guest_OS || 'Unknown',
+        },
+        createdAt: new Date(), // Placeholder, vSphere API doesn't provide this easily in summary
+        tags: [], // Placeholder, vSphere tags require different API calls
+      };
+    } else {
+      // Should not happen if targetHypervisor and foundVmPayload are set
+      if (vsphereClientInstance) await vsphereClientInstance.logout().catch(e => console.warn(`Logout error (unknown hypervisor type scenario): ${e.message}`));
+      return res.status(500).json({ error: 'Inconsistent state: VM found but hypervisor type unknown.' });
+    }
 
     res.json(vmDetails);
 
   } catch (error) {
     console.error(`Error fetching details for VM ${vmId}:`, error);
-    const errorDetails = getProxmoxError(error);
+    // Determine error details based on which client might have been active or hypervisor type
+    let errorDetails;
+    if (targetHypervisor?.type === 'proxmox' || proxmoxClientInstance) {
+        errorDetails = getProxmoxError(error);
+    } else if (targetHypervisor?.type === 'vsphere' || vsphereClientInstance) {
+        errorDetails = { code: 500, message: error.message || `Failed to retrieve vSphere VM details for ${vmId}` };
+        if (error.response && error.response.status) { // If it's a fetch-like error
+            errorDetails.code = error.response.status;
+            try {
+                const errBody = await error.response.text();
+                errorDetails.message = `${error.message} - ${errBody.substring(0,200)}`;
+            } catch (e) { /* ignore text parsing error */ }
+        }
+    } else {
+        errorDetails = { code: 500, message: error.message || `Failed to retrieve VM details for ${vmId}` };
+    }
+
     res.status(errorDetails.code || 500).json({
       error: `Failed to retrieve details for VM ${vmId}.`,
       details: errorDetails.message,
       suggestion: errorDetails.suggestion
     });
+  } finally {
+    if (vsphereClientInstance) {
+      await vsphereClientInstance.logout().catch(e => console.warn(`Final logout error for vSphere client (hypervisor ${targetHypervisor?.id}): ${e.message}`));
+    }
+    // proxmoxClientInstance does not require explicit logout/close
   }
 });
+
 
 // GET /api/vms/:id/metrics - Get current performance metrics for a single VM
 app.get('/api/vms/:id/metrics', authenticate, async (req, res) => {
   const { id: vmId } = req.params;
   console.log(`--- Received GET /api/vms/${vmId}/metrics ---`);
 
+  let targetHypervisor = null;
+  let targetNode = null; // For Proxmox
+  let proxmoxClientInstance = null; // For Proxmox client
+  let vsphereClientInstance = null; // For vSphere client
+  let foundVmPayload = null; // Store Proxmox resource or vSphere VM summary
+
   try {
-    // --- Step 1: Find the VM's Hypervisor and Node (Reusing logic from GET /api/vms/:id) ---
+    // --- Step 1: Find the VM's Hypervisor (Reusing logic from GET /api/vms/:id) ---
     const { rows: connectedHypervisors } = await pool.query(
-      `SELECT id, type, host, username, api_token, token_name
+      `SELECT id, type, host, username, api_token, token_name, name, vsphere_subtype
        FROM hypervisors WHERE status = 'connected'`
     );
-
-    let targetHypervisor = null;
-    let targetNode = null;
-    let proxmoxClient = null;
 
     for (const hypervisor of connectedHypervisors) {
       if (hypervisor.type === 'proxmox') {
@@ -968,59 +1072,138 @@ app.get('/api/vms/:id/metrics', authenticate, async (req, res) => {
         const proxmoxConfig = {
           host: cleanHost, port: port, username: hypervisor.username,
           tokenID: `${hypervisor.username}!${hypervisor.token_name}`,
-          tokenSecret: hypervisor.api_token, timeout: 5000, rejectUnauthorized: false // Shorter timeout for metrics
+          tokenSecret: hypervisor.api_token, timeout: 5000, rejectUnauthorized: false
         };
-        const proxmox = proxmoxApi(proxmoxConfig);
+        const currentProxmoxClient = proxmoxApi(proxmoxConfig);
 
         try {
-          const vmResources = await proxmox.cluster.resources.$get({ type: 'vm' });
+          const vmResources = await currentProxmoxClient.cluster.resources.$get({ type: 'vm' });
           const foundVm = vmResources.find(vm => vm.vmid.toString() === vmId);
 
           if (foundVm) {
             targetHypervisor = hypervisor;
             targetNode = foundVm.node;
-            proxmoxClient = proxmox;
-            console.log(`Found VM ${vmId} on node ${targetNode} of hypervisor ${hypervisor.id} for metrics`);
+            foundVmPayload = foundVm; // Proxmox resource info
+            proxmoxClientInstance = currentProxmoxClient;
+            console.log(`Found Proxmox VM ${vmId} on node ${targetNode} of hypervisor ${hypervisor.id} for metrics`);
             break;
           }
         } catch (findError) {
-          console.warn(`Could not check hypervisor ${hypervisor.id} for VM ${vmId} metrics:`, findError.message);
+          console.warn(`Could not check Proxmox hypervisor ${hypervisor.id} for VM ${vmId} metrics:`, findError.message);
+        }
+      } else if (hypervisor.type === 'vsphere') {
+        let tempVsphereClient;
+        try {
+          tempVsphereClient = await getVSphereClient(hypervisor.id);
+          const vmDataResponse = await tempVsphereClient.get(`/rest/vcenter/vm/${vmId}`);
+          const vmData = vmDataResponse.value || vmDataResponse;
+
+          if (vmData && (vmData.vm === vmId || (typeof vmData === 'object' && vmData.name))) {
+            targetHypervisor = hypervisor;
+            foundVmPayload = vmData; // vSphere VM summary
+            vsphereClientInstance = tempVsphereClient;
+            tempVsphereClient = null; // Prevent logout in this iteration's finally
+            console.log(`Found vSphere VM ${vmId} on hypervisor ${hypervisor.id} (${hypervisor.name}) for metrics`);
+            break;
+          }
+        } catch (vsphereFindError) {
+          if (vsphereFindError.message && !vsphereFindError.message.includes('404') &&
+              !(vsphereFindError.response && vsphereFindError.response.status === 404)) {
+            console.warn(`Error checking vSphere hypervisor ${hypervisor.id} for VM ${vmId} metrics:`, vsphereFindError.message);
+          }
+        } finally {
+          if (tempVsphereClient) {
+            await tempVsphereClient.logout().catch(e => console.warn(`Logout error during vSphere VM metrics search for ${hypervisor.id}: ${e.message}`));
+          }
         }
       }
-      // TODO: Add vSphere logic here if needed
     }
 
-    if (!targetHypervisor || !targetNode || !proxmoxClient) {
-      return res.status(404).json({ error: `VM ${vmId} not found on any connected Proxmox hypervisor.` });
+    if (!targetHypervisor || !foundVmPayload) {
+      if (vsphereClientInstance) await vsphereClientInstance.logout().catch(e => console.warn(`Logout error (VM not found for metrics): ${e.message}`));
+      return res.status(404).json({ error: `VM ${vmId} not found on any connected hypervisor.` });
     }
 
-    // --- Step 2: Get VM Current Status ---
-    const vmStatus = await proxmoxClient.nodes.$(targetNode).qemu.$(vmId).status.current.$get();
+    // --- Step 2: Get VM Metrics based on hypervisor type ---
+    let metrics;
 
-    // --- Step 3: Map data to our VMMetrics type ---
-    const metrics = {
-      cpu: (vmStatus.cpu || 0) * 100, // Proxmox CPU is 0-1 fraction, convert to percentage
-      memory: vmStatus.maxmem > 0 ? (vmStatus.mem / vmStatus.maxmem) * 100 : 0, // Calculate memory percentage
-      disk: 0, // Disk usage % is not directly available here. Maybe show I/O rates later?
-      network: {
-        in: vmStatus.netin || 0, // These are total bytes, not rate. Rate calculation needs state.
-        out: vmStatus.netout || 0,
-      },
-      uptime: vmStatus.uptime || 0, // Seconds
-    };
+    if (targetHypervisor.type === 'proxmox') {
+      const vmStatus = await proxmoxClientInstance.nodes.$(targetNode).qemu.$(vmId).status.current.$get();
+      metrics = {
+        cpu: (vmStatus.cpu || 0) * 100, // Proxmox CPU is 0-1 fraction, convert to percentage
+        memory: vmStatus.maxmem > 0 ? (vmStatus.mem / vmStatus.maxmem) * 100 : 0, // Calculate memory percentage
+        disk: 0, // Disk usage % is not directly available here.
+        network: {
+          in: vmStatus.netin || 0, // These are total bytes, not rate.
+          out: vmStatus.netout || 0,
+        },
+        uptime: vmStatus.uptime || 0, // Seconds
+        // Add raw values for more detailed display if needed
+        raw: {
+            cpuUsage: vmStatus.cpu, // fraction
+            memUsedBytes: vmStatus.mem,
+            memTotalBytes: vmStatus.maxmem,
+            diskReadBytes: vmStatus.diskread,
+            diskWriteBytes: vmStatus.diskwrite,
+        }
+      };
+    } else if (targetHypervisor.type === 'vsphere') {
+      // foundVmPayload is the vSphere VM summary
+      const isPoweredOn = foundVmPayload.power_state === 'POWERED_ON';
+      metrics = {
+        cpu: 0, // Placeholder for vSphere CPU usage percentage
+        memory: 0, // Placeholder for vSphere memory usage percentage
+        disk: 0, // Placeholder
+        network: {
+          in: 0, // Placeholder
+          out: 0, // Placeholder
+        },
+        uptime: isPoweredOn ? 1 : 0, // 1 if on (nominal), 0 if off. Actual uptime not in summary.
+        // Add raw configured values for context
+        raw: {
+            configuredCpuCores: foundVmPayload.cpu_count || 0,
+            configuredMemoryMiB: foundVmPayload.memory_size_MiB || 0,
+            powerState: foundVmPayload.power_state,
+        }
+      };
+      console.log(`vSphere VM ${vmId} metrics (configured/status):`, metrics.raw);
+    } else {
+      if (vsphereClientInstance) await vsphereClientInstance.logout().catch(e => console.warn(`Logout error (unknown hypervisor type for metrics): ${e.message}`));
+      return res.status(500).json({ error: 'Inconsistent state: VM found but hypervisor type unknown for metrics.' });
+    }
 
     res.json(metrics);
 
   } catch (error) {
     console.error(`Error fetching metrics for VM ${vmId}:`, error);
-    const errorDetails = getProxmoxError(error);
+    let errorDetails;
+    if (targetHypervisor?.type === 'proxmox' || proxmoxClientInstance) {
+        errorDetails = getProxmoxError(error);
+    } else if (targetHypervisor?.type === 'vsphere' || vsphereClientInstance) {
+        errorDetails = { code: 500, message: error.message || `Failed to retrieve vSphere VM metrics for ${vmId}` };
+        if (error.response && error.response.status) {
+            errorDetails.code = error.response.status;
+            try {
+                const errBody = await error.response.text();
+                errorDetails.message = `${error.message} - ${errBody.substring(0,200)}`;
+            } catch (e) { /* ignore */ }
+        }
+    } else {
+        errorDetails = { code: 500, message: error.message || `Failed to retrieve VM metrics for ${vmId}` };
+    }
     res.status(errorDetails.code || 500).json({
       error: `Failed to retrieve metrics for VM ${vmId}.`,
       details: errorDetails.message,
       suggestion: errorDetails.suggestion
     });
+  } finally {
+    if (vsphereClientInstance) {
+      await vsphereClientInstance.logout().catch(e => console.warn(`Final logout error for vSphere client (metrics, hypervisor ${targetHypervisor?.id}): ${e.message}`));
+    }
+    // proxmoxClientInstance does not require explicit logout
   }
 });
+
 
 // --- End VM Listing API ---
 
