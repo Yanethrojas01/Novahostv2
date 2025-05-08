@@ -1098,7 +1098,7 @@ app.get('/api/hypervisors/:id/nodes', authenticate, async (req, res) => {
             const response = await vsphereClient.get('/rest/vcenter/host');
             const hosts = response.value || [];
             console.log(`Found ${hosts.length} hosts in vCenter (Hypervisor ID: ${id})`);
-
+            console.log('Hosts disponibles:', hosts.map(h => ({ id: h.host, name: h.name })));
             formattedNodes = await Promise.all(hosts.map(async (host) => {
               try {
    
@@ -1126,13 +1126,18 @@ app.get('/api/hypervisors/:id/nodes', authenticate, async (req, res) => {
                 // Get Storage info
                 let storageInfo = { total: 0, used: 0, free: 0 };
                 try {
-                  const datastores = await vsphereClient.get(`/rest/vcenter/datastore?filter.hosts=${host.host}`);
-                  for (const datastore of datastores.value || []) {
+                  // Usar hostId válido (ej: "host-123")
+                  const datastoresResponse = await vsphereClient.get(`/rest/vcenter/datastore?filter.hosts=${host.host}`);
+                  const datastores = datastoresResponse.data.value || [];
+                  console.log("aca",datastores)
+                
+                  for (const datastore of datastores) {
                     const datastoreDetail = await vsphereClient.get(`/rest/vcenter/datastore/${datastore.datastore}`);
-                    storageInfo.total += datastoreDetail.capacity || 0;
-                    storageInfo.free += datastoreDetail.free_space || 0;
+                    storageInfo.total += datastoreDetail.data.capacity || 0;
+                    storageInfo.free += datastoreDetail.data.free_space || 0;
                   }
                   storageInfo.used = storageInfo.total - storageInfo.free;
+                
                 } catch (storageError) {
                   console.warn(`Could not fetch storage stats for host ${host.host}:`, storageError.message);
                 }
@@ -1407,31 +1412,53 @@ app.get('/api/hypervisors/:id/storage', authenticate, async (req, res) => {
 
 // Helper function to fetch VM Templates from vSphere
 async function fetchVSphereVMTemplates(vsphereClient) {
-  console.log(`vSphere Templates: Fetching VM templates for hypervisor ${vsphereClient.hypervisorId}`);
+  console.log(`vSphere Templates (6.7): Fetching VM templates for ${vsphereClient.hypervisorId}`);
   try {
-    // This endpoint is typically for vCenter. ESXi might require different handling or may not list "templates" in the same way.
-    const response = await vsphereClient.get('/rest/vcenter/vm?filter.templates=true');
-    const vms = response.value || response; // Handle responses wrapped in "value" or direct arrays
+  // Obtener todas las VMs. vsphereClient.get() devuelve el JSON parseado.
+    // La API de vCenter suele devolver un objeto con una propiedad "value" que contiene el array.
+    const vmListResponse = await vsphereClient.get('/rest/vcenter/vm');
+    const allVms = vmListResponse.value || vmListResponse; // Manejar si la respuesta es el array directamente o envuelto
 
-    if (!Array.isArray(vms)) {
-      console.error(`vSphere Templates: Expected an array of VMs but got:`, vms);
+    if (!Array.isArray(allVms)) {
+      console.error(`vSphere Templates: Expected an array of VMs but got:`, allVms);
       return [];
     }
 
-    return vms.map(vm => ({
-      id: vm.vm, // vSphere VM ID (e.g., "vm-123")
-      name: vm.name,
-      description: `vSphere VM Template: ${vm.name}`,
-      size: vm.memory_size_MiB * 1024 * 1024, // Example: use memory size, disk size not directly available here
-      path: vm.vm, // Use VM ID as path identifier
-      type: 'template',
-      storage: vm.datastore, // Placeholder, actual datastore might need another call
-    }));
+    // Filtrar plantillas manualmente
+    const templateVms = allVms.filter(vm => vm.is_template === true);
+    console.log(`vSphere Templates: Found ${templateVms.length} raw templates out of ${allVms.length} VMs.`);
+
+    // Obtener detalles adicionales para cada plantilla
+    const templatesWithDetails = await Promise.all(
+      templateVms.map(async (vm) => {
+        let totalDiskCapacity = 0;
+        try {
+          const diskHardwareResponse = await vsphereClient.get(`/rest/vcenter/vm/${vm.vm}/hardware/disk`);
+          const disks = diskHardwareResponse.value || diskHardwareResponse;
+          if (Array.isArray(disks)) {
+            totalDiskCapacity = disks.reduce((acc, disk) => acc + (disk.capacity || 0), 0);
+          }
+        } catch (diskError) {
+          console.warn(`vSphere Templates: Could not fetch disk details for template ${vm.name} (${vm.vm}): ${diskError.message}`);
+        }
+        return {
+          id: vm.vm,
+          name: vm.name,
+          description: `vSphere VM Template: ${vm.name}`,
+          size: totalDiskCapacity || (vm.memory_size_MiB * 1024 * 1024), // Usar tamaño de disco si está disponible, sino memoria como fallback
+          path: vm.vm,
+          type: 'template',
+          storage: vm.datastore || 'vSphere Managed' // vm.datastore puede no estar en la respuesta de /rest/vcenter/vm
+        };
+      })
+    );
+
+    return templatesWithDetails;
+
   } catch (error) {
-    console.error(`vSphere Templates: Error fetching VM templates for hypervisor ${vsphereClient.hypervisorId}:`, error.message);
-    // Log more details if available from a custom error object structure
-    if (error.response && error.response.data) console.error('vSphere API Error details:', error.response.data);
-       return [];
+    console.error(`vSphere Templates: Error fetching VM templates for hypervisor ${vsphereClient.hypervisorId}: ${error.message}`);
+
+    return [];
   }
 }
 
