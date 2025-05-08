@@ -400,7 +400,183 @@ console.log(hypervisor)
         console.log(`Starting VM ${newVmId}...`);
         await proxmox.nodes.$(targetNode).qemu.$(newVmId).status.start.$post();
       }
-    } // Add else if for vSphere later
+    } // --- vSphere VM Creation Logic ---
+    else if (hypervisor.type === 'vsphere') {
+      let vsphereClient;
+      try {
+        vsphereClient = await getVSphereClient(hypervisor.id);
+        console.log(`Creating VM on vSphere (${vsphereClient.vsphereSubtype}): ${params.name}, Template/ISO: ${params.templateId}`);
+
+        // --- Placement: Determine target datastore, host, folder, resource pool ---
+        // This is a simplified approach. A robust solution would involve more discovery
+        // or allow the frontend to specify these IDs.
+
+        // Datastore: Required for both ISO and Clone
+        const datastoresResponse = await vsphereClient.get('/rest/vcenter/datastore');
+        if (!datastoresResponse.value || datastoresResponse.value.length === 0) {
+          throw new Error('No datastores found on vSphere hypervisor.');
+        }
+        // TODO: Allow selection or smarter choice of datastore. Using first for now.
+        const targetDatastore = datastoresResponse.value[0];
+        const targetDatastoreId = targetDatastore.datastore;
+        console.log(`Using target datastore: ${targetDatastore.name} (${targetDatastoreId})`);
+
+        let targetHostId = null;
+        let targetFolderId = null; // Not strictly required for ESXi, vCenter might default
+        let targetResourcePoolId = null; // Not strictly required for ESXi, vCenter might default
+
+        if (vsphereClient.vsphereSubtype === 'vcenter') {
+          try {
+            const hostsResponse = await vsphereClient.get('/rest/vcenter/host');
+            if (hostsResponse.value && hostsResponse.value.length > 0) {
+              targetHostId = hostsResponse.value[0].host; // Use first host
+              console.log(`Using target host (vCenter): ${targetHostId}`);
+            }
+            // Further logic could be added to select specific folders or resource pools
+          } catch (vcenterPlacementError) {
+            console.warn(`Could not determine all vCenter placement details, proceeding with datastore only: ${vcenterPlacementError.message}`);
+          }
+        } else { // esxi
+          console.log('Standalone ESXi: Placement defaults will likely be used by the host.');
+        }
+
+        const isIso = params.templateId.includes(':') && params.templateId.toLowerCase().endsWith('.iso');
+
+        if (isIso) {
+          // --- Create VM from ISO ---
+          console.log(`Attempting to create VM from ISO: ${params.templateId}`);
+
+          let guestOsIdentifier = 'OTHER_64'; // Default
+          if (params.specs.os) { // Simplified OS mapping
+            const osLower = params.specs.os.toLowerCase();
+            if (osLower.includes('ubuntu')) guestOsIdentifier = 'UBUNTU_64';
+            else if (osLower.includes('centos')) guestOsIdentifier = 'CENTOS_64';
+            else if (osLower.includes('windows')) guestOsIdentifier = 'WINDOWS_10_64'; // Example
+            else if (osLower.includes('debian')) guestOsIdentifier = 'DEBIAN_10_64';
+          }
+          console.log(`Using GuestOS identifier: ${guestOsIdentifier}`);
+
+          let targetNetworkId = null;
+          try {
+            const networksResponse = await vsphereClient.get('/rest/vcenter/network?filter.types=STANDARD_PORTGROUP');
+            if (networksResponse.value && networksResponse.value.length > 0) {
+              targetNetworkId = networksResponse.value[0].network; // Use first standard portgroup
+              console.log(`Using target network: ${targetNetworkId} (${networksResponse.value[0].name})`);
+            } else {
+              console.warn('No standard portgroup networks found via /rest/vcenter/network. VM might lack network connectivity.');
+            }
+          } catch (netError) {
+            console.warn(`Could not fetch networks via /rest/vcenter/network: ${netError.message}. VM might lack network connectivity.`);
+          }
+
+          const [isoDsIdFromParam, ...isoPathParts] = params.templateId.split(':');
+          const isoPath = isoPathParts.join(':');
+          const isoDatastoreObject = datastoresResponse.value.find(ds => ds.datastore === isoDsIdFromParam);
+          if (!isoDatastoreObject) {
+            throw new Error(`Datastore for ISO (${isoDsIdFromParam}) not found.`);
+          }
+          const vsphereIsoPath = `[${isoDatastoreObject.name}] ${isoPath}`;
+          console.log(`Using vSphere ISO path: ${vsphereIsoPath}`);
+
+          const createSpecPayload = {
+            spec: {
+              name: params.name,
+              guest_OS: guestOsIdentifier,
+              placement: {
+                datastore: targetDatastoreId,
+                ...(targetHostId && { host: targetHostId }),
+                ...(targetFolderId && { folder: targetFolderId }),
+                ...(targetResourcePoolId && { resource_pool: targetResourcePoolId }),
+              },
+              hardware: {
+                cpu: { count: params.specs.cpu, cores_per_socket: 1, hot_add_enabled: false, hot_remove_enabled: false },
+                memory: { size_MiB: params.specs.memory, hot_add_enabled: false },
+                disks: [{ type: 'NEW', new_vmdk: { capacity: params.specs.disk * 1024 * 1024 * 1024 } }], // Bytes
+                nics: targetNetworkId ? [{
+                  type: 'NEW',
+                  new_nic: { type: 'VMXNET3' },
+                  backing: { type: 'STANDARD_PORTGROUP', network: targetNetworkId },
+                  start_connected: true,
+                }] : [],
+                cdroms: [{
+                  type: 'NEW',
+                  new_cdrom: {
+                    type: 'ISO_FILE',
+                    backing: { type: 'ISO_FILE', iso_file: vsphereIsoPath },
+                    start_connected: true,
+                  },
+                }],
+              },
+              boot_devices: [{ type: 'CDROM' }, { type: 'DISK' }]
+            },
+          };
+
+          console.log('vSphere VM Create Spec (from ISO):', JSON.stringify(createSpecPayload, null, 2));
+          const vmCreationResponse = await vsphereClient.post('/rest/vcenter/vm', { body: JSON.stringify(createSpecPayload) });
+          newVmId = vmCreationResponse.value; // e.g., "vm-123"
+          creationResult = newVmId; // For vSphere, the result is often the ID itself
+          console.log(`vSphere VM created from ISO with ID: ${newVmId}`);
+
+          if (params.start && newVmId) {
+            console.log(`Starting vSphere VM ${newVmId}...`);
+            await vsphereClient.post(`/rest/vcenter/vm/${newVmId}/power/start`);
+          }
+
+        } else {
+          // --- Clone VM from Template ---
+          // params.templateId is the VM ID of the template (e.g., "vm-XYZ")
+          console.log(`Attempting to clone vSphere template: ${params.templateId}`);
+
+          const cloneSpecPayload = {
+            name: params.name,
+            source: params.templateId, // Template VM ID
+            placement: {
+              datastore: targetDatastoreId,
+              ...(targetHostId && { host: targetHostId }),
+              ...(targetFolderId && { folder: targetFolderId }),
+              ...(targetResourcePoolId && { resource_pool: targetResourcePoolId }),
+            },
+            power_on: params.start || false,
+            hardware_customization: { // Customization during clone
+              cpu_update: { num_cpus: params.specs.cpu },
+              memory_update: { memory: params.specs.memory }, // in MiB
+              // Disk resizing during clone is complex with 6.7 REST API.
+              // The template's disk config is usually cloned.
+            },
+          };
+
+          console.log('vSphere VM Clone Spec:', JSON.stringify(cloneSpecPayload, null, 2));
+          // The endpoint for cloning is /rest/vcenter/vm?action=clone
+          // The body is the VcenterVmCloneSpec directly.
+          const cloneResponse = await vsphereClient.post(
+            `/rest/vcenter/vm?action=clone`,
+            { body: JSON.stringify(cloneSpecPayload) }
+          );
+          newVmId = cloneResponse.value; // This should be the new VM's ID
+          creationResult = newVmId; // Task ID or new VM ID
+          console.log(`vSphere VM cloned from template with ID: ${newVmId}`);
+        }
+
+      } catch (vsphereError) {
+        console.error('vSphere VM creation error:', vsphereError);
+        let details = vsphereError.message;
+        if (vsphereError.response) { // Check if it's a fetch-like error object
+            if (typeof vsphereError.response.json === 'function') {
+                try { details = JSON.stringify(await vsphereError.response.json()); } catch (e) { /* ignore */ }
+            } else if (typeof vsphereError.response.text === 'function') {
+                try { details = await vsphereError.response.text(); } catch (e) { /* ignore */ }
+            }
+        }
+        return res.status(500).json({
+          error: 'Failed to create VM on vSphere.',
+          details: details,
+        });
+      } finally {
+        if (vsphereClient) {
+          await vsphereClient.logout().catch(err => console.warn(`Error logging out vSphere client: ${err.message}`));
+        }
+      }
+    }
     // --- End Proxmox Logic ---
 
     // --- Insert VM record into the database ---
