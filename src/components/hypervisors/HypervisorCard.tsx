@@ -267,7 +267,7 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
                 <div className="flex items-center space-x-2">
                   <Servers className="h-3.5 w-3.5 flex-shrink-0" />
                   <span>
-                    Nodos: {nodes.length} ({nodes.filter(n => n.status === 'online').length} en línea)
+                  {hypervisor.type === 'vsphere' ? 'Hosts' : 'Nodos'}: {nodes.length} ({nodes.filter(n => n.status === 'online').length} en línea)
                   </span>
                 </div>
 
@@ -279,23 +279,37 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
                       {/* CPU */}
                       <div className="flex items-center space-x-2">
                         <Cpu className="h-3.5 w-3.5 flex-shrink-0" />
-                        <span>
-                          CPU: {stats.avgCpuUsage.toFixed(1)}% usada ({stats.totalCores} Núcleos)
-                        </span>
+                        {stats.totalCores > 0 ? (
+                          <span>
+                            CPU: {stats.avgCpuUsage.toFixed(1)}% usada ({stats.totalCores} Núcleos)
+                          </span>
+                        ) : (
+                          <span>CPU: Sin datos</span>
+                        )}
                       </div>
                       {/* Memory */}
                       <div className="flex items-center space-x-2">
                         <MemoryStick className="h-3.5 w-3.5 flex-shrink-0" />
-                        <span>
-                          Memoria: {formatBytes(stats.usedMemory)} / {formatBytes(stats.totalMemory)} usada
-                        </span>
+                        {stats.totalMemory > 0 ? (
+                          <span>
+                            Memoria: {formatBytes(stats.usedMemory)} / {formatBytes(stats.totalMemory)} usada
+                          </span>
+                        ) : (
+                          <span>Memoria: Sin datos</span>
+                        )}
                       </div>
                       {/* Disk */}
                       <div className="flex items-center space-x-2">
                         <Database className="h-3.5 w-3.5 flex-shrink-0" />
-                        <span title="Uso del disco raíz ('/') en nodos en línea"> {/* Add tooltip for clarity */}
-                          Disco: {formatBytes(stats.usedDisk)} / {formatBytes(stats.totalDisk)} usado ({storage?.length || 0} Pools)
-                        </span>
+                        {stats.totalDisk > 0 ? (
+                          <span title={hypervisor.type === 'vsphere' ? "Uso de datastores" : "Uso del disco raíz ('/') en nodos en línea"}>
+                            Disco: {formatBytes(stats.usedDisk)} / {formatBytes(stats.totalDisk)} usado
+                            {hypervisor.type === 'vsphere' && ` (${storage?.length || 0} Datastores)`}
+                            {hypervisor.type !== 'vsphere' && storage?.length > 0 && ` (${storage.length} Pools)`}
+                          </span>
+                        ) : (
+                          <span>Disco: Sin datos</span>
+                        )}
                       </div>
                     </>
                   );
@@ -304,9 +318,13 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
                 {/* Template Summary */}
                 <div className="flex items-center space-x-2">
                   <Layers className="h-3.5 w-3.5 flex-shrink-0" />
-                  <span>
-                    Plantillas/ISOs: {templates.length}
-                  </span>
+                  {templates.length > 0 ? (
+                    <span>
+                      Plantillas/ISOs: {templates.length}
+                    </span>
+                  ) : (
+                    <span>Plantillas/ISOs: Sin datos</span>
+                  )}
                 </div>
               </>
             )}

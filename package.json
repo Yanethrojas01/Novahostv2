@@ -9,15 +9,15 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "server": "node server/index.js",
-   "migrate:up": "node-pg-migrate -f node-pg-migrate.config.cjs up",
+    "migrate:up": "node-pg-migrate -f node-pg-migrate.config.cjs up",
     "migrate:down": "node-pg-migrate -f node-pg-migrate.config.cjs down",
     "migrate:create": "node-pg-migrate -f node-pg-migrate.config.cjs create"
-
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.7",
     "@tanstack/react-query": "^5.25.0",
     "@tanstack/react-table": "^8.13.2",
+    "@xmldom/xmldom": "^0.9.8",
     "axios": "^1.6.7",
     "clsx": "^2.1.0",
     "cors": "^2.8.5",
@@ -28,6 +28,7 @@
     "jsonwebtoken": "^9.0.2",
     "jwt-decode": "^4.0.0",
     "lucide-react": "^0.344.0",
+    "node-vsphere-soap": "^0.0.2-5",
     "pg": "^8.15.6",
     "proxmox-api": "^1.1.1",
     "react": "^18.3.1",
@@ -37,6 +38,7 @@
     "react-router-dom": "^6.22.2",
     "recharts": "^2.15.3",
     "tailwind-merge": "^2.2.1",
+    "xpath": "^0.0.34",
     "zod": "^3.22.4"
   },
   "devDependencies": {

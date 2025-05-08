@@ -231,7 +231,7 @@ export default function Hypervisors() {
               <input
                 type="text"
                 className="form-input"
-                placeholder={newHypervisor.type === 'proxmox' ? 'https://hostname.example.com:8006' : 'hostname.example.com'}
+                placeholder={newHypervisor.type === 'proxmox' ? 'https://hostname.example.com' : 'hostname.example.com'}
                 value={newHypervisor.host}
                 onChange={(e) => setNewHypervisor(prev => ({ ...prev, host: e.target.value }))}
               />
@@ -242,7 +242,7 @@ export default function Hypervisors() {
               <input
                 type="text"
                 className="form-input"
-                placeholder={newHypervisor.type === 'proxmox' ? 'root@pam' : 'administrator@vsphere.local'}
+                placeholder={newHypervisor.type === 'proxmox' ? 'root' : 'administrator@vsphere.local'}
                 value={newHypervisor.username}
                 onChange={(e) => setNewHypervisor(prev => ({ ...prev, username: e.target.value }))}
               />
