@@ -1021,7 +1021,7 @@ async function getVSphereClient(hypervisorId) {
       try {
         console.log(`Logging out vSphere session for ${username}`);
         await this.delete('/rest/com/vmware/cis/session');
-        console.log('vSphere logout successful');
+        //console.log('vSphere logout successful');
         return true;
       } catch (error) {
         console.warn(`Error during vSphere logout: ${error.message}`);
@@ -1091,13 +1091,12 @@ app.get('/api/hypervisors/:id/nodes', authenticate, async (req, res) => {
         const subtype = vsphereClient.vsphereSubtype;
         console.log(`Working with vSphere subtype: ${subtype}`);
 
-        if (subtype === 'esxi') {
-          // vCenter API handling
+        if (subtype === 'vcenter') { 
           try {
             // Get all hosts managed by vCenter
             const response = await vsphereClient.get('/rest/vcenter/host');
             const hosts = response.value || [];
-            console.log(`Found ${hosts.length} hosts in vCenter`);
+            console.log(`Found ${hosts.length} hosts in vCenter (Hypervisor ID: ${id})`);
 
             formattedNodes = await Promise.all(hosts.map(async (host) => {
               try {
@@ -1163,8 +1162,8 @@ app.get('/api/hypervisors/:id/nodes', authenticate, async (req, res) => {
             console.error(`Error in vCenter API calls:`, vcenterError.message);
             throw vcenterError;
           }
-        } else {
-          // ESXi direct API handling - ESXi has different endpoints
+        } else if (subtype === 'esxi') { // Corrected: Use ESXi logic if subtype is 'esxi'
+          // ESXi direct API handling
           try {
             console.log('Using ESXi direct API endpoints');
             
@@ -1259,6 +1258,9 @@ app.get('/api/hypervisors/:id/nodes', authenticate, async (req, res) => {
               throw esxiError; // Throw the original error
             }
           }
+        } else {
+          console.warn(`Unsupported or unknown vSphere subtype '${subtype}' for hypervisor ${id}. Cannot fetch nodes.`);
+          // formattedNodes will remain empty, leading to an empty JSON array response.
         }
 
         console.log(`Fetched ${formattedNodes.length} vSphere nodes for hypervisor ${id}`);
@@ -1870,7 +1872,7 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
               // Cerrar sesión si existe sessionId de REST API
               if (sessionId) {
                   try {
-                      console.log(`Logging out vSphere REST API session ${sessionId.substring(0, 10)}...`);
+                      //console.log(`Logging out vSphere REST API session ${sessionId.substring(0, 10)}...`);
                       await fetch(`${vsphereApiUrl}/rest/com/vmware/cis/session`, {
                           method: 'DELETE',
                           headers: { 'vmware-api-session-id': sessionId },
