@@ -642,22 +642,18 @@ app.post('/api/vms/:id/action', authenticate, async (req, res) => { // Make it a
     return res.status(400).json({ error: 'Invalid action specified.' });
   }
 
-  try {
-    // --- Step 1: Find the VM's Hypervisor and Node ---
-    // This is the complex part. We need to know which hypervisor and node hosts the VM.
-    // Option A: Query all connected hypervisors (inefficient but works for now)
-    // Option B: Frontend sends hypervisorId/nodeName in request body (better)
-    // Option C: Have a persistent mapping of vmId -> hypervisorId/nodeName (best)
+  let targetHypervisor = null;
+  let targetNode = null; // For Proxmox
+  let proxmoxClientInstance = null; // For Proxmox client
+  let vsphereClientInstance = null; // For vSphere client
+  let foundVmPayload = null; // Store Proxmox resource or vSphere VM summary
 
-    // Let's try Option A for demonstration:
+  try {
+    // --- Step 1: Find the VM's Hypervisor ---
     const { rows: connectedHypervisors } = await pool.query(
-      `SELECT id, type, host, username, api_token, token_name
+      `SELECT id, type, host, username, api_token, token_name, name, vsphere_subtype
        FROM hypervisors WHERE status = 'connected'`
     );
-
-    let targetHypervisor = null;
-    let targetNode = null;
-    let proxmoxClient = null;
 
     for (const hypervisor of connectedHypervisors) {
       if (hypervisor.type === 'proxmox') {
@@ -670,73 +666,157 @@ app.post('/api/vms/:id/action', authenticate, async (req, res) => { // Make it a
           tokenID: `${hypervisor.username}!${hypervisor.token_name}`,
           tokenSecret: hypervisor.api_token, timeout: 10000, rejectUnauthorized: false
         };
-        const proxmox = proxmoxApi(proxmoxConfig);
+        const currentProxmoxClient = proxmoxApi(proxmoxConfig);
 
         try {
-          // Use /cluster/resources to find the VM and its node
-          const vmResources = await proxmox.cluster.resources.$get({ type: 'vm' });
+          const vmResources = await currentProxmoxClient.cluster.resources.$get({ type: 'vm' });
           const foundVm = vmResources.find(vm => vm.vmid.toString() === vmId);
 
           if (foundVm) {
             targetHypervisor = hypervisor;
             targetNode = foundVm.node;
-            proxmoxClient = proxmox;
-            console.log(`Found VM ${vmId} on node ${targetNode} of hypervisor ${hypervisor.id}`);
-            break; // Stop searching once found
+            foundVmPayload = foundVm; // Proxmox resource info
+            proxmoxClientInstance = currentProxmoxClient;
+            console.log(`Found Proxmox VM ${vmId} on node ${targetNode} of hypervisor ${hypervisor.id} for action`);
+            break;
           }
         } catch (findError) {
-          console.warn(`Could not check hypervisor ${hypervisor.id} for VM ${vmId}:`, findError.message);
-          // Continue to the next hypervisor
+          console.warn(`Could not check Proxmox hypervisor ${hypervisor.id} for VM ${vmId} action:`, findError.message);
+        }
+      } else if (hypervisor.type === 'vsphere') {
+        let tempVsphereClient;
+        try {
+          tempVsphereClient = await getVSphereClient(hypervisor.id);
+          // Check if VM exists by trying to get basic info.
+          // vmId for vSphere is like "vm-123"
+          const vmDataResponse = await tempVsphereClient.get(`/rest/vcenter/vm/${vmId}`);
+          const vmData = vmDataResponse.value || vmDataResponse;
+
+          if (vmData && (vmData.vm === vmId || (typeof vmData === 'object' && vmData.name))) {
+            targetHypervisor = hypervisor;
+            foundVmPayload = vmData; // vSphere VM summary
+            vsphereClientInstance = tempVsphereClient;
+            tempVsphereClient = null; // Prevent logout in this iteration's finally
+            console.log(`Found vSphere VM ${vmId} on hypervisor ${hypervisor.id} (${hypervisor.name}) for action`);
+            break;
+          }
+        } catch (vsphereFindError) {
+          if (vsphereFindError.message && !vsphereFindError.message.includes('404') &&
+              !(vsphereFindError.response && vsphereFindError.response.status === 404)) {
+            console.warn(`Error checking vSphere hypervisor ${hypervisor.id} for VM ${vmId} action:`, vsphereFindError.message);
+          }
+        } finally {
+          if (tempVsphereClient) {
+            await tempVsphereClient.logout().catch(e => console.warn(`Logout error during vSphere VM action search for ${hypervisor.id}: ${e.message}`));
+          }
         }
       }
-      // TODO: Add vSphere logic here if needed
     }
 
-    if (!targetHypervisor || !targetNode || !proxmoxClient) {
-      return res.status(404).json({ error: `VM ${vmId} not found on any connected Proxmox hypervisor.` });
+    if (!targetHypervisor || !foundVmPayload) {
+      if (vsphereClientInstance) await vsphereClientInstance.logout().catch(e => console.warn(`Logout error (VM not found for action): ${e.message}`));
+      return res.status(404).json({ error: `VM ${vmId} not found on any connected hypervisor.` });
     }
 
     // --- Step 2: Perform the action ---
-    let result;
-    const vmPath = proxmoxClient.nodes.$(targetNode).qemu.$(vmId).status;
+    let resultMessage = `Action '${action}' initiated for VM ${vmId}.`;
+    let taskId = null; // Proxmox returns task IDs, vSphere power ops are often immediate
 
-    console.log(`Performing action '${action}' on VM ${vmId} at ${targetNode}...`);
+    if (targetHypervisor.type === 'proxmox') {
+      const vmPath = proxmoxClientInstance.nodes.$(targetNode).qemu.$(vmId).status;
+      console.log(`Performing Proxmox action '${action}' on VM ${vmId} at ${targetNode}...`);
+      let proxmoxResult;
+      switch (action) {
+        case 'start':
+          proxmoxResult = await vmPath.start.$post();
+          break;
+        case 'stop':
+          proxmoxResult = await vmPath.stop.$post();
+          break;
+        case 'restart':
+          proxmoxResult = await vmPath.reboot.$post(); // Proxmox uses 'reboot'
+          break;
+        default:
+          throw new Error('Invalid action'); // Should be caught by initial validation
+      }
+      taskId = proxmoxResult; // Proxmox usually returns a task ID
+      resultMessage = `Proxmox action '${action}' initiated for VM ${vmId}. Task ID: ${taskId}`;
+      console.log(`Proxmox action '${action}' result for VM ${vmId}:`, taskId);
 
-    switch (action) {
-      case 'start':
-        result = await vmPath.start.$post();
-        break;
-      case 'stop':
-        result = await vmPath.stop.$post();
-        break;
-      case 'restart':
-        // Proxmox often uses 'reboot' for restart
-        result = await vmPath.reboot.$post();
-        break;
-      default:
-        throw new Error('Invalid action'); // Should be caught earlier
+    } else if (targetHypervisor.type === 'vsphere') {
+      console.log(`Performing vSphere action '${action}' on VM ${vmId}...`);
+      const vmPowerPath = `/rest/vcenter/vm/${vmId}/power`;
+      try {
+        switch (action) {
+          case 'start':
+            await vsphereClientInstance.post(`${vmPowerPath}/start`);
+            resultMessage = `vSphere VM ${vmId} start action initiated.`;
+            break;
+          case 'stop':
+            await vsphereClientInstance.post(`${vmPowerPath}/stop`);
+            resultMessage = `vSphere VM ${vmId} stop action initiated.`;
+            break;
+          case 'restart':
+            // vSphere 6.7 REST API has 'reset' which is a hard reset.
+            // A graceful restart would be stop then start. For simplicity, using reset.
+            await vsphereClientInstance.post(`${vmPowerPath}/reset`);
+            resultMessage = `vSphere VM ${vmId} reset action (restart) initiated.`;
+            break;
+          default:
+            throw new Error('Invalid action');
+        }
+        // vSphere power operations usually return 204 No Content or similar on success,
+        // not a task ID in the response body for these simple power ops.
+        console.log(`vSphere action '${action}' for VM ${vmId} completed successfully.`);
+      } catch (vsphereActionError) {
+        console.error(`vSphere action '${action}' failed for VM ${vmId}:`, vsphereActionError);
+        let errorDetails = vsphereActionError.message;
+        if (vsphereActionError.response) {
+            try { errorDetails = JSON.stringify(await vsphereActionError.response.json()); } catch (e) { /* ignore */ }
+        }
+        throw new Error(`vSphere action '${action}' failed: ${errorDetails}`);
+      }
     }
-
-    console.log(`Action '${action}' result for VM ${vmId}:`, result); // result is often the task ID
 
     // Respond optimistically
     res.json({
       id: vmId,
       status: 'pending', // Indicate the action is initiated
-      message: `Action '${action}' initiated for VM ${vmId}. Task ID: ${result}`,
-      taskId: result // Send back the Proxmox task ID
+      message: resultMessage,
+      taskId: taskId // Will be null for vSphere in this implementation
     });
 
   } catch (error) {
     console.error(`Error performing action '${action}' on VM ${vmId}:`, error);
-    const errorDetails = getProxmoxError(error); // Use existing error handler
+    let errorDetails;
+    if (targetHypervisor?.type === 'proxmox' || proxmoxClientInstance) {
+        errorDetails = getProxmoxError(error);
+    } else if (targetHypervisor?.type === 'vsphere' || vsphereClientInstance) {
+        errorDetails = { code: 500, message: error.message || `Failed to perform vSphere action '${action}' on VM ${vmId}` };
+        if (error.response && error.response.status) {
+            errorDetails.code = error.response.status;
+            try {
+                const errBody = await error.response.text();
+                errorDetails.message = `${error.message} - ${errBody.substring(0,200)}`;
+            } catch (e) { /* ignore */ }
+        }
+    } else {
+        errorDetails = { code: 500, message: error.message || `Failed to perform action '${action}' on VM ${vmId}` };
+    }
+
     res.status(errorDetails.code || 500).json({
       error: `Failed to perform action '${action}' on VM ${vmId}.`,
       details: errorDetails.message,
       suggestion: errorDetails.suggestion
     });
+  } finally {
+    if (vsphereClientInstance) {
+      await vsphereClientInstance.logout().catch(e => console.warn(`Final logout error for vSphere client (action, hypervisor ${targetHypervisor?.id}): ${e.message}`));
+    }
+    // proxmoxClientInstance does not require explicit logout
   }
 });
+
 
 // --- VM Listing API ---
 
@@ -3011,102 +3091,161 @@ app.delete('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) 
 app.post('/api/hypervisors/:id/connect', authenticate, requireAdmin, async (req, res) => { // Added requireAdmin
   const { id } = req.params;
   console.log(`POST /api/hypervisors/${id}/connect called`);
+  let vsphereClient = null; // Define here for access in finally block
+
   try {
     const { rows: [hypervisor] } = await pool.query(
-      `SELECT id, type, host, username, api_token, token_name
+      `SELECT id, type, host, username, api_token, token_name, vsphere_subtype
        FROM hypervisors WHERE id = $1`,
       [id]
     );
 
     if (!hypervisor) return res.status(404).json({ error: 'Hypervisor not found' });
 
-    let newStatus = 'error';
+    let newStatus = 'error'; // Default to error
     let lastSync = null;
-
+    let connectionMessage = `Connection attempt for hypervisor ${id} (${hypervisor.type}).`;
 
     if (hypervisor.type === 'proxmox') {
       // Parsear host y puerto desde la base de datos (asumiendo formato hostname:port)
       const [dbHost, dbPortStr] = hypervisor.host.split(':');
       const port = dbPortStr ? parseInt(dbPortStr, 10) : 8006; // Default a 8006 si no hay puerto
       const cleanHost = dbHost;
-      console.log(`Attempting Proxmox connection to: ${cleanHost}:${port} (from DB value: ${hypervisor.host})`); // Add this log
+      console.log(`Attempting Proxmox connection to: ${cleanHost}:${port} (from DB value: ${hypervisor.host})`);
 
-      // Configuración del cliente Proxmox (similar a la ruta de creación)
       const proxmoxConfig = {
         host: cleanHost,
         port: port,
-        username: hypervisor.username, // Necesario para el tokenID
+        username: hypervisor.username,
         tokenID: `${hypervisor.username}!${hypervisor.token_name}`,
         tokenSecret: hypervisor.api_token,
         timeout: 15000,
-        rejectUnauthorized: false // Mantener consistencia con la ruta de creación
+        rejectUnauthorized: false
       };
 
-      // Crear cliente Proxmox usando proxmoxApi
       const proxmox = proxmoxApi(proxmoxConfig);
 
-      // Verificar versión y permisos
       const versionResponse = await proxmox.version.$get();
-      const pveVersion = versionResponse?.version; // Acceso directo basado en hallazgos anteriores
+      const pveVersion = versionResponse?.version;
       console.log('Proxmox Version Check:', pveVersion);
       if (!pveVersion) {
         throw new Error('Failed to retrieve Proxmox version during connection test.');
       }
 
-      // Verificar permisos del token
-      // URL-encode username y token name para la ruta de la API
-      const encodedUsername = encodeURIComponent(hypervisor.username);
-
-      const encodedTokenName = encodeURIComponent(hypervisor.token_name);
-
-      console.log('Attempting to get token info...'); // Log antes de la llamada
-
-      // Corrección: Usar /access/permissions para obtener los permisos del token actual
-      // Esto evita necesitar permisos específicos sobre el usuario/token y solo requiere
-      // que el token sea válido para consultar sus propios permisos.
       const permissionsInfo = await proxmox.access.permissions.$get();
-      console.log('Successfully got permissions info:', permissionsInfo); // Log para verificar estructura
+      console.log('Successfully got permissions info for Proxmox');
 
-      // Ajustar la verificación de privilegios según la estructura real de tokenInfo
-      // La respuesta de /access/permissions es un objeto donde las claves son rutas
-      // y los valores son arrays de privilegios. Necesitamos verificar si 'VM.Allocate'
-      // existe como *clave* en alguno de los objetos de permisos asociados a las rutas.
       const hasRequiredPrivilege = Object.values(permissionsInfo || {}).some(
-          // Corrección: Verificar si el objeto de permisos tiene la clave 'VM.Allocate'
           (privsObject) => typeof privsObject === 'object' && privsObject !== null && privsObject.hasOwnProperty('VM.Allocate')
       );
-console.log('Has VM.Allocate privilege:', hasRequiredPrivilege); // Log para verificar privilegios
+      console.log('Has VM.Allocate privilege (Proxmox):', hasRequiredPrivilege);
       if (!hasRequiredPrivilege) {
-        console.warn('Permissions structure:', permissionsInfo); // Log si la estructura es inesperada o falta el permiso
+        console.warn('Permissions structure (Proxmox):', permissionsInfo);
         throw new Error('Token lacks required VM.Allocate privilege or privileges could not be verified.');
       }
 
       newStatus = 'connected';
       lastSync = new Date();
-      console.log(`Successfully connected and verified permissions for ${hypervisor.username} on ${cleanHost}:${port}`);
+      connectionMessage = `Successfully connected and verified permissions for Proxmox user ${hypervisor.username} on ${cleanHost}:${port}`;
+      console.log(connectionMessage);
+
+    } else if (hypervisor.type === 'vsphere') {
+      console.log(`Attempting vSphere connection for hypervisor ${id} (${hypervisor.host})`);
+      try {
+        vsphereClient = await getVSphereClient(hypervisor.id); // getVSphereClient handles auth
+        // If getVSphereClient resolves, authentication was successful.
+        // We can also check the subtype determined by getVSphereClient if needed.
+        console.log(`Successfully obtained vSphere client. Subtype: ${vsphereClient.vsphereSubtype}`);
+
+        // Optionally, perform a simple read operation to further confirm connectivity,
+        // e.g., fetching datacenter list or host info, though getVSphereClient already does a session POST.
+        // For simplicity, if getVSphereClient doesn't throw, we consider it connected.
+        // Example: await vsphereClient.get('/rest/vcenter/datacenter'); // This would throw on error
+
+        newStatus = 'connected';
+        lastSync = new Date();
+        connectionMessage = `Successfully connected to vSphere hypervisor ${hypervisor.name} (${hypervisor.id}). Subtype: ${vsphereClient.vsphereSubtype}.`;
+        console.log(connectionMessage);
+      } catch (vsphereConnectError) {
+        console.error(`vSphere connection failed for hypervisor ${id}:`, vsphereConnectError.message);
+        // newStatus remains 'error'
+        connectionMessage = `vSphere connection failed for ${hypervisor.name} (${id}): ${vsphereConnectError.message}`;
+        throw vsphereConnectError; // Re-throw to be caught by the outer catch block
+      }
+    } else {
+      connectionMessage = `Unsupported hypervisor type: ${hypervisor.type}`;
+      console.warn(connectionMessage);
+      // newStatus remains 'error'
     }
 
-    // Actualizar estado
+    // Update status in DB
     const { rows: [updatedHypervisor] } = await pool.query(
       `UPDATE hypervisors
        SET status = $1, last_sync = $2, updated_at = NOW()
-       WHERE id = $3 RETURNING *`,
+       WHERE id = $3 RETURNING id, name, status, last_sync`,
       [newStatus, lastSync, id]
     );
 
-    res.json({ status: newStatus, lastSync });
-    console.log(`Updated hypervisor ${id} status to ${newStatus}`);
+    res.json({
+      id: updatedHypervisor.id,
+      name: updatedHypervisor.name,
+      status: updatedHypervisor.status,
+      lastSync: updatedHypervisor.lastSync,
+      message: connectionMessage
+    });
+    console.log(`Updated hypervisor ${id} status to ${newStatus}.`);
 
   } catch (err) {
-    const errorDetails = getProxmoxError(err);
+    // Determine error details based on hypervisor type if possible
+    const { rows: [hypervisorAttempted] } = await pool.query('SELECT type FROM hypervisors WHERE id = $1', [id]);
+    let errorDetails;
+
+    if (hypervisorAttempted && hypervisorAttempted.type === 'proxmox') {
+      errorDetails = getProxmoxError(err);
+    } else if (hypervisorAttempted && hypervisorAttempted.type === 'vsphere') {
+      errorDetails = {
+        code: 500, // Default
+        message: err.message || 'vSphere connection error.',
+        suggestion: 'Check vSphere host, credentials, and network connectivity. Ensure the vSphere API is accessible.'
+      };
+      if (err.response && err.response.status) { // If it's a fetch-like error from getVSphereClient
+        errorDetails.code = err.response.status;
+        try {
+          const errBodyText = await err.response.text();
+          errorDetails.message = `${err.message} - Details: ${errBodyText.substring(0, 250)}`;
+        } catch (e) { /* ignore text parsing error */ }
+      } else if (err.message && err.message.toLowerCase().includes('authentication failed')) {
+        errorDetails.code = 401;
+      }
+    } else {
+      errorDetails = {
+        code: 500,
+        message: err.message || 'An unknown error occurred during connection.',
+        suggestion: 'Review server logs for more details.'
+      };
+    }
+
     console.error(`Connection attempt failed for hypervisor ${id}: ${errorDetails.message}`, { stack: err.stack });
-    res.status(500).json({
+    // Ensure status is updated to 'error' in DB if an error occurs after initial fetch
+    await pool.query(
+      `UPDATE hypervisors SET status = 'error', last_sync = NULL, updated_at = NOW() WHERE id = $1`,
+      [id]
+    ).catch(dbUpdateError => console.error(`Failed to update hypervisor ${id} status to 'error' in DB:`, dbUpdateError));
+
+    res.status(errorDetails.code || 500).json({
       error: errorDetails.message,
       code: errorDetails.code,
       suggestion: errorDetails.suggestion
     });
+  } finally {
+    if (vsphereClient) {
+      await vsphereClient.logout().catch(logoutErr => {
+        console.warn(`Error logging out vSphere client for hypervisor ${id} during connect attempt: ${logoutErr.message}`);
+      });
+    }
   }
 });
+
 
 // --- VM Plan CRUD API Routes ---
 
