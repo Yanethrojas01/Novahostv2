@@ -96,3 +96,10 @@
   opacity: 0;
   transition: opacity 200ms;
 }
+:root {
+  --color-orange-500: #F97316; /* Naranja de Tailwind */
+  --color-blue-500: #3B82F6;   /* Azul de Tailwind */
+  --color-green-500: #22C55E;  /* Verde de Tailwind */
+  --color-purple-500: #8B5CF6; /* Morado de Tailwind */
+  /* ... otros colores primarios y secundarios ... */
+}

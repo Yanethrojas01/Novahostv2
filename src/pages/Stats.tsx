@@ -230,8 +230,8 @@ export default function StatsPage() {
                   />
                   <Legend />
                   {/* <Bar dataKey="total" fill="var(--color-primary-500)" name="Total VMs" /> */}
-                  <Bar dataKey="proxmox" stackId="a" fill="var(--color-orange-500)" name="Proxmox" />
-                  <Bar dataKey="vsphere" stackId="a" fill="var(--color-blue-500)" name="vSphere" />
+                  <Bar dataKey="proxmox" stackId="a" fill="var(--color-orange-500)" name="Proxmox" /> {/* Ejemplo: Verde para Proxmox */}
+                  <Bar dataKey="vsphere" stackId="a" fill="var(--color-blue-500)" name="vSphere" /> {/* Ejemplo: Morado para vSphere */}
                 </BarChart>
               </ResponsiveContainer>
             </div>
