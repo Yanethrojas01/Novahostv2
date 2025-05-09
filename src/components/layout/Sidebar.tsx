@@ -18,16 +18,21 @@ export default function Sidebar({ mobile = false, onClose }: SidebarProps) {
     { name: 'Dashboard', href: '/', icon: Home },
     { name: 'Hypervisores', href: '/hypervisors', icon: Cloud },
     { name: 'Estadisticas', href: '/stats', icon: BarChart3 },
-    { name: 'Configuración', href: '/settings', icon: Cog },
+    // { name: 'Configuración', href: '/settings', icon: Cog }, // Moved to conditional logic
   ];
 
   // Conditionally add "Crear VM" based on user role
-  const navigation = [...baseNavigation];
+  let navigation = [...baseNavigation];
   if (user?.role === 'admin' || user?.role === 'user') {
     // Insert "Crear VM" after "Dashboard"
     navigation.splice(1, 0, { name: 'Crear VM', href: '/create-vm', icon: Plus });
+    // Add "Configuración" for admin and user roles
+    navigation.push({ name: 'Configuración', href: '/settings', icon: Cog });
+  } else if (user?.role === 'admin') { // Only admin can see settings if not user (though above covers it)
+    // This specific else if might be redundant if admin is already covered by the first if.
+    // However, if you wanted different items for admin vs user, this structure helps.
+    navigation.push({ name: 'Configuración', href: '/settings', icon: Cog });
   }
-
   return (
     <div className="flex flex-col h-full border-r border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
       {mobile && (

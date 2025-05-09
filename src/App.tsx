@@ -74,8 +74,13 @@ function App() {
           <Route
             path="/settings"
             element={
-              <ProtectedRoute>
-                <Settings />
+              <ProtectedRoute> {/* Ensures user is authenticated */}
+                {/* Additional check for role */}
+                {(user?.role === 'admin' || user?.role === 'user') ? (
+                  <Settings />
+                ) : (
+                  <Navigate to="/" replace /> // Redirect viewers or other non-permitted roles
+                )}
               </ProtectedRoute>
             }
           />
