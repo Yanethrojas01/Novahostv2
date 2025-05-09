@@ -648,6 +648,23 @@ app.post('/api/vms/:id/action', authenticate, async (req, res) => {
   }
 });
 
+// Helper function to extract IP addresses from Proxmox QEMU agent response
+function extractIpAddressesFromAgent(agentInterfaces) {
+  const ips = [];
+  if (Array.isArray(agentInterfaces)) {
+    for (const iface of agentInterfaces) {
+      if (iface.name === 'lo' || !iface['ip-addresses']) continue; // Skip loopback or interfaces without IPs
+      for (const ipAddr of iface['ip-addresses']) {
+        // Prefer IPv4, non-link-local
+        if (ipAddr['ip-address-type'] === 'ipv4' && ipAddr['ip-address'] && !ipAddr['ip-address'].startsWith('169.254.')) {
+          ips.push(ipAddr['ip-address']);
+        }
+        // Optionally, add IPv6 later if needed: else if (ipAddr['ip-address-type'] === 'ipv6' && ipAddr['ip-address'] && !ipAddr['ip-address'].startsWith('fe80:'))
+      }
+    }
+  }
+  return ips;
+}
 
 // GET /api/vms - List VMs from all connected hypervisors
 app.get('/api/vms', authenticate, async (req, res) => {
@@ -675,16 +692,32 @@ app.get('/api/vms', authenticate, async (req, res) => {
             tokenSecret: hypervisor.api_token, timeout: 10000, rejectUnauthorized: false
           };
           const proxmox = proxmoxApi(proxmoxConfig);
-          const vmResources = await proxmox.cluster.resources.$get({ type: 'vm' });
-          const proxmoxVms = vmResources.map((vm) => ({
-            id: vm.vmid.toString(), name: vm.name, status: vm.status, nodeName: vm.node,
-            specs: {
-              cpu: vm.maxcpu, memory: Math.round(vm.maxmem / (1024 * 1024)),
-              disk: Math.round(vm.maxdisk / (1024 * 1024 * 1024)),
-            },
-            hypervisorType: 'proxmox', hypervisorId: hypervisor.id, createdAt: new Date(),
-          }));
-          allVms = allVms.concat(proxmoxVms);
+          const vmResources = await proxmox.cluster.resources.$get({ type: 'vm' }).catch(e => {
+            console.error(`Error fetching Proxmox VM resources for ${hypervisor.host}: ${e.message}`);
+            return [];
+          });
+
+          for (const vm of vmResources) {
+            let ipAddress = null;
+            if (vm.status === 'running' && vm.agent === 1) { // Check if agent is enabled and VM is running
+              try {
+                const agentNetInfo = await proxmox.nodes.$(vm.node).qemu.$(vm.vmid).agent('network-get-interfaces').$get({timeout: 2000});
+                const ips = extractIpAddressesFromAgent(agentNetInfo?.result);
+                if (ips.length > 0) ipAddress = ips[0];
+              } catch (agentError) {
+                // console.warn(`Could not get IP for Proxmox VM ${vm.vmid} via agent: ${agentError.message}`);
+              }
+            }
+            allVms.push({
+              id: vm.vmid.toString(), name: vm.name, status: vm.status, nodeName: vm.node,
+              specs: {
+                cpu: vm.maxcpu, memory: Math.round(vm.maxmem / (1024 * 1024)),
+                disk: Math.round(vm.maxdisk / (1024 * 1024 * 1024)),
+              },
+              hypervisorType: 'proxmox', hypervisorId: hypervisor.id, createdAt: new Date(vm.uptime ? Date.now() - (vm.uptime * 1000) : Date.now()), // Approximate createdAt from uptime
+              ipAddress: ipAddress,
+            });
+          }
         } else if (hypervisor.type === 'vsphere') {
           console.log(`Fetching VMs from vSphere hypervisor ${hypervisor.id} via PyVmomi microservice`);
           try {
@@ -790,10 +823,25 @@ app.get('/api/vms/:id', authenticate, async (req, res) => {
     // --- Step 2: Get VM Config and Current Status ---
     let vmDetails;
 
+
     if (targetHypervisor.type === 'proxmox') {
       // ... (Proxmox VM details logic - Mantenida como estaba)
       const vmConfig = await proxmoxClientInstance.nodes.$(targetNode).qemu.$(vmExternalId).config.$get();
       const vmStatus = await proxmoxClientInstance.nodes.$(targetNode).qemu.$(vmExternalId).status.current.$get();
+      
+      let ipAddress = null;
+      let ipAddresses = [];
+      if (vmStatus.status === 'running' && vmStatus.agent === 1) { // Check if agent is enabled and VM is running
+        try {
+          const agentNetInfo = await proxmoxClientInstance.nodes.$(targetNode).qemu.$(vmExternalId).agent('network-get-interfaces').$get({timeout: 3000});
+          ipAddresses = extractIpAddressesFromAgent(agentNetInfo?.result);
+          if (ipAddresses.length > 0) ipAddress = ipAddresses[0];
+        } catch (agentError) {
+          console.warn(`Could not get IP for Proxmox VM ${vmExternalId} details via agent: ${agentError.message}`);
+        }
+      }
+
+
       vmDetails = {
         id: vmExternalId, name: vmConfig.name, description: vmConfig.description || '',
         hypervisorId: targetHypervisor.id, hypervisorType: 'proxmox', nodeName: targetNode,
@@ -806,6 +854,8 @@ app.get('/api/vms/:id', authenticate, async (req, res) => {
         },
         createdAt: new Date(vmStatus.uptime ? Date.now() - (vmStatus.uptime * 1000) : Date.now()),
         tags: vmConfig.tags ? vmConfig.tags.split(';') : [],
+        ipAddress: ipAddress,
+        ipAddresses: ipAddresses,
       };
     } else if (targetHypervisor.type === 'vsphere') {
       console.log(`Fetching details for vSphere VM ${vmExternalId} via PyVmomi microservice`);
@@ -815,6 +865,10 @@ app.get('/api/vms/:id', authenticate, async (req, res) => {
       try {
         const pyvmomiVmDetails = await callPyvmomiService('GET', `/vm/${vmExternalId}/details`, targetHypervisor);
         // Map pyvmomiVmDetails to the structure expected by the frontend
+        const vsphereIps = [];
+        if (pyvmomiVmDetails.ip_address) { // Assuming ip_address is the primary one
+            vsphereIps.push(pyvmomiVmDetails.ip_address);
+        }
         vmDetails = {
           id: pyvmomiVmDetails.uuid,
           name: pyvmomiVmDetails.name,
@@ -831,6 +885,8 @@ app.get('/api/vms/:id', authenticate, async (req, res) => {
           },
           createdAt: pyvmomiVmDetails.boot_time ? new Date(pyvmomiVmDetails.boot_time) : new Date(), // Placeholder
           tags: [], // TODO: PYVMOMI: Add tags if available
+          ipAddress: pyvmomiVmDetails.ip_address || null,
+          ipAddresses: vsphereIps, // Or a more detailed list if app.py provides it
           // You might want to add more fields like ip_address, vmware_tools_status, nics, etc.
         };
       } catch (pyVmomiError) {
