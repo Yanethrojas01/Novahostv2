@@ -1,4 +1,4 @@
-import { ChevronRight, HardDrive, Monitor, Power, SquareSlash, Zap, Ticket, User, Calendar } from 'lucide-react'; // Added Ticket, User, Calendar
+import { ChevronRight, HardDrive, Monitor, Power, SquareSlash, Zap, Ticket, User, Calendar, ShieldCheck, ShieldAlert, Server, Network } from 'lucide-react'; // Added Network for IP
 import { VM } from '../../types/vm';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
@@ -40,7 +40,7 @@ export default function VirtualMachineCard({ vm, onAction }: VirtualMachineCardP
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center space-x-2">
             <div className={`h-3 w-3 rounded-full ${getStatusColor(vm.status)}`}></div>
-            <h3 className="font-medium text-lg text-slate-900 dark:text-white">{vm.name}</h3>
+            <h3 className="font-medium text-lg text-slate-900 dark:text-white truncate" title={vm.name}>{vm.name}</h3>
           </div>
           <div className="text-xs bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded">
             {vm.hypervisorType === 'proxmox' ? 'Proxmox' : 'vSphere'}
@@ -67,7 +67,32 @@ export default function VirtualMachineCard({ vm, onAction }: VirtualMachineCardP
             <span className="text-sm text-slate-600 dark:text-slate-300">
               {vm.specs.disk} GB
             </span>
-          </div>
+            </div>
+          {/* Hostname (vSphere) */}
+          {vm.hypervisorType === 'vsphere' && vm.hostname && (
+            <div className="flex items-center space-x-2">
+              <Server className="h-4 w-4 text-slate-400" /> {/* Usando Server como icono para hostname */}
+              <span className="text-sm text-slate-600 dark:text-slate-300 truncate" title={vm.hostname}>
+                {vm.hostname}
+              </span>
+            </div>
+          )}
+          {/* VMware Tools (vSphere) - se muestra en la misma línea si hay espacio o debajo */}
+          {vm.hypervisorType === 'vsphere' && vm.vmwareToolsStatus && (
+            <div className={`flex items-center space-x-1 ${!vm.hostname ? 'col-span-2' : ''}`} title={`VMware Tools: ${vm.vmwareToolsStatus}`}>
+              {vm.vmwareToolsStatus === 'toolsOk' || vm.vmwareToolsStatus === 'toolsRunning' ? <ShieldCheck className="h-4 w-4 text-success-500" /> : <ShieldAlert className="h-4 w-4 text-warning-500" />}
+              <span className="text-xs text-slate-500 dark:text-slate-400">{vm.vmwareToolsStatus.replace('tools', '')}</span>
+            </div>
+          )}
+          {/* IP Address (Primary) */}
+          {vm.ipAddress && (
+            <div className="flex items-center space-x-2">
+              <Network className="h-4 w-4 text-slate-400" />
+              <span className="text-sm text-slate-600 dark:text-slate-300 truncate" title={vm.ipAddress}>
+                {vm.ipAddress}
+              </span>
+            </div>
+          )}
           {/* Moved Created Date here */}
           <div className="flex items-center space-x-2">
             <Calendar className="h-4 w-4 text-slate-400" />
@@ -103,10 +128,10 @@ export default function VirtualMachineCard({ vm, onAction }: VirtualMachineCardP
           </div>
         )}
         
-        {vm.ipAddresses && vm.ipAddresses.length > 0 && (
+        {vm.ipAddresses && vm.ipAddresses.length > 1 && ( // Show this section only if there are multiple IPs beyond the primary one
           <div className="mb-3">
-            <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">IP Addresses</p>
-            <div className="flex flex-wrap gap-1">
+            <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Otras IPs:</p>
+            <div className="flex flex-wrap gap-1 text-xs">
               {vm.ipAddresses.map((ip, i) => (
                 <span key={i} className="inline-block bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-200 rounded px-2 py-1 text-xs">
                   {ip}

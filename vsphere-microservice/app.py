@@ -20,39 +20,51 @@ def list_vms():
     host = request.args.get('host')
     user = request.args.get('user')
     password = request.args.get('password')
+    port = int(request.args.get('port', 443)) # Consistent port handling
 
     if not host or not user or not password:
         return jsonify({'error': 'Missing connection parameters'}), 400
 
+    si = None # Define si here for the finally block
     try:
-        # Note: For a long-running app, consider if si should be disconnected in a finally block here too
-        si = connect_vsphere(host, user, password)
+        si = connect_vsphere(host, user, password, port) # Pass port
         content = si.RetrieveContent()
         container = content.rootFolder
         viewType = [vim.VirtualMachine]
         recursive = True
         containerView = content.viewManager.CreateContainerView(container, viewType, recursive)
-        vms = containerView.view
-        app.logger.info(f"Listing VMs: Found {len(vms)} total VM objects in view.")
+        vms_objects = containerView.view # Renamed to avoid confusion with 'vms' module/package
+        app.logger.info(f"Listing VMs: Found {len(vms_objects)} total VM objects in view.")
         vm_list = []
-        for vm_obj in vms: # Renamed to vm_obj to avoid conflict
+        for vm_obj in vms_objects:
             summary = vm_obj.summary
-            app.logger.info(f"Listing VM: Name='{summary.config.name}', UUID='{summary.config.uuid}'") # Log UUID
+            # Ensure guest property exists before trying to access ipAddress
+            guest_ip = summary.guest.ipAddress if hasattr(summary, 'guest') and summary.guest else None
+            
+            app.logger.info(f"Listing VM: Name='{summary.config.name}', UUID='{summary.config.uuid}'")
             vm_info = {
                 'name': summary.config.name,
                 'power_state': summary.runtime.powerState,
                 'guest_os': summary.config.guestFullName,
-                'ip_address': summary.guest.ipAddress,
+                'ip_address': guest_ip,
                 'uuid': summary.config.uuid
+                # Note: This version does not include cpu_count, memory_mb, disk_gb, hostname, vmware_tools_status
+                # which were discussed for VirtualMachineCard.tsx.
+                # If those are needed for the card directly from this list endpoint,
+                # they would need to be added here similar to how they are in the /details endpoint.
             }
             vm_list.append(vm_info)
         containerView.Destroy() # Important to destroy views
         return jsonify(vm_list)
+    except vim.fault.InvalidLogin:
+        app.logger.error(f"Listing VMs: vSphere login failed for user {user} on host {host}")
+        return jsonify({'error': 'vSphere login failed. Check credentials.'}), 401
     except Exception as e:
+        app.logger.error(f"Listing VMs: Error for host {host}: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
-    # finally:
-    #     if si:
-    #         disconnect_vsphere(si) # Add if you want to ensure disconnection for this route
+    finally:
+        if si:
+            disconnect_vsphere(si)
 
 @app.route('/vm/<vm_uuid>/power', methods=['POST'])
 def power_vm(vm_uuid):
@@ -217,13 +229,15 @@ def vm_details(vm_uuid): # El parámetro de la función ahora coincide con la va
 
 
 @app.route('/vm/<string:vm_uuid>/metrics', methods=['GET'])
-def vm_metrics_route(vm_uuid):
+def vm_metrics_route(vm_uuid): # El parámetro de la función ahora coincide con la variable de la ruta
     host = request.args.get('host')
     user = request.args.get('user')
     password = request.args.get('password')
     port = int(request.args.get('port', 443))
-
-    app.logger.info(f"Metrics: Attempting for VM UUID: {vm_uuid} on host: {host}")
+    
+    original_vm_uuid_param = vm_uuid # Guardar el original para el log
+    vm_uuid = vm_uuid.strip() # Aplicar strip al parámetro vm_uuid recibido
+    app.logger.info(f"Metrics: Received raw UUID param: '{original_vm_uuid_param}', Stripped UUID for search: '{vm_uuid}' on host: {host}")
 
     if not all([host, user, password]):
         app.logger.error("Metrics: Missing connection parameters")
@@ -235,10 +249,22 @@ def vm_metrics_route(vm_uuid):
         content = si.RetrieveContent()
         app.logger.info(f"Metrics: Successfully connected to vSphere: {host}")
 
-        vm = content.searchIndex.FindByUuid(None, vm_uuid, True, True)
+        app.logger.info(f"Metrics: Attempting to find VM by iterating. Target UUID: {vm_uuid}")
+        vm = None
+        container = content.rootFolder
+        viewType = [vim.VirtualMachine]
+        recursive = True
+        containerView = content.viewManager.CreateContainerView(container, viewType, recursive)
+        
+        for v_obj in containerView.view:
+            if hasattr(v_obj, 'config') and v_obj.config is not None and v_obj.config.uuid == vm_uuid:
+                vm = v_obj
+                app.logger.info(f"Metrics: VM with UUID {vm_uuid} found by iteration: {vm.name}")
+                break
+        containerView.Destroy() # No olvides destruir la vista
         
         if not vm:
-            app.logger.error(f"Metrics: VM with UUID {vm_uuid} not found.")
+            app.logger.error(f"Metrics: VM with UUID {vm_uuid} not found after iteration.")
             return jsonify({'error': f'VM with UUID {vm_uuid} not found in vSphere for metrics'}), 404
 
         summary = vm.summary

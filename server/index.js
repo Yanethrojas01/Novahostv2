@@ -696,15 +696,18 @@ app.get('/api/vms', authenticate, async (req, res) => {
                 status: vm.power_state === 'poweredOn' ? 'running' : (vm.power_state === 'poweredOff' ? 'stopped' : vm.power_state.toLowerCase()),
                 nodeName: hypervisor.hypervisor_name, // Simplified, actual ESXi host per VM needs more detail from PyVmomi
                 specs: {
-                  // TODO: PYVMOMI: app.py /vms endpoint needs to return CPU, memory, disk for full specs.
-                  cpu: 0, // Placeholder
-                  memory: 0, // Placeholder
-                  disk: 0, // Placeholder
+                  cpu: vm.cpu_count || 0,
+                  memory: vm.memory_mb || 0,
+                  disk: vm.disk_gb || 0,
                   os: vm.guest_os,
                 },
                 hypervisorType: 'vsphere',
                 hypervisorId: hypervisor.id,
                 createdAt: new Date(), // Placeholder, PyVmomi might provide creation date
+                // Nuevos campos para vSphere
+                hostname: vm.hostname,
+                vmware_tools_status: vm.vmware_tools_status,
+                ipAddress: vm.ip_address, // Asegurarse que el listado también lo devuelva si es necesario para la card
               }));
               allVms = allVms.concat(vsphereVms);
               console.log(`Fetched ${vsphereVms.length} VMs from vSphere ${hypervisor.host} via PyVmomi`);
