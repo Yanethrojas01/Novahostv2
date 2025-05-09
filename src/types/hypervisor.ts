@@ -73,6 +73,10 @@ export interface NodeResource {
     health?: string; // SMART status summary
   }[];
   planCapacityEstimates?: PlanCapacityEstimate[]; // Add capacity estimates per node
+  vmCount?: number; // Number of VMs on this host (especially for vSphere)
+  powerState?: string; // e.g., 'poweredOn', 'poweredOff' (for vSphere)
+  connectionState?: string; // e.g., 'connected', 'disconnected' (for vSphere)
+
 }
 
 // Renamed OSTemplate to NodeTemplate for clarity, or use VMTemplate if suitable

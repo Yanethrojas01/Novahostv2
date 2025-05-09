@@ -1024,16 +1024,22 @@ app.get('/api/hypervisors/:id/nodes', authenticate, async (req, res) => {
           formattedNodes = pyvmomiHosts.map(host => ({
             id: host.moid || host.name, // Use MOID if available, else name
             name: host.name,
-            status: host.overall_status === 'green' ? 'online' : (host.connection_state === 'connected' ? 'online' : 'offline'), // Example mapping
+            // Determine status based on connection, power, and overall health
+            status: (host.connection_state === 'connected' && host.power_state === 'poweredOn')
+                      ? (host.overall_status === 'green' ? 'online' : (host.overall_status === 'yellow' || host.overall_status === 'red' ? 'warning' : 'unknown'))
+                      : 'offline',
             cpu: {
               cores: host.cpu_cores || 0,
-              usage: host.cpu_usage_percent || 0, // Percentage
+              usage: (host.cpu_usage_percent || 0) / 100, // Convert percentage from Python (0-100) to fraction (0-1)
             },
             memory: {
               total: host.memory_total_bytes || 0,
               used: host.memory_used_bytes || 0,
               free: (host.memory_total_bytes || 0) - (host.memory_used_bytes || 0),
             },
+            vmCount: host.vm_count, // Added from Python microservice
+            powerState: host.power_state, // Added from Python microservice
+            connectionState: host.connection_state, // Added from Python microservice
             // storage: PyVmomi microservice would need to aggregate datastore info per host if desired here
           }));
         } else {

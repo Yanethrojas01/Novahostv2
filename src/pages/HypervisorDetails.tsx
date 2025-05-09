@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Cloud, Server as ServersIconLucide, Clock, AlertCircle, Cpu, MemoryStick, Database, Layers, Calculator, HardDrive, Activity, Box } from 'lucide-react'; // Renamed ServersIcon to avoid conflict, added Calculator, HardDrive, Activity, Box
+import { ArrowLeft, Cloud, Server as ServersIconLucide, Clock, AlertCircle, Cpu, MemoryStick, Database, Layers, Calculator, HardDrive, Activity, Box, Power, WifiOff, CheckCircle, AlertTriangle, Users } from 'lucide-react'; // Added more icons
 import { Hypervisor, AggregatedStats } from '../types/hypervisor'; // Import AggregatedStats, removed HypervisorDetailsData
 import { toast } from 'react-hot-toast';
 // import { formatDistanceToNow } from 'date-fns'; // Removed unused import
@@ -120,6 +120,20 @@ export default function HypervisorDetails() {
 
     return result;
   }
+  const getNodeStatusIcon = (status: string | undefined, connectionState?: string, powerState?: string) => {
+    if (status === 'online') return <CheckCircle className="h-4 w-4 text-success-500" />;
+    if (status === 'warning') return <AlertTriangle className="h-4 w-4 text-warning-500" />;
+    if (status === 'offline') {
+      if (connectionState === 'disconnected' || connectionState === 'notResponding') {
+        return <WifiOff className="h-4 w-4 text-slate-500" />;
+      }
+      if (powerState === 'poweredOff') {
+        return <Power className="h-4 w-4 text-slate-500" />;
+      }
+      return <AlertCircle className="h-4 w-4 text-danger-500" />;
+    }
+    return <AlertCircle className="h-4 w-4 text-slate-500" />; // Default for unknown
+  };
 
   return (
     <div className="p-4 md:p-6">
@@ -179,8 +193,10 @@ export default function HypervisorDetails() {
 
       {/* Resource Details Section */}
       <div className="bg-white dark:bg-slate-800 shadow rounded-lg border border-slate-200 dark:border-slate-700 p-6">
-      <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Detalles por Nodo/Recurso</h2>
-      {hypervisor.status === 'connected' && hypervisor.nodes && hypervisor.storage ? (
+      <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-6">
+        {hypervisor.type === 'vsphere' ? 'Hosts ESXi' : 'Nodos'}
+        {hypervisor.nodes && ` (${hypervisor.nodes.length})`}
+      </h2>      {hypervisor.status === 'connected' && hypervisor.nodes && hypervisor.storage ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
             {/* Nodes Summary */}
             <div>
