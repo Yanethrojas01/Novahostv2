@@ -8,6 +8,7 @@ export interface AuthContextType {
   token: string | null; // Añadir token al contexto
   login: (token: string, userData: User, remember?: boolean) => void; // Asegurar que remember es opcional
   logout: () => void;
+  updateUser: (updatedData: Partial<User>) => void; // Add updateUser
 }
 
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);

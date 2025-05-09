@@ -89,10 +89,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     console.log("User logged out.");
   };
 
+  const updateUser = (updatedData: Partial<User>) => {
+    setUser(currentUser => {
+      if (currentUser) {
+        const newUser = { ...currentUser, ...updatedData };
+        console.log("AuthContext: User data updated locally", newUser);
+        return newUser;
+      }
+      return null;
+    });
+    // Nota: Si el backend reemite el JWT y lo devuelve,
+    // podrías querer actualizar también el token en localStorage/sessionStorage aquí.
+  };
+
   // El objeto de contexto se crea implícitamente por el Provider
   return (
     
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, isLoading, token, login, logout }}>
+    <AuthContext.Provider value={{ user, isAuthenticated: !!user, isLoading, token, login, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

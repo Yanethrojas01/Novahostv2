@@ -333,6 +333,88 @@ app.get('/api/users', authenticate, requireAdmin, async (req, res) => {
   }
 });
 
+// --- User Profile & Password Management for Logged-in User ---
+app.put('/api/auth/profile', authenticate, async (req, res) => {
+  const { userId } = req.user; // From authenticate middleware
+  const { fullName } = req.body; // Assuming frontend sends 'fullName'
+
+  console.log(`--- PUT /api/auth/profile for user ${userId} --- fullName: ${fullName}`);
+
+  if (!fullName || typeof fullName !== 'string' || fullName.trim() === '') {
+    return res.status(400).json({ error: 'Full name is required and must be a non-empty string.' });
+  }
+
+  try {
+    // Assuming 'username' field stores the display name/full name.
+    // If you have a separate 'full_name' column, use that instead.
+    const result = await pool.query(
+      `UPDATE users SET username = $1, updated_at = now() WHERE id = $2
+       RETURNING id, username, email, role_id, is_active`,
+      [fullName.trim(), userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    const updatedDbUser = result.rows[0];
+    const roleResult = await pool.query('SELECT name FROM roles WHERE id = $1', [updatedDbUser.role_id]);
+    const roleName = roleResult.rows[0]?.name || 'user';
+
+    const updatedUser = {
+      id: updatedDbUser.id,
+      username: updatedDbUser.username, // This is the updated 'fullName'
+      email: updatedDbUser.email,
+      role: roleName,
+      name: updatedDbUser.username, // Assuming username is used as name for consistency with User type
+    };
+    
+    console.log(`User ${userId} profile updated successfully. New name: ${updatedUser.username}`);
+    res.json({ user: updatedUser, message: 'Perfil actualizado correctamente.' });
+
+  } catch (error) {
+    console.error(`Error updating profile for user ${userId}:`, error);
+    if (error.code === '23505') { // Unique constraint violation (e.g. if username must be unique)
+        return res.status(409).json({ error: 'Este nombre podría ya estar en uso.' });
+    }
+    res.status(500).json({ error: 'Error al actualizar el perfil.' });
+  }
+});
+
+app.put('/api/auth/password', authenticate, async (req, res) => {
+  const { userId } = req.user;
+  const { currentPassword, newPassword } = req.body;
+
+  console.log(`--- PUT /api/auth/password for user ${userId} ---`);
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'La contraseña actual y la nueva contraseña son obligatorias.' });
+  }
+  if (newPassword.length < 6) { // Example: Basic password policy
+    return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 6 caracteres.' });
+  }
+
+  try {
+    const userResult = await pool.query('SELECT password_hash FROM users WHERE id = $1', [userId]);
+    if (userResult.rows.length === 0) return res.status(404).json({ error: 'Usuario no encontrado.' });
+
+    const user = userResult.rows[0];
+    const match = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!match) return res.status(401).json({ error: 'La contraseña actual es incorrecta.' });
+
+    const saltRounds = 10;
+    const newPasswordHash = await bcrypt.hash(newPassword, saltRounds);
+    await pool.query('UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2', [newPasswordHash, userId]);
+
+    console.log(`Password updated successfully for user ${userId}.`);
+    res.json({ message: 'Contraseña actualizada correctamente.' });
+
+  } catch (error) {
+    console.error(`Error changing password for user ${userId}:`, error);
+    res.status(500).json({ error: 'Error al cambiar la contraseña.' });
+  }
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
