@@ -33,7 +33,7 @@ export default function CreateVM() {
       cpu: 1,
       memory: 1024,
       disk: 20,
-      // os: '', // We'll use templateId instead
+      // os: '', // We'll use templateId and copy os from template
     },
     start: true,
     tags: [], // Initialize tags as empty array
@@ -52,10 +52,9 @@ export default function CreateVM() {
   useEffect(() => {
     const fetchHypervisors = async () => {
       setIsFetchingHypervisors(true);
-      //const token = localStorage.getItem('authToken'); // Recuperar token
       try {
         const response = await fetch(`${API_BASE_URL}/hypervisors`, {
-          headers: { ...(authToken && { 'Authorization': `Bearer ${authToken}` }) }, // Usar token real
+          headers: { ...(authToken && { 'Authorization': `Bearer ${authToken}` }) },
         });
         if (!response.ok) throw new Error('Failed to fetch hypervisors');
         const data: Hypervisor[] = await response.json();
@@ -67,18 +66,16 @@ export default function CreateVM() {
         setIsFetchingHypervisors(false);
       }
     };
-    fetchHypervisors();
-  }, []);
+    if (authToken) fetchHypervisors();
+  }, [authToken]);
 
   // Fetch active VM plans on mount
   useEffect(() => {
     const fetchPlans = async () => {
       setIsFetchingPlans(true);
-      //const token = localStorage.getItem('authToken'); // Recuperar token
       try {
-        // Assuming the backend filters active plans or we filter here
         const response = await fetch(`${API_BASE_URL}/vm-plans`, {
-          headers: { ...(authToken && { 'Authorization': `Bearer ${authToken}` }) }, // Usar token real
+          headers: { ...(authToken && { 'Authorization': `Bearer ${authToken}` }) },
         });
         if (!response.ok) throw new Error('Failed to fetch VM plans');
         const data: VMPlan[] = await response.json();
@@ -90,22 +87,20 @@ export default function CreateVM() {
         setIsFetchingPlans(false);
       }
     };
-    fetchPlans();
-  }, []);
+    if (authToken) fetchPlans();
+  }, [authToken]);
 
   // Fetch final clients on mount
   useEffect(() => {
     const fetchClients = async () => {
       setIsFetchingClients(true);
-      //const token = localStorage.getItem('authToken');
       try {
-        // Assuming pagination is handled or we fetch all for the dropdown
-        const response = await fetch(`${API_BASE_URL}/final-clients?limit=1000`, { // Fetch a large number for dropdown
+        const response = await fetch(`${API_BASE_URL}/final-clients?limit=1000`, {
           headers: { ...(authToken && { 'Authorization': `Bearer ${authToken}` }) },
         });
         if (!response.ok) throw new Error('Failed to fetch final clients');
-        const data = await response.json(); // Assuming API returns { items: [...] }
-        setAvailableClients(data.items || []); // Adjust based on actual API response structure
+        const data = await response.json();
+        setAvailableClients(data.items || []);
       } catch (error) {
         console.error('Error fetching final clients:', error);
         toast.error('Could not load final clients.');
@@ -113,21 +108,20 @@ export default function CreateVM() {
         setIsFetchingClients(false);
       }
     };
-    fetchClients();
-  }, []);
+    if (authToken) fetchClients();
+  }, [authToken]);
 
   // Fetch templates when hypervisor changes
   useEffect(() => {
     setTemplates([]); // Clear previous templates
-    setVmParams(prev => ({ ...prev, templateId: undefined })); // Clear selected template
+    setVmParams(prev => ({ ...prev, templateId: undefined, specs: { ...prev.specs, os: undefined } })); // Clear selected template and os
 
-    if (vmParams.hypervisorId) {
+    if (vmParams.hypervisorId && authToken) {
       const fetchTemplates = async () => {
         setIsFetchingTemplates(true);
-        //const token = localStorage.getItem('authToken'); // Recuperar token
         try {
           const response = await fetch(`${API_BASE_URL}/hypervisors/${vmParams.hypervisorId}/templates`, {
-            headers: { ...(authToken && { 'Authorization': `Bearer ${authToken}` }) }, // Usar token real
+            headers: { ...(authToken && { 'Authorization': `Bearer ${authToken}` }) },
           });
           if (!response.ok) throw new Error('Failed to fetch templates');
           const data: VMTemplate[] = await response.json();
@@ -181,36 +175,32 @@ export default function CreateVM() {
       setVmParams(prev => ({
         ...prev,
         planId: selectedPlan.id,
-        specs: { // Update specs based on the selected plan
-          ...prev.specs, // Keep existing network/os if needed
+        specs: { 
+          ...prev.specs, 
           cpu: selectedPlan.specs.cpu,
           memory: selectedPlan.specs.memory,
           disk: selectedPlan.specs.disk,
+          // os: prev.specs.os, // Keep OS from template if already selected
         }
       }));
     } else {
-      // Clear planId and potentially reset specs if plan is deselected or not found
       setVmParams(prev => ({ ...prev, planId: undefined }));
     }
   };
 
   const handleCreate = async () => {
     setIsLoading(true);
-    const selectedHypervisor = availableHypervisors.find(h => h.id === vmParams.hypervisorId);
+    // const selectedHypervisor = availableHypervisors.find(h => h.id === vmParams.hypervisorId);
 
     const payload: VMCreateParams = {
       ...vmParams,
-      // Ensure memory is in MB (already is, but good to be explicit if units change)
-      // specs: { ...vmParams.specs, memory: vmParams.specs.memory } 
     };
-    //const token = localStorage.getItem('authToken'); // Recuperar token
     try {
-      // Call the backend API to create the VM
       const response = await fetch(`${API_BASE_URL}/vms`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(authToken && { 'Authorization': `Bearer ${authToken}` }), // Usar token real
+          ...(authToken && { 'Authorization': `Bearer ${authToken}` }),
         },
         body: JSON.stringify(payload),
       });
@@ -222,9 +212,6 @@ export default function CreateVM() {
 
       const result = await response.json();
       toast.success(result.message || 'La creación de la máquina virtual se ha iniciado correctamente.');
-
-      // Remove Supabase call from frontend
-      // Redirect to the dashboard
       navigate('/');
     } catch (error: unknown) {
       console.error('Error creating VM:', error);
@@ -243,11 +230,10 @@ export default function CreateVM() {
       return !vmParams.name || !vmParams.hypervisorId;
     }
     if (currentStep === 2) {
-      // If plan mode, need template and plan. If custom mode, need template.
       return !vmParams.templateId || (configMode === 'plan' && !vmParams.planId);
     }
-    if (currentStep === 3 && configMode === 'plan') { // No validation needed in step 3 if using a plan
-    }
+    // No specific validation for step 3 that would disable "Next" (which is "Create VM")
+    // as resource inputs have defaults or are derived.
     return false;
   };
 
@@ -460,10 +446,8 @@ export default function CreateVM() {
                     checked={configMode === 'plan'}
                     onChange={() => {
                       setConfigMode('plan');
-                      // Reset custom specs if switching to plan mode? Optional.
-                      // Or apply first available plan's specs?
                       if (availablePlans.length > 0) {
-                        handlePlanSelect(availablePlans[0].id); // Select first plan by default
+                        handlePlanSelect(availablePlans[0].id); 
                       } else {
                          setVmParams(prev => ({ ...prev, planId: undefined }));
                       }
@@ -481,9 +465,7 @@ export default function CreateVM() {
                     checked={configMode === 'custom'}
                     onChange={() => {
                       setConfigMode('custom');
-                      setVmParams(prev => ({ ...prev, planId: undefined })); // Clear planId when switching to custom
-                      // Reset specs to default custom values?
-                      // setVmParams(prev => ({ ...prev, specs: { cpu: 1, memory: 1024, disk: 20 }}));
+                      setVmParams(prev => ({ ...prev, planId: undefined })); 
                     }}
                     className="form-radio"
                   />
@@ -509,7 +491,6 @@ export default function CreateVM() {
                 <label className="form-label">Plantillas Disponibles</label>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                   {isFetchingTemplates ? (
-                    // Loading skeleton
                     Array.from({ length: 4 }).map((_, i) => (
                       <div key={i} className="animate-pulse">
                         <div className="h-32 bg-slate-200 dark:bg-slate-700 rounded-lg"></div>
@@ -521,13 +502,14 @@ export default function CreateVM() {
                         key={template.id}
                         type="button"
                         className={`p-4 border rounded-lg text-center hover:border-primary-500 dark:hover:border-primary-400 ${
-                          vmParams.templateId === template.id // Check templateId
+                          vmParams.templateId === template.id
                             ? 'border-primary-500 dark:border-primary-400 bg-primary-50 dark:bg-primary-900/20 ring-2 ring-primary-300'
                             : 'border-slate-200 dark:border-slate-700'
                         }`}
                         onClick={() => setVmParams(prev => ({
                           ...prev,
-                          templateId: template.id // Set templateId
+                          templateId: template.id,
+                          specs: { ...prev.specs, os: template.os } // Copy guestId from template
                         }))}
                       >
                         <Server className="h-8 w-8 mx-auto mb-2 text-slate-500 dark:text-slate-400" />
@@ -715,7 +697,7 @@ export default function CreateVM() {
                     <dd className="text-slate-900 dark:text-white mt-0.5">{configMode === 'plan' ? (availablePlans.find(p => p.id === vmParams.planId)?.name || 'Plan Selecccionado') : 'Especificaciones a Medida'}</dd>
                   </div>
                   <div>
-                    <dt className="text-slate-500 dark:text-slate-400">Sistema Operativo</dt>
+                    <dt className="text-slate-500 dark:text-slate-400">Sistema Operativo / Plantilla</dt>
                     <dd className="text-slate-900 dark:text-white mt-0.5">{templates.find(t => t.id === vmParams.templateId)?.name || '-'}</dd>
                   </div>
                   <div>

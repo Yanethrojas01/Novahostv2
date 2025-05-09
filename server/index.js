@@ -431,13 +431,12 @@ app.post('/api/vms', authenticate, async (req, res) => {
       try {
         const pyVmomiCreateParams = {
             name: params.name,
-            template_id: params.templateId, // vSphere template UUID
             specs: params.specs, // cpu, memory, disk
             description: params.description,
             tags: params.tags,
             start_vm: params.start || false,
             // vSphere specific params from VMCreateParams if provided by frontend
-            datastore_name: params.datastoreName,
+            datastore_name: params.datastoreName, // Target datastore for VM's disk
             // resource_pool_name: params.resourcePoolName, // Future: if UI supports it
             // folder_name: params.folderName, // Future: if UI supports it
             // Potentially add placement details if known:
@@ -445,6 +444,23 @@ app.post('/api/vms', authenticate, async (req, res) => {
             // host_name: params.nodeName, // if nodeName is ESXi host for vCenter
             // resource_pool_name: params.resourcePoolName,
         };
+
+        // Check if templateId is an ISO or a VM Template UUID
+        // An ISO path from frontend is like "[datastoreNameOrMoid] path/to/iso.iso"
+        const isIso = params.templateId && params.templateId.includes(':') && params.templateId.toLowerCase().includes('.iso');
+
+        if (isIso) {
+            pyVmomiCreateParams.iso_path = params.templateId; // Full path like "[DS1] isos/ubuntu.iso"
+            // Ensure specs.os (guestId) is provided by the frontend for ISO creation
+            if (!params.specs?.os) {
+                 console.error('vSphere ISO creation: Missing OS identifier (guestId) in specs.os');
+                 return res.status(400).json({ error: 'OS identifier (guestId) is required in specs.os for ISO creation.' });
+            }
+            // guestId is expected to be in params.specs.os
+        } else {
+            pyVmomiCreateParams.template_uuid = params.templateId; // It's a VM template UUID
+        }
+
         // Asumimos que el microservicio devuelve el UUID de la nueva VM o un ID de tarea
         const responseFromPyvmomi = await callPyvmomiService('POST', '/vms/create', hypervisor, pyVmomiCreateParams);
         newVmId = responseFromPyvmomi.vm_uuid; // PyVmomi /vms/create now returns vm_uuid
@@ -1207,15 +1223,28 @@ async function fetchVSphereIsoFiles(hypervisor) { // Pass full hypervisor object
   try {
     const pyvmomiIsos = await callPyvmomiService('GET', '/isos', hypervisor);
     if (Array.isArray(pyvmomiIsos)) {
-      return pyvmomiIsos.map(iso => ({
+      return pyvmomiIsos.map(iso => {
+        const sizeInGb = iso.size_bytes ? parseFloat((iso.size_bytes / (1024 * 1024 * 1024)).toFixed(2)) : 0;
+        return {
         id: `${iso.datastore_moid || iso.datastore_name}:${iso.path}`, // Unique ID
         name: iso.name,
         description: `ISO file from datastore ${iso.datastore_name}`,
-        size: iso.size_bytes,
-        path: iso.path,
-        type: 'iso',
-        storage: iso.datastore_name,
-      }));
+        size: sizeInGb, // Converted to GB
+        // path: iso.path, // 'path' is not in VMTemplate, id now contains full path info
+        // type: 'iso', // 'type' is not in VMTemplate
+        // storage: iso.datastore_name, // 'storage' is not in VMTemplate
+
+        // Fields required by VMTemplate:
+        hypervisorType: 'vsphere',
+        os: 'otherGuest64', // <<< DEFAULT GUEST ID FOR ISOs. This needs to be more intelligent.
+        specs: { // Default specs for an ISO "template"
+          cpu: 1,
+          memory: 1024, // MB
+          disk: 20, // GB (default disk size for a new VM using this ISO)
+        },
+        osVersion: undefined, // Or try to infer from iso.name if possible
+        };
+      });
     }
     console.warn("PyVmomi /isos did not return an array:", pyvmomiIsos);
     return [];
@@ -1900,6 +1929,7 @@ app.put('/api/vm-plans/:id', authenticate, requireAdmin, async (req, res) => {
     else res.status(404).json({ error: 'VM Plan not found' });
   } catch (err) { res.status(500).json({ error: 'Failed to update VM plan' }); }
 });
+
 app.delete('/api/vm-plans/:id', authenticate, requireAdmin, async (req, res) => {
   const { id } = req.params;
   try {

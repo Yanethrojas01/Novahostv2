@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from pyVim.connect import SmartConnect, Disconnect
-from pyVmomi import vim
+from pyVmomi import vim, vmodl
 import ssl
 import atexit
 import time
@@ -86,7 +86,7 @@ def create_vm():
     if not data:
         return jsonify({'error': 'Request body must be JSON'}), 400
 
-    # Credenciales del hypervisor (pasadas por index.js)
+    # Credenciales del hypervisor
     host_param = data.get('host')
     user_param = data.get('user')
     password_param = data.get('password')
@@ -94,23 +94,27 @@ def create_vm():
 
     # Parámetros de la VM
     vm_name = data.get('name')
-    template_uuid = data.get('template_id') # UUID de la plantilla vSphere
+    template_uuid = data.get('template_uuid') # Para clonar
+    iso_path = data.get('iso_path')           # Para creación desde ISO, ej: "[Datastore1] ISOs/ubuntu.iso"
+    
     specs = data.get('specs', {})
+    guest_os_identifier = specs.get('os')     # ej: "ubuntu64Guest", necesario para ISO. El frontend debe enviarlo.
     cpu_count = specs.get('cpu')
-    memory_mb = specs.get('memory') # Asumimos que 'memory' viene en MB desde CreateVM.tsx
+    memory_mb = specs.get('memory')
+    disk_gb = specs.get('disk', 20) # Default a 20GB si no se especifica
+    
     power_on_after_creation = data.get('start_vm', False)
-    target_datastore_name = data.get('datastore_name') # Opcional
+    target_datastore_name = data.get('datastore_name') # Datastore para el disco de la VM
 
-    app.logger.info(f"Create VM request: Name='{vm_name}', TemplateUUID='{template_uuid}', CPU={cpu_count}, MemMB={memory_mb}, PowerOn={power_on_after_creation}, Datastore='{target_datastore_name}'")
+    app.logger.info(f"Create VM request: Name='{vm_name}', TemplateUUID='{template_uuid}', ISOPath='{iso_path}', GuestOS='{guest_os_identifier}', CPU={cpu_count}, MemMB={memory_mb}, DiskGB={disk_gb}, PowerOn={power_on_after_creation}, Datastore='{target_datastore_name}'")
 
-    if not all([host_param, user_param, password_param, vm_name, template_uuid, cpu_count, memory_mb]):
+    if not all([host_param, user_param, password_param, vm_name, cpu_count, memory_mb]):
         missing_params = [p for p, v in {
             "host": host_param, "user": user_param, "password": password_param,
-            "name": vm_name, "template_id": template_uuid,
-            "specs.cpu": cpu_count, "specs.memory": memory_mb
+            "name": vm_name, "specs.cpu": cpu_count, "specs.memory": memory_mb
         }.items() if not v]
-        app.logger.error(f"Create VM: Missing parameters: {', '.join(missing_params)}")
-        return jsonify({'error': f"Missing parameters: {', '.join(missing_params)}"}), 400
+        app.logger.error(f"Create VM: Missing basic parameters: {', '.join(missing_params)}")
+        return jsonify({'error': f"Missing basic parameters: {', '.join(missing_params)}"}), 400
 
     si = None
     try:
@@ -118,80 +122,169 @@ def create_vm():
         content = si.RetrieveContent()
         app.logger.info(f"Create VM: Connected to vSphere {host_param}")
 
-        template_vm = get_obj(content, [vim.VirtualMachine], uuid=template_uuid)
-        if not template_vm:
-            app.logger.error(f"Create VM: Template with UUID '{template_uuid}' not found.")
-            return jsonify({'error': f"Template with UUID '{template_uuid}' not found"}), 404
-        app.logger.info(f"Create VM: Found template '{template_vm.name}'")
+        if iso_path and not template_uuid: # Priorizar creación desde ISO
+            app.logger.info(f"Create VM: Initiating creation from ISO '{iso_path}'")
+            if not guest_os_identifier:
+                app.logger.error("Create VM from ISO: Missing guest OS identifier (specs.os)")
+                return jsonify({'error': "Missing guest OS identifier (specs.os) for ISO creation"}), 400
+            if not target_datastore_name:
+                app.logger.error("Create VM from ISO: Missing target datastore for VM disk")
+                return jsonify({'error': "Missing target datastore for VM disk for ISO creation"}), 400
 
-        # --- Determinación de la ubicación ---
-        # Carpeta: Usar la carpeta padre de la plantilla
-        dest_folder = template_vm.parent
-        if not isinstance(dest_folder, vim.Folder): # Si el padre no es una carpeta (ej. un host directamente), usar la carpeta raíz de VMs del datacenter
-            datacenter = get_obj(content, [vim.Datacenter], name=template_vm.summary.runtime.host.parent.name) # Asume que el host está en un Datacenter
-            if datacenter:
-                dest_folder = datacenter.vmFolder
-            else: # Fallback a la carpeta raíz si no se encuentra el datacenter
-                dest_folder = content.rootFolder
-        app.logger.info(f"Create VM: Target folder: '{dest_folder.name if hasattr(dest_folder, 'name') else 'Root'}'")
+            # --- Lógica para crear VM desde ISO ---
+            vm_datastore = get_obj(content, [vim.Datastore], name=target_datastore_name)
+            if not vm_datastore:
+                app.logger.error(f"Create VM from ISO: Target datastore '{target_datastore_name}' for VM disk not found.")
+                return jsonify({'error': f"Target datastore '{target_datastore_name}' for VM disk not found"}), 404
+
+            # Encontrar un resource pool y carpeta de destino (simplificado)
+            # Esto debería ser más robusto, permitiendo al usuario seleccionar o usando valores predeterminados configurables.
+            datacenter = content.rootFolder.childEntity[0] # Asume el primer Datacenter
+            dest_folder = datacenter.vmFolder
+            resource_pool = datacenter.hostFolder.childEntity[0].resourcePool # RP del primer Cluster/Host
+
+            config_spec = vim.vm.ConfigSpec(
+                name=vm_name,
+                guestId=guest_os_identifier,
+                numCPUs=int(cpu_count),
+                memoryMB=int(memory_mb),
+                files=vim.vm.FileInfo(vmPathName=f"[{vm_datastore.name}]")
+            )
+
+            devices = []
+            # Controlador SCSI
+            scsi_controller = vim.vm.device.VirtualLsiLogicController(key=1000, busNumber=0, sharedBus=vim.vm.device.VirtualSCSIController.Sharing.noSharing)
+            scsi_spec = vim.vm.device.VirtualDeviceSpec(device=scsi_controller, operation=vim.vm.device.VirtualDeviceSpec.Operation.add)
+            devices.append(scsi_spec)
+
+            # Disco Virtual
+            disk_kb = int(disk_gb) * 1024 * 1024
+            disk_backing = vim.vm.device.VirtualDisk.FlatVer2BackingInfo(
+                datastore=vm_datastore,
+                diskMode=vim.vm.device.VirtualDiskOption.DiskMode.persistent,
+                thinProvisioned=True,
+                fileName=f"[{vm_datastore.name}] {vm_name}/{vm_name}.vmdk" # Crea una carpeta para la VM
+            )
+            disk_device = vim.vm.device.VirtualDisk(key=2000, controllerKey=1000, unitNumber=0, capacityInKB=disk_kb, backing=disk_backing)
+            disk_spec = vim.vm.device.VirtualDeviceSpec(device=disk_device, operation=vim.vm.device.VirtualDeviceSpec.Operation.add, fileOperation=vim.vm.device.VirtualDeviceSpec.FileOperation.create)
+            devices.append(disk_spec)
+            
+            # Unidad de CD/DVD con ISO
+            # Asumimos que iso_path es como "[DatastoreName] path/to/iso.iso"
+            # El controlador IDE se suele añadir por defecto o se puede crear uno.
+            # Para simplificar, intentaremos añadirlo a un controlador IDE existente o crear uno nuevo.
+            # Esta parte puede necesitar ajustes según la configuración de vCenter.
+            cdrom_backing = vim.vm.device.VirtualCdrom.IsoBackingInfo(fileName=iso_path)
+            # Encontrar o crear controlador IDE
+            # Esto es una simplificación. Una implementación robusta buscaría un controlador IDE disponible
+            # o crearía uno si no existe. Por ahora, asumimos que vCenter puede manejarlo o
+            # que un controlador IDE (ej. key=200) ya existe o se crea implícitamente.
+            # Si se necesita crear explícitamente:
+            # ide_controller = vim.vm.device.VirtualIDEController(key=200, busNumber=0) # o 1
+            # ide_spec = vim.vm.device.VirtualDeviceSpec(device=ide_controller, operation=vim.vm.device.VirtualDeviceSpec.Operation.add)
+            # devices.append(ide_spec)
+            # cd_controller_key = ide_controller.key
+
+            cdrom = vim.vm.device.VirtualCdrom(
+                key=-101, # Clave temporal, vCenter asignará una real
+                controllerKey=200, # Asume un controlador IDE con key 200 (IDE 0)
+                unitNumber=0,
+                backing=cdrom_backing,
+                connectable=vim.vm.device.VirtualDevice.ConnectInfo(
+                    startConnected=True,
+                    allowGuestControl=True,
+                    connected=True
+                )
+            )
+            cdrom_spec = vim.vm.device.VirtualDeviceSpec(device=cdrom, operation=vim.vm.device.VirtualDeviceSpec.Operation.add)
+            devices.append(cdrom_spec)
+
+            # Adaptador de Red (ej. VMXNET3)
+            # Asume una red llamada "VM Network". Esto debe ser configurable.
+            network_name_to_use = "VM Network" 
+            network_obj = get_obj(content, [vim.Network], name=network_name_to_use)
+            if not network_obj: # Intentar con DistributedVirtualPortgroup
+                 network_obj = get_obj(content, [vim.dvs.DistributedVirtualPortgroup], name=network_name_to_use)
+            
+            if not network_obj:
+                app.logger.error(f"Create VM from ISO: Network '{network_name_to_use}' not found.")
+                return jsonify({'error': f"Network '{network_name_to_use}' not found"}), 404
+
+            nic = vim.vm.device.VirtualVmxnet3() # O VirtualE1000
+            if isinstance(network_obj, vim.dvs.DistributedVirtualPortgroup):
+                dvs_port_connection = vim.dvs.PortConnection(portgroupKey=network_obj.key, switchUuid=network_obj.config.distributedVirtualSwitch.uuid)
+                nic.backing = vim.vm.device.VirtualEthernetCard.DistributedVirtualPortBackingInfo(port=dvs_port_connection)
+            else: # Standard Switch
+                nic.backing = vim.vm.device.VirtualEthernetCard.NetworkBackingInfo(deviceName=network_name_to_use, network=network_obj)
+            
+            nic.connectable = vim.vm.device.VirtualDevice.ConnectInfo(startConnected=True, allowGuestControl=True, connected=True)
+            nic.addressType = 'assigned'
+            nic_spec = vim.vm.device.VirtualDeviceSpec(device=nic, operation=vim.vm.device.VirtualDeviceSpec.Operation.add)
+            devices.append(nic_spec)
+            
+            config_spec.deviceChange = devices
+            config_spec.bootOptions = vim.vm.BootOptions(bootOrder=[vim.vm.BootOptions.BootableCdromDevice()])
+
+            app.logger.info(f"Create VM from ISO: Creating VM '{vm_name}' with spec...")
+            create_task = dest_folder.CreateVM_Task(config=config_spec, pool=resource_pool)
+            wait_for_tasks(si, [create_task], action_name=f"Creating new VM {vm_name} from ISO")
+            
+            new_vm = create_task.info.result
+            if not new_vm:
+                app.logger.error("Create VM from ISO: Create task completed but new VM object is null.")
+                raise Exception("Failed to get new VM object after creation from ISO.")
+            app.logger.info(f"Create VM from ISO: VM '{vm_name}' created successfully. MOID: {new_vm._moId}, UUID: {new_vm.config.uuid}")
+
+        elif template_uuid and not iso_path: # Lógica de clonación existente
+            app.logger.info(f"Create VM: Initiating clone from template UUID '{template_uuid}'")
+            template_vm = get_obj(content, [vim.VirtualMachine], uuid=template_uuid)
+            if not template_vm:
+                app.logger.error(f"Create VM: Template with UUID '{template_uuid}' not found.")
+                return jsonify({'error': f"Template with UUID '{template_uuid}' not found"}), 404
+            app.logger.info(f"Create VM: Found template '{template_vm.name}'")
+
+            dest_folder = template_vm.parent
+            if not isinstance(dest_folder, vim.Folder):
+                datacenter = get_obj(content, [vim.Datacenter], name=template_vm.summary.runtime.host.parent.name)
+                dest_folder = datacenter.vmFolder if datacenter else content.rootFolder
+            
+            resource_pool = template_vm.resourcePool
+            if not resource_pool:
+                resource_pool = template_vm.summary.runtime.host.parent.resourcePool
+
+            relocate_spec = vim.vm.RelocateSpec(pool=resource_pool)
+            if target_datastore_name:
+                target_ds_obj = get_obj(content, [vim.Datastore], name=target_datastore_name)
+                if not target_ds_obj:
+                    return jsonify({'error': f"Datastore '{target_datastore_name}' not found"}), 404
+                relocate_spec.datastore = target_ds_obj
+            elif template_vm.datastore: # Usar el datastore de la plantilla si no se especifica uno nuevo
+                 relocate_spec.datastore = template_vm.datastore[0]
 
 
-        # Resource Pool: Usar el resource pool de la plantilla
-        resource_pool = template_vm.resourcePool
-        if not resource_pool: # Si la plantilla no está asociada directamente a un RP (ej. en un host)
-            resource_pool = template_vm.summary.runtime.host.parent.resourcePool # RP del cluster/host
-        app.logger.info(f"Create VM: Target resource pool: '{resource_pool.name if hasattr(resource_pool, 'name') else 'Default'}'")
+            clone_spec = vim.vm.CloneSpec(location=relocate_spec, powerOn=False, template=False)
+            
+            app.logger.info(f"Create VM: Cloning '{template_vm.name}' to '{vm_name}'...")
+            clone_task = template_vm.CloneVM_Task(folder=dest_folder, name=vm_name, spec=clone_spec)
+            wait_for_tasks(si, [clone_task], action_name=f"Cloning VM {vm_name}")
+            new_vm = clone_task.info.result
+            if not new_vm:
+                 app.logger.error("Create VM: Clone task completed but new VM object is null.")
+                 raise Exception("Failed to get new VM object after cloning.")
+            app.logger.info(f"Create VM: VM '{vm_name}' cloned. MOID: {new_vm._moId}, UUID: {new_vm.config.uuid}")
 
-        # Datastore
-        relocate_spec = vim.vm.RelocateSpec()
-        if target_datastore_name:
-            target_ds = get_obj(content, [vim.Datastore], name=target_datastore_name)
-            if not target_ds:
-                app.logger.error(f"Create VM: Target datastore '{target_datastore_name}' not found.")
-                return jsonify({'error': f"Datastore '{target_datastore_name}' not found"}), 404
-            relocate_spec.datastore = target_ds
-            app.logger.info(f"Create VM: Target datastore (specified): '{target_ds.name}'")
+            # Reconfigurar CPU y Memoria para la VM clonada
+            reconfig_spec = vim.vm.ConfigSpec(numCPUs=int(cpu_count), memoryMB=int(memory_mb))
+            app.logger.info(f"Create VM: Reconfiguring cloned VM '{vm_name}'...")
+            reconfig_task = new_vm.ReconfigureVM_Task(spec=reconfig_spec)
+            wait_for_tasks(si, [reconfig_task], action_name=f"Reconfiguring VM {vm_name}")
+            app.logger.info(f"Create VM: Cloned VM '{vm_name}' reconfigured.")
         else:
-            # Usar el mismo datastore que la plantilla (el primero si tiene múltiples)
-            if template_vm.datastore and len(template_vm.datastore) > 0:
-                relocate_spec.datastore = template_vm.datastore[0] # Tomar el primer datastore de la plantilla
-                app.logger.info(f"Create VM: Target datastore (from template): '{template_vm.datastore[0].name}'")
-            else:
-                app.logger.error("Create VM: Template has no associated datastores and no target datastore specified.")
-                return jsonify({'error': 'Template has no datastores and no target datastore specified'}), 400
-        
-        relocate_spec.pool = resource_pool
-        # relocate_spec.host = template_vm.summary.runtime.host # Opcional: especificar host si es necesario
+            app.logger.error("Create VM: Must provide either template_uuid (for clone) or iso_path (for new from ISO).")
+            return jsonify({'error': "Invalid parameters: Provide either template_uuid or iso_path."}), 400
 
-        # --- Especificación de Clonación ---
-        clone_spec = vim.vm.CloneSpec(
-            location=relocate_spec,
-            powerOn=False, # Encenderemos después de reconfigurar si se solicita
-            template=False
-        )
-
-        app.logger.info(f"Create VM: Initiating clone of '{template_vm.name}' to '{vm_name}'...")
-        clone_task = template_vm.CloneVM_Task(folder=dest_folder, name=vm_name, spec=clone_spec)
-        wait_for_tasks(si, [clone_task], action_name=f"Cloning VM {vm_name}")
-        
-        new_vm = clone_task.info.result
-        if not new_vm:
-            app.logger.error("Create VM: Clone task completed but new VM object is null.")
-            raise Exception("Failed to get new VM object after cloning.")
-        app.logger.info(f"Create VM: VM '{vm_name}' cloned successfully. New VM MOID: {new_vm._moId}, UUID: {new_vm.config.uuid}")
-
-        # --- Reconfiguración de CPU y Memoria ---
-        config_spec = vim.vm.ConfigSpec()
-        config_spec.numCPUs = int(cpu_count)
-        config_spec.memoryMB = int(memory_mb)
-        
-        app.logger.info(f"Create VM: Reconfiguring VM '{vm_name}' with CPU={cpu_count}, MemoryMB={memory_mb}...")
-        reconfig_task = new_vm.ReconfigureVM_Task(spec=config_spec)
-        wait_for_tasks(si, [reconfig_task], action_name=f"Reconfiguring VM {vm_name}")
-        app.logger.info(f"Create VM: VM '{vm_name}' reconfigured successfully.")
-
-        # --- Encender VM si se solicita ---
-        if power_on_after_creation:
+        # Encender la VM si se solicita (común para ambas lógicas)
+        if power_on_after_creation and new_vm:
             if new_vm.runtime.powerState != vim.VirtualMachinePowerState.poweredOn:
                 app.logger.info(f"Create VM: Powering on VM '{vm_name}'...")
                 poweron_task = new_vm.PowerOnVM_Task()
@@ -202,10 +295,10 @@ def create_vm():
 
         return jsonify({
             'status': 'success',
-            'message': f"VM '{vm_name}' created successfully.",
-            'vm_uuid': new_vm.config.uuid,
-            'vm_name': new_vm.name,
-            'vm_moid': new_vm._moId
+            'message': f"VM '{vm_name}' processed successfully.",
+            'vm_uuid': new_vm.config.uuid if new_vm else None,
+            'vm_name': new_vm.name if new_vm else None,
+            'vm_moid': new_vm._moId if new_vm else None
         }), 201
 
     except vim.fault.InvalidLogin:
