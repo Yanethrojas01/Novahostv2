@@ -1453,35 +1453,60 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
         console.log(`Hypervisor ${id} (vSphere) is connected, fetching details via PyVmomi...`);
         try {
 
-          // Fetch Nodes (ESXi Hosts) via PyVmomi
-          const pyvmomiNodes = await callPyvmomiService('GET', '/hosts', hypervisor).catch(e => { console.error(`PyVmomi /hosts error: ${e.message}`); return []; });
+          // Fetch Nodes, Storage, Templates, ISOs, and VM Plans in parallel
+          const [pyvmomiNodes, pyvmomiStorage, vmTemplatesPy, isoFilesPy, vmPlansData] = await Promise.all([
+            callPyvmomiService('GET', '/hosts', hypervisor).catch(e => { console.error(`PyVmomi /hosts error: ${e.message}`); return []; }),
+            callPyvmomiService('GET', '/datastores', hypervisor).catch(e => { console.error(`PyVmomi /datastores error: ${e.message}`); return []; }),
+            fetchVSphereVMTemplates(hypervisor).catch(e => { console.error(`PyVmomi /templates error: ${e.message}`); return []; }),
+            fetchVSphereIsoFiles(hypervisor).catch(e => { console.error(`PyVmomi /isos error: ${e.message}`); return []; }),
+            pool.query('SELECT id, name, specs FROM vm_plans WHERE is_active = true').catch(e => { console.error(`DB vm_plans fetch error: ${e.message}`); return { rows: [] }; })
+          ]);
+
           if (Array.isArray(pyvmomiNodes)) {
-            hypervisor.nodes = pyvmomiNodes.map(host => ({
-              id: host.moid || host.name,
-              name: host.name,
-              status: (host.connection_state === 'connected' && host.power_state === 'poweredOn')
-                        ? (host.overall_status === 'green' ? 'online' : (host.overall_status === 'yellow' || host.overall_status === 'red' ? 'warning' : 'unknown'))
-                        : 'offline',
-              cpu: {
-                cores: host.cpu_cores || 0,
-                usage: (host.cpu_usage_percent || 0) / 100, // Convert percentage from Python (0-100) to fraction (0-1)
-              },
-              memory: {
-                total: host.memory_total_bytes || 0,
-                used: host.memory_used_bytes || 0,
-                free: (host.memory_total_bytes || 0) - (host.memory_used_bytes || 0),
-              },
-              vmCount: host.vm_count,
-              powerState: host.power_state,
-              connectionState: host.connection_state,
-              // physicalDisks and planCapacityEstimates can be populated if app.py /hosts provides them
-            }));
+            hypervisor.nodes = pyvmomiNodes.map(host => {
+              const planCapacityEstimates = vmPlansData.rows.map(plan => {
+                const planSpecs = typeof plan.specs === 'string' ? JSON.parse(plan.specs) : plan.specs;
+                let estimatedCount = 0;
+
+                const hostCpuCores = host.cpu_cores || 0;
+                const hostCpuUsageFraction = (host.cpu_usage_percent || 0) / 100;
+                const hostMemoryTotalBytes = host.memory_total_bytes || 0;
+                const hostMemoryUsedBytes = host.memory_used_bytes || 0;
+                const hostMemoryFreeBytes = hostMemoryTotalBytes - hostMemoryUsedBytes;
+
+                if (planSpecs && planSpecs.cpu > 0 && planSpecs.memory > 0 && hostMemoryFreeBytes > 0 && hostCpuCores > 0) {
+                  const cpuAvailableForEstimation = hostCpuCores * (1 - hostCpuUsageFraction);
+                  const memoryAvailableForEstimationMB = hostMemoryFreeBytes / (1024 * 1024);
+
+                  const vmsByCpu = Math.floor(cpuAvailableForEstimation / planSpecs.cpu);
+                  const vmsByMemory = Math.floor(memoryAvailableForEstimationMB / planSpecs.memory);
+                  estimatedCount = Math.min(vmsByCpu, vmsByMemory);
+                }
+                return {
+                  planId: plan.id,
+                  planName: plan.name,
+                  estimatedCount: Math.max(0, estimatedCount),
+                  specs: planSpecs,
+                };
+              });
+
+              return {
+                id: host.moid || host.name,
+                name: host.name,
+                status: (host.connection_state === 'connected' && host.power_state === 'poweredOn')
+                          ? (host.overall_status === 'green' ? 'online' : (host.overall_status === 'yellow' || host.overall_status === 'red' ? 'warning' : 'unknown'))
+                          : 'offline',
+                cpu: { cores: host.cpu_cores || 0, usage: (host.cpu_usage_percent || 0) / 100 },
+                memory: { total: host.memory_total_bytes || 0, used: host.memory_used_bytes || 0, free: (host.memory_total_bytes || 0) - (host.memory_used_bytes || 0) },
+                vmCount: host.vm_count,
+                powerState: host.power_state,
+                connectionState: host.connection_state,
+                planCapacityEstimates, // Add calculated estimates
+              };
+            });
           } else {
             hypervisor.nodes = [];
           }
-          
-          // Fetch Storage (Datastores) via PyVmomi
-          const pyvmomiStorage = await callPyvmomiService('GET', '/datastores', hypervisor).catch(e => { console.error(`PyVmomi /datastores error: ${e.message}`); return []; });
           hypervisor.storage = Array.isArray(pyvmomiStorage) ? pyvmomiStorage.map(ds => ({
             id: ds.moid || ds.name,
             name: ds.name,
@@ -1492,12 +1517,9 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
             path: null, // Not typically relevant for vSphere datastores
           })) : [];
 
-          // Fetch Templates & ISOs via PyVmomi
-          const vmTemplates = await fetchVSphereVMTemplates(hypervisor).catch(e => { console.error(`PyVmomi /templates error: ${e.message}`); return []; });
-          const isoFiles = await fetchVSphereIsoFiles(hypervisor).catch(e => { console.error(`PyVmomi /isos error: ${e.message}`); return []; });
-          hypervisor.templates = vmTemplates.concat(isoFiles);
+          hypervisor.templates = vmTemplatesPy.concat(isoFilesPy);
 
-          console.log(`Fetched vSphere details for ${id} via PyVmomi: ${hypervisor.nodes.length} nodes, ${hypervisor.storage.length} storage, ${hypervisor.templates.length} templates/ISOs`);
+          console.log(`Fetched vSphere details for ${id} via PyVmomi: ${hypervisor.nodes?.length || 0} nodes, ${hypervisor.storage?.length || 0} storage, ${hypervisor.templates?.length || 0} templates/ISOs`);
           
           // Calculate AggregatedStats for vSphere
           if (hypervisor.nodes && hypervisor.nodes.length > 0) {
@@ -1534,7 +1556,6 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
               storagePoolCount: hypervisor.storage?.length || 0,
             };
           }
-          // TODO: Calculate planCapacityEstimates for vSphere if needed, similar to Proxmox
         } catch (detailError) {
           console.error(`Failed to fetch vSphere details via PyVmomi for ${id}:`, detailError);
           hypervisor.detailsError = detailError.message || 'Failed to load vSphere details via PyVmomi';
