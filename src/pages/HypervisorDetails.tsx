@@ -177,20 +177,45 @@ export default function HypervisorDetails() {
             Estadísticas Agregadas del Cluster/Host
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-            <div className="p-3 bg-slate-50 dark:bg-slate-700/50 rounded-md">
+            <div className="p-3 bg-slate-50 dark:bg-slate-700/50 rounded-md space-y-1">
               <p className="flex items-center text-slate-500 dark:text-slate-400 mb-1"><Cpu className="h-4 w-4 mr-1.5"/>CPU Total</p>
               <p className="font-semibold text-slate-700 dark:text-slate-200">{aggregatedStats.totalCores} Núcleos</p>
               <p className="text-xs text-slate-500 dark:text-slate-400">Uso Promedio: {aggregatedStats.avgCpuUsagePercent.toFixed(1)}%</p>
+              {/* CPU Progress Bar */}
+              <div className="w-full bg-slate-200 dark:bg-slate-600 rounded-full h-1.5">
+                <div
+                  className="bg-primary-500 h-1.5 rounded-full"
+                  style={{ width: `${aggregatedStats.avgCpuUsagePercent.toFixed(1)}%` }}
+                ></div>
+              </div>
             </div>
-            <div className="p-3 bg-slate-50 dark:bg-slate-700/50 rounded-md">
+            <div className="p-3 bg-slate-50 dark:bg-slate-700/50 rounded-md space-y-1">
               <p className="flex items-center text-slate-500 dark:text-slate-400 mb-1"><MemoryStick className="h-4 w-4 mr-1.5"/>Memoria Total</p>
               <p className="font-semibold text-slate-700 dark:text-slate-200">{formatBytes(aggregatedStats.totalMemoryBytes)}</p>
               <p className="text-xs text-slate-500 dark:text-slate-400">Usada: {formatBytes(aggregatedStats.usedMemoryBytes)}</p>
+              {/* Memory Progress Bar */}
+              {aggregatedStats.totalMemoryBytes > 0 && (
+                <div className="w-full bg-slate-200 dark:bg-slate-600 rounded-full h-1.5">
+                  <div
+                    className="bg-primary-500 h-1.5 rounded-full"
+                    style={{ width: `${((aggregatedStats.usedMemoryBytes / aggregatedStats.totalMemoryBytes) * 100).toFixed(1)}%` }}
+                  ></div>
+                </div>
+              )}
             </div>
-            <div className="p-3 bg-slate-50 dark:bg-slate-700/50 rounded-md">
+            <div className="p-3 bg-slate-50 dark:bg-slate-700/50 rounded-md space-y-1">
               <p className="flex items-center text-slate-500 dark:text-slate-400 mb-1"><Database className="h-4 w-4 mr-1.5"/>Almacenamiento Total</p>
               <p className="font-semibold text-slate-700 dark:text-slate-200">{formatBytes(aggregatedStats.totalDiskBytes)}</p>
               <p className="text-xs text-slate-500 dark:text-slate-400">Usado: {formatBytes(aggregatedStats.usedDiskBytes)} ({aggregatedStats.storagePoolCount} Pools/Datastores)</p>
+              {/* Disk Progress Bar */}
+              {aggregatedStats.totalDiskBytes > 0 && (
+                <div className="w-full bg-slate-200 dark:bg-slate-600 rounded-full h-1.5">
+                  <div
+                    className="bg-primary-500 h-1.5 rounded-full"
+                    style={{ width: `${((aggregatedStats.usedDiskBytes / aggregatedStats.totalDiskBytes) * 100).toFixed(1)}%` }}
+                  ></div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -223,12 +248,30 @@ export default function HypervisorDetails() {
                     <p className="text-slate-700 dark:text-slate-200">
                       {node.cpu ? `${(node.cpu.usage * 100).toFixed(1)}% de ${node.cpu.cores} Cores` : 'N/A'}
                     </p>
+                    {/* Node CPU Progress Bar */}
+                    {node.cpu && (
+                      <div className="w-full bg-slate-200 dark:bg-slate-600 rounded-full h-1 mt-0.5">
+                        <div
+                          className="bg-sky-500 h-1 rounded-full"
+                          style={{ width: `${(node.cpu.usage * 100).toFixed(1)}%` }}
+                        ></div>
+                      </div>
+                    )}
                   </div>
                   <div>
                     <p className="text-slate-500 dark:text-slate-400">Memoria</p>
                     <p className="text-slate-700 dark:text-slate-200">
                       {node.memory ? `${formatBytes(node.memory.used)} / ${formatBytes(node.memory.total)}` : 'N/A'}
                     </p>
+                    {/* Node Memory Progress Bar */}
+                    {node.memory && node.memory.total > 0 && (
+                      <div className="w-full bg-slate-200 dark:bg-slate-600 rounded-full h-1 mt-0.5">
+                        <div
+                          className="bg-sky-500 h-1 rounded-full"
+                          style={{ width: `${((node.memory.used / node.memory.total) * 100).toFixed(1)}%` }}
+                        ></div>
+                      </div>
+                    )}
                   </div>
                   {hypervisor.type === 'proxmox' && node.rootfs && (
                     <div>
@@ -236,6 +279,15 @@ export default function HypervisorDetails() {
                       <p className="text-slate-700 dark:text-slate-200">
                         {`${formatBytes(node.rootfs.used)} / ${formatBytes(node.rootfs.total)}`}
                       </p>
+                      {/* Node RootFS Progress Bar */}
+                      {node.rootfs.total > 0 && (
+                        <div className="w-full bg-slate-200 dark:bg-slate-600 rounded-full h-1 mt-0.5">
+                          <div
+                            className="bg-sky-500 h-1 rounded-full"
+                            style={{ width: `${((node.rootfs.used / node.rootfs.total) * 100).toFixed(1)}%` }}
+                          ></div>
+                        </div>
+                      )}
                     </div>
                   )}
                   {hypervisor.type === 'vsphere' && node.vmCount !== undefined && (
