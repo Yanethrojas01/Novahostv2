@@ -107,11 +107,11 @@ export default function Header({ onMenuClick }: HeaderProps) {
                       Tu Perfil
                     </a>
                     <a
-                      href="#"
+                      href="/preferences" // Actualizado para apuntar a la nueva página de preferencias
                       className="block px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
                       role="menuitem"
                     >
-                      Settings
+                      Preferencias
                     </a>
                   </div>
                   

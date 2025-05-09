@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Moon, Sun, Globe, Database, Server, Plus, Trash2, Users, UserPlus, Briefcase, Search, ChevronLeft, ChevronRight, Edit } from 'lucide-react'; // Added Briefcase, Search, Chevrons, Edit
-import { useTheme } from '../contexts/ThemeContext';
+import { Database, Server, Plus, Trash2, Users, UserPlus, Briefcase, Search, ChevronLeft, ChevronRight, Edit } from 'lucide-react'; // Removed Moon, Sun, Globe
 // import { supabase } from '../lib/supabase'; // No longer needed
 import { useAuth } from '../hooks/useAuth'; // Import useAuth to get token
 import { toast } from 'react-hot-toast'; // Import toast for feedback
@@ -11,7 +10,6 @@ import type { FinalClient } from '../types/client'; // Import FinalClient type
 
 export default function Settings() {
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
-  const { theme, toggleTheme } = useTheme();
   // const [emailNotifications, setEmailNotifications] = useState(true);
   const { user: currentUser } = useAuth(); // Get current user info for token
   // const [slackNotifications, setSlackNotifications] = useState(false);
@@ -787,75 +785,6 @@ export default function Settings() {
                   </div>
                 )}
               </div>
-            </div>
-          </div>
-        </motion.section>
-
-
-        {/* Preferences */}
-        <motion.section
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
-          className="card"
-        >
-          <div className="p-6">
-            <h2 className="text-lg font-medium text-slate-900 dark:text-white mb-4 flex items-center">
-              <Globe className="h-5 w-5 mr-2 text-primary-600 dark:text-primary-400" />
-              Preferencias
-            </h2>
-
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  {theme === 'dark' ? (
-                    <Moon className="h-5 w-5 text-slate-400" />
-                  ) : (
-                    <Sun className="h-5 w-5 text-slate-400" />
-                  )}
-                  <span className="text-slate-700 dark:text-slate-300">Tema</span>
-                </div>
-                <button
-                  onClick={toggleTheme}
-                  className="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-600 focus:ring-offset-2 bg-slate-200 dark:bg-slate-700"
-                >
-                  <span className="sr-only">Toggle theme</span>
-                  <span
-                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                      theme === 'dark' ? 'translate-x-5' : 'translate-x-0'
-                    }`}
-                  />
-                </button>
-              </div>
-
-              {/* <div className="space-y-4">
-                <div className="flex items-center">
-                  <input
-                    type="checkbox"
-                    id="email-notifications"
-                    className="form-checkbox"
-                    checked={emailNotifications}
-                    onChange={(e) => setEmailNotifications(e.target.checked)}
-                  />
-                  <label htmlFor="email-notifications" className="ml-2 text-slate-700 dark:text-slate-300">
-                    Email Notifications
-                  </label>
-                </div>
-
-                <div className="flex items-center">
-                  <input
-                    type="checkbox"
-                    id="slack-notifications"
-                    className="form-checkbox"
-                    checked={slackNotifications}
-                    onChange={(e) => setSlackNotifications(e.target.checked)}
-                  />
-                  <label htmlFor="slack-notifications" className="ml-2 text-slate-700 dark:text-slate-300">
-                    Slack Notifications
-                  </label>
-                </div>
-              </div> */}
-
             </div>
           </div>
         </motion.section>
