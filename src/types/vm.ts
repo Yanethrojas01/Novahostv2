@@ -27,6 +27,22 @@ export interface VMNetworkConfig {
   vlan?: number;
 }
 
+export interface VMDiskDetail {
+  label: string;
+  capacity_gb: number;
+  datastore: string;
+  thin_provisioned?: boolean | null;
+  file_name: string;
+  disk_mode?: string;
+}
+
+export interface VMNicDetail extends VMNetworkConfig { // Extiende VMNetworkConfig
+  // mac_address ya está en VMNetworkConfig
+  // type ya está en VMNetworkConfig
+  connected?: boolean;
+  // network_name (podría ser el portgroup o switch virtual) ya está en VMNetworkConfig como 'name'
+}
+
 export interface VM {
   id: string; // This should be the hypervisor's operational VM ID (e.g., Proxmox VMID)
   databaseId?: string; // The UUID from the virtual_machines table in your database
@@ -37,13 +53,20 @@ export interface VM {
   nodeName?: string;
   status: VMStatus;
   specs: VMSpecs;
-  createdAt: Date;
+  createdAt: Date | string; // Permitir string para flexibilidad inicial, convertir a Date en el frontend
   lastStatusChange?: Date;
   tags?: string[];
-  ipAddresses?: string[];
+  ipAddress?: string; // Campo principal para la IP, si hay múltiples, ipAddresses
+  ipAddresses?: string[]; // Para múltiples IPs si es necesario
   ticket?: string; // Added from schema.sql
   finalClientId?: string; // Added from schema.sql
   finalClientName?: string; // Optional: If backend provides the name via JOIN
+  // Campos adicionales de vSphere
+  moid?: string; // Managed Object ID de vSphere
+  hostname?: string; // Guest OS hostname
+  vmwareToolsStatus?: string; // Estado de VMware Tools
+  detailedDisks?: VMDiskDetail[]; // Para mostrar detalles de discos individuales
+  detailedNics?: VMNicDetail[];   // Para mostrar detalles de NICs individuales
 }
 
 export interface VMMetrics {
