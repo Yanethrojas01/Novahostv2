@@ -83,7 +83,12 @@ Novahost is a modern web application for managing virtual machines across Proxmo
 
        - Copy the generated hash output (the long string starting with `$2b$10$...`).
        - Paste this hash into the `INSERT INTO users` statement within the `migrations/schema.sql` file, replacing the placeholder `'YOUR_BCRYPT_HASH_HERE'`.
-     - Run migrations to create the database schema:
+     - **Crear el esquema de la base de datos:**
+       - **Opción 1 (Recomendada para desarrollo continuo):** Ejecutar migraciones:
+         ```bash
+         npm run migrate:up
+         ```
+       - **Opción 2 (Para configuración inicial o si prefieres ejecutar el schema completo):** Ejecutar el script `node run-schema.js`:
 
        ```bash
        npm run migrate:up
