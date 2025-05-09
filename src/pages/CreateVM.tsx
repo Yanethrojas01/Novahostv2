@@ -570,14 +570,17 @@ export default function CreateVM() {
               </div>
 
               {/* --- INICIO DEBUG DATASOTRE DROPDOWN --- */}
-              {console.log('DEBUG: Datastore Dropdown Conditions:', {
-                isVSphere: availableHypervisors.find(h => h.id === vmParams.hypervisorId)?.type === 'vsphere',
-                isIsoTemplate: templates.find(t => t.id === vmParams.templateId)?.name?.toLowerCase().includes('.iso'),
-                vmParamsHypervisorId: vmParams.hypervisorId,
-                vmParamsTemplateId: vmParams.templateId,
-                availableDatastoresCount: availableDatastores.length,
-                isFetchingDatastores: isFetchingDatastores
-              })}
+              {(() => {
+                console.log('DEBUG: Datastore Dropdown Conditions:', {
+                  isVSphere: availableHypervisors.find(h => h.id === vmParams.hypervisorId)?.type === 'vsphere',
+                  isIsoTemplate: templates.find(t => t.id === vmParams.templateId)?.name?.toLowerCase().includes('.iso'),
+                  vmParamsHypervisorId: vmParams.hypervisorId,
+                  vmParamsTemplateId: vmParams.templateId,
+                  availableDatastoresCount: availableDatastores.length,
+                  isFetchingDatastores: isFetchingDatastores
+                });
+                return null; // Explicitly return null after logging
+              })()}
               {/* --- FIN DEBUG DATASOTRE DROPDOWN --- */}
               {/* Datastore Selection for vSphere ISO */}
               {availableHypervisors.find(h => h.id === vmParams.hypervisorId)?.type === 'vsphere' &&

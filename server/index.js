@@ -59,7 +59,7 @@ async function callPyvmomiService(method, path, hypervisor, body = null) {
     };
     options.body = JSON.stringify(requestBody);
   }
-  console.log(`Calling PyVmomi microservice: ${method} ${url}`);
+  console.log(`[PyVmomi Call] Method: ${method}, URL: ${url}`);
   if (options.body) console.log(`PyVmomi microservice body: ${options.body.substring(0,200)}...`);
 
 
@@ -67,6 +67,8 @@ async function callPyvmomiService(method, path, hypervisor, body = null) {
     const response = await fetch(url, options);
     if (!response.ok) {
       let errorText = '';
+      console.log(`[PyVmomi Call] Received non-OK status: ${response.status} ${response.statusText}`);
+
       let errorJson = null;
       try {
         // Try to read the error response body as text
@@ -87,7 +89,7 @@ async function callPyvmomiService(method, path, hypervisor, body = null) {
       }
 
       // Determine the most relevant error message
-      const errorMessage = errorJson?.error || errorJson?.message || errorText || response.statusText;
+      const errorMessage = errorJson?.error || errorJson?.message || errorText || response.statusText || 'Unknown error';
       console.error(`PyVmomi microservice error: ${response.status}`, errorMessage);
       const err = new Error(`PyVmomi microservice request failed with status ${response.status}: ${errorMessage}`);
       err.status = response.status;
@@ -109,7 +111,7 @@ async function callPyvmomiService(method, path, hypervisor, body = null) {
     return JSON.parse(successText); // Parse the text as JSON
   } catch (error) {
     console.error('Error calling PyVmomi microservice:', error.message);
-    if (!error.status) error.status = 503; // Service Unavailable si no se pudo conectar
+    if (!error.status) error.status = 503; // Default to Service Unavailable if no status is set (e.g., network error)
     if (!error.details) error.details = { error: error.message };
     throw error; // Re-throw para que la ruta lo maneje
   }
@@ -519,7 +521,6 @@ app.post('/api/vms', authenticate, async (req, res) => {
   }
 });
 
-
 // POST /api/vms/:id/action - Implement real actions
 app.post('/api/vms/:id/action', authenticate, async (req, res) => {
   const { id: vmExternalId } = req.params; // This is Proxmox vmid or vSphere UUID
@@ -540,7 +541,7 @@ app.post('/api/vms/:id/action', authenticate, async (req, res) => {
     // --- Step 1: Find the VM's Hypervisor (from DB, assuming vmExternalId is hypervisor_vm_id) ---
     // This logic assumes vmExternalId is unique enough across hypervisors or we fetch the VM from DB first
     // For simplicity, we'll iterate through connected hypervisors and try to find the VM.
-    // A more robust way would be to query `virtual_machines` table by `hypervisor_vm_id`.
+    // A more robust way is to query `virtual_machines` table by `hypervisor_vm_id` to directly get its hypervisor.
     const { rows: connectedHypervisors } = await pool.query(
       `SELECT id, type, host, username, api_token, token_name, name as hypervisor_name, vsphere_subtype
        FROM hypervisors WHERE status = 'connected'`
@@ -586,8 +587,8 @@ app.post('/api/vms/:id/action', authenticate, async (req, res) => {
         // This needs refinement for a multi-hypervisor vSphere setup.
         // A simple check: if vmExternalId looks like a UUID (common for vSphere VMs from PyVmomi)
         if (vmExternalId.length === 36 && vmExternalId.includes('-')) { // Basic UUID check
-            console.log(`Attempting vSphere action for VM UUID ${vmExternalId} on hypervisor ${hypervisor.id}`);
-            targetHypervisor = hypervisor;
+          console.log(`Action route: Assuming VM ${vmExternalId} is vSphere. Attempting with hypervisor ${hypervisor.id} (${hypervisor.hypervisor_name || 'Name N/A'})`);
+          targetHypervisor = hypervisor;
             vmFoundOnHypervisor = true; // Assume we'll try with this hypervisor
             break;
         }
@@ -595,6 +596,7 @@ app.post('/api/vms/:id/action', authenticate, async (req, res) => {
     }
 
     if (!vmFoundOnHypervisor || !targetHypervisor) {
+      console.log(`Action route: VM ${vmExternalId} not found on any suitable connected hypervisor or targetHypervisor is null.`);
       return res.status(404).json({ error: `VM ${vmExternalId} not found on any suitable connected hypervisor.` });
     }
 
@@ -621,29 +623,39 @@ app.post('/api/vms/:id/action', authenticate, async (req, res) => {
       let pyvmomiAction = '';
       if (action === 'start') pyvmomiAction = 'on';
       else if (action === 'stop') pyvmomiAction = 'off';
-      else if (action === 'restart') {
-        // PyVmomi microservice app.py doesn't have 'restart'.
-        // We can simulate it by calling 'off' then 'on', or add 'restart' to app.py
-        // For now, let's just map to 'reset' if app.py supports it, or error.
-        // Current app.py only has 'on'/'off'.
-        // TODO: PYVMOMI: Add 'restart' or 'reset' to app.py power endpoint.
-        // For now, we'll send 'off' then 'on' if action is 'restart'
-         if (action === 'restart') {
+      // No specific 'else if (action === 'restart')' needed here for pyvmomiAction,
+      // as the restart logic is handled below by calling 'off' then 'on'.
+
+      if (action === 'restart') {
             console.log(`Simulating restart for vSphere VM ${vmExternalId}: power off then power on.`);
-            await callPyvmomiService('POST', `/vm/${vmExternalId}/power`, targetHypervisor, { action: 'off' });
-            // Add a small delay before powering on if necessary
-            // await new Promise(resolve => setTimeout(resolve, 2000)); 
-            await callPyvmomiService('POST', `/vm/${vmExternalId}/power`, targetHypervisor, { action: 'on' });
-            resultMessage = `vSphere VM ${vmExternalId} restart (off/on) action initiated via PyVmomi.`;
-        } else {
+            
+            try {
+              console.log(`Action route: Calling PyVmomi for 'off' for VM ${vmExternalId} on hypervisor ${targetHypervisor.id}`);
+
+              await callPyvmomiService('POST', `/vm/${vmExternalId}/power`, targetHypervisor, { action: 'off' });
+              console.log(`Action route: Calling PyVmomi for 'on' for VM ${vmExternalId} on hypervisor ${targetHypervisor.id}`);
+              await callPyvmomiService('POST', `/vm/${vmExternalId}/power`, targetHypervisor, { action: 'on' });
+              resultMessage = `vSphere VM ${vmExternalId} restart (off/on) action initiated via PyVmomi.`;
+            } catch (pyError) {
+              console.error(`Action route: Error during vSphere restart sequence for ${vmExternalId}:`, pyError.message, "Status:", pyError.status, "Details:", pyError.details);
+              throw pyError;
+            }
+          } else { // This covers 'start' (mapped to 'on') or 'stop' (mapped to 'off')
             // This will be 'on' or 'off'
-            await callPyvmomiService('POST', `/vm/${vmExternalId}/power`, targetHypervisor, { action: pyvmomiAction });
-            resultMessage = `vSphere VM ${vmExternalId} ${action} action initiated via PyVmomi.`;
-        }
+            console.log(`Action route: Calling PyVmomi for '${pyvmomiAction}' for VM ${vmExternalId} on hypervisor ${targetHypervisor.id}`);
+             try {
+              await callPyvmomiService('POST', `/vm/${vmExternalId}/power`, targetHypervisor, { action: pyvmomiAction });
+              resultMessage = `vSphere VM ${vmExternalId} ${action} action initiated via PyVmomi.`;
+            } catch (pyError) {
+              // Log the specific error from callPyvmomiService here
+              console.error(`Action route: Error calling PyVmomi for power action '${pyvmomiAction}' on ${vmExternalId}:`, pyError.message, "Status:", pyError.status, "Details:", pyError.details);
+              throw pyError; // Re-throw to be caught by the outer catch block of the route
+            }
+          }
         // PyVmomi microservice currently returns {status: 'success'} or error, not a task ID.
         console.log(`vSphere action '${action}' for VM ${vmExternalId} completed via PyVmomi.`);
       }
-    }
+    
 
     res.json({
       id: vmExternalId, status: 'pending',
@@ -656,8 +668,8 @@ app.post('/api/vms/:id/action', authenticate, async (req, res) => {
     if (targetHypervisor?.type === 'proxmox') {
         errorDetails = getProxmoxError(error);
     } else if (targetHypervisor?.type === 'vsphere') {
-        errorDetails = { 
-            code: error.status || 500, 
+        errorDetails = {
+            code: error.status || 500,
             message: error.details?.error || error.message || `Failed to perform vSphere action '${action}' on VM ${vmExternalId} via PyVmomi.`
         };
     } else {
@@ -670,6 +682,7 @@ app.post('/api/vms/:id/action', authenticate, async (req, res) => {
     });
   }
 });
+
 
 // Helper function to extract IP addresses from Proxmox QEMU agent response
 function extractIpAddressesFromAgent(agentInterfaces) {
@@ -1377,11 +1390,7 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
       // It should also try to determine if it's vCenter or ESXi if possible.
       const hypervisorDataForPyvmomi = { host, username, api_token: password, type, vsphere_subtype: clientVsphereSubtype };
       
-      // TODO: PYVMOMI: Implement '/connect' endpoint in app.py
-      // This endpoint should take host, user, password.
-      // It should try to connect using pyVim.connect.SmartConnect.
-      // Optionally, it could return basic info like API version, and if it's vCenter/ESXi.
-      try {
+            try {
         const connectResponse = await callPyvmomiService('POST', '/connect', hypervisorDataForPyvmomi, {
             // Pass any specific parameters needed by the /connect endpoint if any, besides credentials
         });

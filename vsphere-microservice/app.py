@@ -395,12 +395,19 @@ def list_vms():
 
 @app.route('/vm/<vm_uuid>/power', methods=['POST'])
 def power_vm(vm_uuid):
+    original_vm_uuid_param = vm_uuid # Guardar el original para el log
+    app.logger.info(f"Power action: >>> Entering power_vm handler. Raw UUID param: '{original_vm_uuid_param}' <<<")
+    vm_uuid = vm_uuid.strip() # Limpiar espacios
+
     host = request.json.get('host')
     user = request.json.get('user')
     password = request.json.get('password')
     action = request.json.get('action')  # 'on' or 'off'
+    port = int(request.json.get('port', 443)) # Asumir puerto si no se provee
 
-    if not host or not user or not password or not action:
+    app.logger.info(f"Power action: Received raw UUID param: '{original_vm_uuid_param}', Stripped UUID for search: '{vm_uuid}', Action: '{action}', Host: {host}")
+
+    if not all([host, user, password, action, vm_uuid]):
         return jsonify({'error': 'Missing parameters'}), 400
 
     try:
@@ -413,12 +420,15 @@ def power_vm(vm_uuid):
         recursive = True
         containerView = content.viewManager.CreateContainerView(container, viewType, recursive)
         for v in containerView.view:
-            if v.config.uuid == vm_uuid:
+            if hasattr(v, 'config') and v.config and v.config.uuid == vm_uuid:
                 vm = v
+                app.logger.info(f"Power action: Found VM '{vm.name}' with UUID '{vm_uuid}'")
                 break
-        if not vm:
-            return jsonify({'error': 'VM not found'}), 404
+        containerView.Destroy() # Destruir vista después de usarla
 
+        if not vm:
+            app.logger.error(f"Power action: VM with UUID '{vm_uuid}' not found on host '{host}'.")
+            return jsonify({'error': 'VM not found'}), 404
         if action == 'on':
             task = vm.PowerOnVM_Task()
         elif action == 'off':
@@ -426,20 +436,22 @@ def power_vm(vm_uuid):
         else:
             return jsonify({'error': 'Invalid action'}), 400
 
-        # Wait for task to complete
-        while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
-            pass
-
+        app.logger.info(f"Power action: Initiated task '{task}' for VM '{vm.name}' (action: {action}). Waiting for completion...")
+        wait_for_tasks(si, [task], action_name=f"Powering {action} VM {vm.name}") # Usar wait_for_tasks
+        
         if task.info.state == vim.TaskInfo.State.success:
+            app.logger.info(f"Power action: Task for VM '{vm.name}' (action: {action}) completed successfully.")
             return jsonify({'status': 'success'})
         else:
+            error_msg = task.info.error.msg if task.info.error else "Unknown task error"
+            app.logger.error(f"Power action: Task for VM '{vm.name}' (action: {action}) failed: {error_msg}")
             return jsonify({'error': task.info.error.msg}), 500
-
+    except vim.fault.InvalidLogin:
+        app.logger.error(f"Power action: vSphere login failed for user {user} on host {host}")
+        return jsonify({'error': 'vSphere login failed. Check credentials.'}), 401
     except Exception as e:
+        app.logger.error(f"Power action: Error for VM '{vm_uuid}' on host '{host}': {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
-    # finally:
-    #     if si:
-    #         disconnect_vsphere(si) # Add if you want to ensure disconnection for this route
 
 # --- Helper para determinar si es vCenter o ESXi ---
 def get_vsphere_subtype(si_content):
