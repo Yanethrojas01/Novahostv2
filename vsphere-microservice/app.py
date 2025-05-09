@@ -676,14 +676,100 @@ def list_templates():
         if si:
             disconnect_vsphere(si)
 
-# La ruta /isos es más compleja y requiere navegar por datastores.
-# Por ahora, la dejaremos pendiente o con una respuesta vacía.
+def search_datastore_for_isos(datastore, si):
+    """
+    Busca archivos .iso en un datastore específico.
+        :param datastore: The datastore object to search.
+    :param si: The ServiceInstance object.
+
+    """
+    isos_found = []
+    search_spec = vim.host.DatastoreBrowser.SearchSpec()
+    search_spec.matchPattern = ["*.iso"] # Buscar solo archivos .iso
+    # search_spec.details = vim.host.DatastoreBrowser.FileInfo.Details(fileType=True, fileSize=True, modification=True) # Obtener detalles
+
+    # Para obtener todos los detalles, incluyendo el tamaño del archivo, necesitamos especificarlo.
+    details = vim.host.DatastoreBrowser.FileInfo.Details()
+    details.fileType = True
+    details.fileSize = True
+    details.modification = True # Opcional, si quieres la fecha de modificación
+    search_spec.details = details
+
+
+    # Iniciar la búsqueda en la raíz del datastore "[datastore_name] /"
+    # El path para el datastore browser es como "[DatastoreName] path/to/file"
+    search_path = f"[{datastore.name}]" 
+    
+    try:
+        # Usar el DatastoreBrowser del datastore
+        ds_browser = datastore.browser
+        if not ds_browser:
+            app.logger.warn(f"No browser available for datastore {datastore.name}")
+            return isos_found
+
+        search_task = ds_browser.SearchDatastoreSubFolders_Task(datastorePath=search_path, searchSpec=search_spec)
+        wait_for_tasks(si, [search_task], action_name=f"Searching ISOs in {datastore.name}")
+
+        if search_task.info.state == vim.TaskInfo.State.success:
+            results = search_task.info.result
+            for folder_result in results:
+                # folder_result es un HostDatastoreBrowserSearchResults
+                # folder_result.folderPath es el path de la carpeta donde se encontraron los archivos
+                # folder_result.file es una lista de FileInfo
+                for file_info in folder_result.file:
+                    if isinstance(file_info, vim.host.DatastoreBrowser.FileInfo) and file_info.path.lower().endswith('.iso'):
+                        isos_found.append({
+                            'name': file_info.path, # El nombre del archivo .iso
+                            'path': f"{folder_result.folderPath}{file_info.path}", # Path completo incluyendo el datastore y la carpeta
+                            'datastore_name': datastore.name,
+                            'datastore_moid': datastore._moId,
+                            'size_bytes': file_info.fileSize if hasattr(file_info, 'fileSize') else 0,
+                            # 'modification': file_info.modification.isoformat() if hasattr(file_info, 'modification') else None
+                        })
+        else:
+            app.logger.error(f"Failed to search datastore {datastore.name}: {search_task.info.error.msg if search_task.info.error else 'Unknown error'}")
+    except Exception as e:
+        app.logger.error(f"Exception while searching datastore {datastore.name} for ISOs: {str(e)}", exc_info=True)
+
+    return isos_found
+
 @app.route('/isos', methods=['GET'])
 def list_isos():
-    app.logger.warn("ISO listing endpoint called, but not fully implemented. Returning empty list.")
-    # Implementar la lógica de búsqueda de ISOs aquí si es necesario.
-    # Esto implicaría usar DatastoreBrowser.SearchDatastoreSubFolders_Task y SearchDatastore_Task
-    return jsonify([])
+    host_param = request.args.get('host')
+    user_param = request.args.get('user')
+    password_param = request.args.get('password')
+    port_param = int(request.args.get('port', 443))
+
+    app.logger.info(f"ISOs: Attempting for vSphere: {host_param}")
+    if not all([host_param, user_param, password_param]):
+        return jsonify({'error': 'Missing connection parameters'}), 400
+
+    si = None
+    all_isos = []
+    try:
+        si = connect_vsphere(host_param, user_param, password_param, port_param)
+        content = si.RetrieveContent()
+        
+        datastore_view = content.viewManager.CreateContainerView(content.rootFolder, [vim.Datastore], True)
+        for ds in datastore_view.view:
+            if ds.summary.accessible: # Solo buscar en datastores accesibles
+                app.logger.info(f"ISOs: Searching in datastore '{ds.name}'")
+                isos_in_ds = search_datastore_for_isos(ds, si) # Pasar el ServiceInstance (si)
+                all_isos.extend(isos_in_ds)
+            else:
+                app.logger.warn(f"ISOs: Datastore '{ds.name}' is not accessible, skipping.")
+        datastore_view.Destroy()
+        
+        app.logger.info(f"ISOs: Found a total of {len(all_isos)} ISO files for {host_param}")
+        return jsonify(all_isos)
+    except vim.fault.InvalidLogin:
+        return jsonify({'error': 'vSphere login failed'}), 401
+    except Exception as e:
+        app.logger.error(f"ISOs: Error for {host_param}: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if si:
+            disconnect_vsphere(si)
 
 
 if __name__ == '__main__':
