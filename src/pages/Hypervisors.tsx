@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { toast } from 'react-hot-toast'; // Assuming you have react-hot-toast or similar
 import HypervisorCard from '../components/hypervisors/HypervisorCard';
 import { Hypervisor, HypervisorCredentials } from '../types/hypervisor';
+import { useAuth } from '../hooks/useAuth'; // Import useAuth
 
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;; // Adjust if your server runs elsewhere
@@ -19,6 +20,8 @@ export default function Hypervisors() {
     password: '',
     tokenName: '', // Initialize tokenName
   });
+
+  const { user } = useAuth(); // Get current user
 
   // Function to fetch hypervisors from the API
   const fetchHypervisors = async () => {
@@ -39,9 +42,9 @@ export default function Hypervisors() {
       // Also ensure vsphere_subtype is handled (it should be included in ...h)
       const formattedData = data.map(h => ({
         ...h,
-        last_sync: h.last_sync ? new Date(h.last_sync) : null,
-        createdAt: h.created_at ? new Date(h.created_at) : undefined, // Convert createdAt
-        updatedAt: h.updated_at ? new Date(h.updated_at) : undefined, // Convert updatedAt
+        last_sync: h.last_sync ? new Date(h.last_sync).toISOString() : null,
+        created_at: h.created_at ? new Date(h.created_at).toISOString() : undefined, // Convert createdAt
+        updated_at: h.updated_at ? new Date(h.updated_at).toISOString() : undefined, // Convert updatedAt
       }));
       setHypervisors(formattedData);
     } catch (error) {
@@ -195,17 +198,19 @@ export default function Hypervisors() {
             Actualizar
           </button>
 
-          <button
-            onClick={() => setIsAddingNew(true)}
-            className="btn btn-primary"
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Añadir Hipervisor
-          </button>
+          {(user?.role === 'admin' || user?.role === 'user') && (
+            <button
+              onClick={() => setIsAddingNew(true)}
+              className="btn btn-primary"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Añadir Hipervisor
+            </button>
+          )}
         </div>
       </div>
 
-      {isAddingNew && (
+      {isAddingNew && (user?.role === 'admin' || user?.role === 'user') && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -349,17 +354,20 @@ export default function Hypervisors() {
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
             {searchTerm ? 'Intenta ajustar tu búsqueda.' : 'Empieza añadiendo una conexión de hipervisor.'}
           </p>
-          {!searchTerm && ( // Only show button if not searching
-            <div className="mt-6">
-              <button
-                type="button"
-                className="btn btn-primary" // Asegúrate de que esta clase exista y funcione
-                onClick={() => setIsAddingNew(true)}
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                Add Hypervisor
-              </button>
-            </div>
+          {!searchTerm && (user?.role === 'admin' || user?.role === 'user') && (
+            // Only show button if not searching and user has correct role
+            <>
+              <div className="mt-6">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => setIsAddingNew(true)}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Añadir Hipervisor
+                </button>
+              </div>
+            </>
           )}
         </div>
       )}

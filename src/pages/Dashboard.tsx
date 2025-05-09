@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import VirtualMachineCard from '../components/dashboard/VirtualMachineCard';
 import { VM } from '../types/vm';
 import { toast } from 'react-hot-toast'; // For user feedback
+import { useAuth } from '../hooks/useAuth'; // Import useAuth
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL; // Read from .env
 
@@ -13,6 +14,7 @@ export default function Dashboard() {
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [filter, setFilter] = useState<string>('all');
+  const { user } = useAuth(); // Get current user
 
   // Define fetchVMs outside useEffect, wrapped in useCallback
   const fetchVMs = useCallback(async () => {
@@ -180,10 +182,12 @@ export default function Dashboard() {
               Refresh
             </button>
             
-            <Link to="/create-vm" className="btn btn-primary">
-              <Plus className="h-4 w-4 mr-2" />
-              Nueva VM
-            </Link>
+            {(user?.role === 'admin' || user?.role === 'user') && (
+              <Link to="/create-vm" className="btn btn-primary">
+                <Plus className="h-4 w-4 mr-2" />
+                Nueva VM
+              </Link>
+            )}
           </div>
         </div>
       </div>
@@ -229,12 +233,14 @@ export default function Dashboard() {
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
             {searchTerm ? 'Try a different search term or filter.' : 'Start by creating a new virtual machine.'}
           </p>
-          <div className="mt-6">
-            <Link to="/create-vm" className="btn btn-primary">
-              <Plus className="h-4 w-4 mr-2" />
-              Nueva VM
-            </Link>
-          </div>
+          {(user?.role === 'admin' || user?.role === 'user') && (
+            <div className="mt-6">
+              <Link to="/create-vm" className="btn btn-primary">
+                <Plus className="h-4 w-4 mr-2" />
+                Nueva VM
+              </Link>
+            </div>
+          )}
         </div>
       )}
     </div>

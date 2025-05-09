@@ -19,7 +19,7 @@ const Stats = lazy(() => import("./pages/Stats"));
 const PreferencesPage = lazy(() => import("./pages/PreferencesPage"));
 
 function App() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth(); // Destructure user as well
 
   return (
     <Suspense fallback={<LoadingScreen />}>
@@ -42,8 +42,13 @@ function App() {
           <Route
             path="/create-vm"
             element={
-              <ProtectedRoute>
-                <CreateVM />
+              <ProtectedRoute> {/* Ensures user is authenticated */}
+                {/* Additional check for role */}
+                {(user?.role === 'admin' || user?.role === 'user') ? (
+                  <CreateVM />
+                ) : (
+                  <Navigate to="/" replace /> // Redirect viewers or other roles
+                )}
               </ProtectedRoute>
             }
           />

@@ -3,6 +3,7 @@ import { BarChart3, Cloud, Cog, Home, Monitor, Plus, Server as Servers, X } from
 import { motion } from 'framer-motion';
 import { clsx } from 'clsx';
 import logodch from "../../img/CDHLogo.png"
+import { useAuth } from '../../hooks/useAuth'; // Import useAuth
 interface SidebarProps {
   mobile?: boolean;
   onClose?: () => void;
@@ -10,14 +11,21 @@ interface SidebarProps {
 
 export default function Sidebar({ mobile = false, onClose }: SidebarProps) {
   const location = useLocation();
+  const { user } = useAuth(); // Get current user
   
-  const navigation = [
+  const baseNavigation = [
     { name: 'Dashboard', href: '/', icon: Home },
-    { name: 'Crear VM', href: '/create-vm', icon: Plus },
     { name: 'Hypervisores', href: '/hypervisors', icon: Cloud },
     { name: 'Estadisticas', href: '/stats', icon: BarChart3 },
     { name: 'Configuración', href: '/settings', icon: Cog },
   ];
+
+  // Conditionally add "Crear VM" based on user role
+  const navigation = [...baseNavigation];
+  if (user?.role === 'admin' || user?.role === 'user') {
+    // Insert "Crear VM" after "Dashboard"
+    navigation.splice(1, 0, { name: 'Crear VM', href: '/create-vm', icon: Plus });
+  }
 
   return (
     <div className="flex flex-col h-full border-r border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
