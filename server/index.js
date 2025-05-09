@@ -809,59 +809,52 @@ app.get('/api/vms/:id', authenticate, async (req, res) => {
   let proxmoxClientInstance = null;
 
   try {
-    // --- Step 1: Find the VM's Hypervisor (Iterate or DB lookup) ---
-    // Similar to POST /action, this needs a robust way to find the VM's hypervisor.
-    // For now, iterate and attempt.
+    // --- Step 1: Fetch VM record from local database (if it exists) ---
+    // This is to get DB-specific fields like ticket, client, description, and the hypervisor_id
+    // We assume vmExternalId is the hypervisor_vm_id (Proxmox VMID or vSphere UUID)
+    console.log(`VMDetails: Attempting to find VM record in DB for hypervisor_vm_id = ${vmExternalId}`);
+    const { rows: [dbVmRecord] } = await pool.query(
+      `SELECT vm.*, fc.name as final_client_name 
+       FROM virtual_machines vm 
+       LEFT JOIN final_clients fc ON vm.final_client_id = fc.id 
+       WHERE vm.hypervisor_vm_id = $1`, [vmExternalId]);
+
+    if (!dbVmRecord) {
+      console.log(`VMDetails: No record found in DB for hypervisor_vm_id = ${vmExternalId}. Will attempt to find on connected hypervisors.`);
+    }
+
+    // --- Step 2: Find the VM on a connected hypervisor and get live data ---
     const { rows: connectedHypervisors } = await pool.query(
-      `SELECT id, type, host, username, api_token, token_name, name as hypervisor_name, vsphere_subtype
+      `SELECT id, type, host, username, api_token, token_name, name as hypervisor_name, vsphere_subtype, status
        FROM hypervisors WHERE status = 'connected'`
     );
 
     let vmFoundOnHypervisor = false;
+    let hypervisorData = {}; // To store data fetched from hypervisor
+
+
+    // Iterate through connected hypervisors to find the VM
     for (const hypervisor of connectedHypervisors) {
+      console.log(`VMDetails: Checking hypervisor ${hypervisor.id} (${hypervisor.name}) of type ${hypervisor.type} for VM ${vmExternalId}`);
+      try {
       if (hypervisor.type === 'proxmox') {
-        // ... (Proxmox VM finding logic - Mantenida como estaba)
         const [dbHost, dbPortStr] = hypervisor.host.split(':');
         const port = dbPortStr ? parseInt(dbPortStr, 10) : 8006;
         const cleanHost = dbHost;
-        const proxmoxConfig = {
-          host: cleanHost, port: port, username: hypervisor.username,
-          tokenID: `${hypervisor.username}!${hypervisor.token_name}`,
-          tokenSecret: hypervisor.api_token, timeout: 10000, rejectUnauthorized: false
-        };
-        proxmoxClientInstance = proxmoxApi(proxmoxConfig);
-        try {
-          const vmResources = await proxmoxClientInstance.cluster.resources.$get({ type: 'vm' });
-          const foundVm = vmResources.find(vm => vm.vmid.toString() === vmExternalId);
-          if (foundVm) {
-            targetHypervisor = hypervisor;
-            targetNode = foundVm.node;
-            vmFoundOnHypervisor = true;
-            console.log(`Found Proxmox VM ${vmExternalId} on node ${targetNode} of hypervisor ${hypervisor.id}`);
-            break;
-          }
-        } catch (findError) { /* ignore */ }
-      } else if (hypervisor.type === 'vsphere') {
-        // Assume vmExternalId is UUID for vSphere
-        if (vmExternalId.length === 36 && vmExternalId.includes('-')) {
-            targetHypervisor = hypervisor;
-            vmFoundOnHypervisor = true;
-            console.log(`Attempting to get details for vSphere VM UUID ${vmExternalId} on hypervisor ${hypervisor.id}`);
-            break;
-        }
+        proxmoxClientInstance = proxmoxApi({ host: cleanHost, port: port, username: hypervisor.username, tokenID: `${hypervisor.username}!${hypervisor.token_name}`, tokenSecret: hypervisor.api_token, timeout: 10000, rejectUnauthorized: false });
+
+      // Find the node for the VM first
+      const vmResources = await proxmoxClientInstance.cluster.resources.$get({ type: 'vm' });
+      const foundVmResource = vmResources.find(vm => vm.vmid.toString() === vmExternalId);
+      if (!foundVmResource) {
+        // Not on this Proxmox hypervisor's cluster resources, continue to next hypervisor
+        console.log(`VMDetails: Proxmox VM ${vmExternalId} not found on cluster resources of hypervisor ${hypervisor.id}.`);
+        continue;
       }
-    }
+        targetNode = foundVmResource.node;
+        targetHypervisor = hypervisor; // Found it!
+        console.log(`VMDetails: Found Proxmox VM ${vmExternalId} on node ${targetNode} of hypervisor ${targetHypervisor.id}`);
 
-    if (!vmFoundOnHypervisor || !targetHypervisor) {
-      return res.status(404).json({ error: `VM ${vmExternalId} not found on any suitable connected hypervisor.` });
-    }
-
-    // --- Step 2: Get VM Config and Current Status ---
-    let vmDetails;
-
-
-    if (targetHypervisor.type === 'proxmox') {
-      // ... (Proxmox VM details logic - Mantenida como estaba)
       const vmConfig = await proxmoxClientInstance.nodes.$(targetNode).qemu.$(vmExternalId).config.$get();
       const vmStatus = await proxmoxClientInstance.nodes.$(targetNode).qemu.$(vmExternalId).status.current.$get();
       
@@ -876,66 +869,157 @@ app.get('/api/vms/:id', authenticate, async (req, res) => {
           console.warn(`Could not get IP for Proxmox VM ${vmExternalId} details via agent: ${agentError.message}`);
         }
       }
-
-
-      vmDetails = {
-        id: vmExternalId, name: vmConfig.name, description: vmConfig.description || '',
-        hypervisorId: targetHypervisor.id, hypervisorType: 'proxmox', nodeName: targetNode,
+      hypervisorData = {
+        name: vmConfig.name, // Name from hypervisor
         status: vmStatus.status,
-        specs: {
-          cpu: vmConfig.cores * (vmConfig.sockets || 1),
-          memory: Math.round(vmConfig.memory / (1024 * 1024)), // MB
-          disk: Math.round((await proxmoxClientInstance.nodes.$(targetNode).qemu.$(vmExternalId).config.$get()).maxdisk / (1024 * 1024 * 1024)), // GB, re-fetch for maxdisk
-          os: vmConfig.ostype,
-        },
-        createdAt: new Date(vmStatus.uptime ? Date.now() - (vmStatus.uptime * 1000) : Date.now()),
-        tags: vmConfig.tags ? vmConfig.tags.split(';') : [],
+        nodeName: targetNode, // Node where it runs
         ipAddress: ipAddress,
         ipAddresses: ipAddresses,
+        specs: { // Specs from Proxmox
+            cpu: vmConfig.cores * (vmConfig.sockets || 1),
+            memory: Math.round(vmConfig.memory / (1024 * 1024)), // MB
+            disk: Math.round(vmConfig.maxdisk / (1024 * 1024 * 1024)), // GB
+            os: vmConfig.ostype,
+          },
+        tags: vmConfig.tags ? vmConfig.tags.split(';') : [],
       };
-    } else if (targetHypervisor.type === 'vsphere') {
-      console.log(`Fetching details for vSphere VM ${vmExternalId} via PyVmomi microservice`);
-      // TODO: PYVMOMI: Implement '/vm/<vm_uuid>/details' endpoint in app.py
+        vmFoundOnHypervisor = true; // Found on this hypervisor
+        break; // Stop searching
+      } else if (hypervisor.type === 'vsphere') {
       // This endpoint should return comprehensive details: name, power_state, guest_os, ip, uuid,
       // cpu_count, memory_mb, disk details (capacity, datastore), network details, host, etc.
       try {
-        const pyvmomiVmDetails = await callPyvmomiService('GET', `/vm/${vmExternalId}/details`, targetHypervisor);
-        // Map pyvmomiVmDetails to the structure expected by the frontend
+        const pyvmomiVmDetails = await callPyvmomiService('GET', `/vm/${vmExternalId}/details`, hypervisor);
+        // If callPyvmomiService returns a 404 (VM not found on this vSphere), it will throw an error
+        // and we'll catch it below, then continue to the next hypervisor.
+        
         const vsphereIps = [];
-        if (pyvmomiVmDetails.ip_address) { // Assuming ip_address is the primary one
+        if (pyvmomiVmDetails.ip_address && !vsphereIps.includes(pyvmomiVmDetails.ip_address)) {
             vsphereIps.push(pyvmomiVmDetails.ip_address);
         }
-        vmDetails = {
-          id: pyvmomiVmDetails.uuid,
+        targetHypervisor = hypervisor; // Found it!
+        console.log(`VMDetails: Found vSphere VM ${vmExternalId} on hypervisor ${targetHypervisor.id}`);
+        hypervisorData = {
           name: pyvmomiVmDetails.name,
-          description: pyvmomiVmDetails.annotation || '',
-          hypervisorId: targetHypervisor.id,
-          hypervisorType: 'vsphere',
           nodeName: pyvmomiVmDetails.host_name || targetHypervisor.hypervisor_name,
           status: pyvmomiVmDetails.power_state === 'poweredOn' ? 'running' : (pyvmomiVmDetails.power_state === 'poweredOff' ? 'stopped' : pyvmomiVmDetails.power_state.toLowerCase()),
+          ipAddress: pyvmomiVmDetails.ip_address || null,
+          ipAddresses: vsphereIps, 
           specs: {
             cpu: pyvmomiVmDetails.cpu_count || 0,
             memory: pyvmomiVmDetails.memory_mb || 0,
-            disk: pyvmomiVmDetails.disks ? pyvmomiVmDetails.disks.reduce((sum, d) => sum + (d.capacity_gb || 0), 0) : 0,
+            disk: pyvmomiVmDetails.disk_gb || 0, 
             os: pyvmomiVmDetails.guest_os || 'Unknown',
           },
-          createdAt: pyvmomiVmDetails.boot_time ? new Date(pyvmomiVmDetails.boot_time) : new Date(), // Placeholder
-          tags: [], // TODO: PYVMOMI: Add tags if available
-          ipAddress: pyvmomiVmDetails.ip_address || null,
-          ipAddresses: vsphereIps, // Or a more detailed list if app.py provides it
-          // You might want to add more fields like ip_address, vmware_tools_status, nics, etc.
+          moid: pyvmomiVmDetails.moid,
+          hostname: pyvmomiVmDetails.hostname,
+          vmwareToolsStatus: pyvmomiVmDetails.vmware_tools_status, 
+          tags: [], 
         };
+        vmFoundOnHypervisor = true; // Found on this hypervisor
+        break; // Stop searching
       } catch (pyVmomiError) {
-        console.error(`Error fetching vSphere VM details for ${vmExternalId} via PyVmomi:`, pyVmomiError.details?.error || pyVmomiError.message);
-        return res.status(pyVmomiError.status || 500).json({
-            error: `Failed to retrieve vSphere VM details for ${vmExternalId} via PyVmomi.`,
-            details: pyVmomiError.details?.error || pyVmomiError.message
-        });
+        if (pyVmomiError.status === 404) {
+          console.log(`VMDetails: vSphere VM ${vmExternalId} not found on hypervisor ${hypervisor.id}.`);
+        } else {
+          console.warn(`VMDetails: Error fetching vSphere VM ${vmExternalId} details from hypervisor ${hypervisor.id}:`, pyVmomiError.message);
+        }
+        // Do NOT re-throw here if it's a 404, let the loop continue to check other hypervisors
+        // If it's another error (e.g., 500 from Python service), we might also want to continue or handle differently.
+        // For now, we continue.
       }
-    } else {
-      return res.status(500).json({ error: 'Inconsistent state: VM found but hypervisor type unknown.' });
     }
-    res.json(vmDetails);
+    } catch (hypervisorCheckError) {
+        console.warn(`VMDetails: Error checking hypervisor ${hypervisor.id} (${hypervisor.name}) for VM ${vmExternalId}:`, hypervisorCheckError.message);
+        // Continue to the next hypervisor if checking this one fails
+    }
+    } // End of hypervisor loop
+
+    if (!vmFoundOnHypervisor) {
+      // If not found in DB and not found on any connected hypervisor
+      if (!dbVmRecord) {
+        return res.status(404).json({ error: `VM with external ID ${vmExternalId} not found in database or on any connected hypervisor.` });
+      }
+      // If it was in DB, but not found live (e.g., hypervisor disconnected or VM deleted from hypervisor)
+      // Return DB data with a warning.
+      console.warn(`VMDetails: VM ${vmExternalId} found in DB but not on any connected hypervisor. Returning DB data.`);
+      const dbOnlyVmDetails = {
+        id: dbVmRecord.hypervisor_vm_id,
+        databaseId: dbVmRecord.id,
+        name: dbVmRecord.name,
+        description: dbVmRecord.description,
+        hypervisorId: dbVmRecord.hypervisor_id,
+        hypervisorType: (await pool.query('SELECT type FROM hypervisors WHERE id = $1', [dbVmRecord.hypervisor_id])).rows[0]?.type || 'unknown',
+        nodeName: null,
+        status: dbVmRecord.status, // Could be stale
+        specs: { cpu: dbVmRecord.cpu_cores, memory: dbVmRecord.memory_mb, disk: dbVmRecord.disk_gb, os: dbVmRecord.os },
+        createdAt: dbVmRecord.created_at,
+        ticket: dbVmRecord.ticket,
+        finalClientId: dbVmRecord.final_client_id,
+        finalClientName: dbVmRecord.final_client_name,
+        tags: dbVmRecord.tags || [],
+        ipAddress: null,
+        ipAddresses: [],
+        warning: "VM not found on connected hypervisors; live data unavailable. Displaying stored data."
+      };
+      return res.json(dbOnlyVmDetails);
+    }
+
+
+    // --- Step 3: Merge DB data with Hypervisor data ---
+    if (!dbVmRecord) {
+      // VM found on hypervisor but not in local DB (unmanaged VM)
+      console.warn(`VM ${vmExternalId} found on hypervisor ${targetHypervisor.id} but not in local DB. Returning live data only.`);
+      return res.json({
+        id: vmExternalId, // hypervisor_vm_id
+        name: hypervisorData.name || vmExternalId,
+        description: hypervisorData.description || '',
+        hypervisorId: targetHypervisor.id,
+        hypervisorType: targetHypervisor.type,
+        nodeName: hypervisorData.nodeName || null,
+        status: hypervisorData.status || 'unknown',
+        specs: hypervisorData.specs || { cpu: 0, memory: 0, disk: 0, os: 'Unknown' },
+        createdAt: hypervisorData.created_at ? new Date(hypervisorData.created_at) : new Date(0),
+        ipAddress: hypervisorData.ipAddress || null,
+        ipAddresses: hypervisorData.ipAddresses || [],
+        moid: hypervisorData.moid,
+        hostname: hypervisorData.hostname,
+        vmwareToolsStatus: hypervisorData.vmwareToolsStatus,
+        tags: hypervisorData.tags || [],
+        // No ticket, finalClient info as it's not in DB
+      });
+    }
+
+    // VM found in DB and on a connected hypervisor: Merge data
+    // DB data is primary for some fields, hypervisor data updates/complements it
+    const finalVmDetails = {
+      id: dbVmRecord.hypervisor_vm_id,
+      databaseId: dbVmRecord.id,
+      name: hypervisorData.name || dbVmRecord.name, // Prefer live name
+      description: dbVmRecord.description || hypervisorData.description, // Prefer DB, fallback to live (e.g. vSphere annotation)
+      hypervisorId: dbVmRecord.hypervisor_id,
+      hypervisorType: targetHypervisor.type,
+      nodeName: hypervisorData.nodeName || null,
+      status: hypervisorData.status || dbVmRecord.status, // Prefer live status
+      specs: {
+        cpu: hypervisorData.specs?.cpu || dbVmRecord.cpu_cores || 0, // Prefer live specs
+        memory: hypervisorData.specs?.memory || dbVmRecord.memory_mb || 0,
+        disk: hypervisorData.specs?.disk || dbVmRecord.disk_gb,
+        os: hypervisorData.specs?.os || dbVmRecord.os,
+      },
+      createdAt: dbVmRecord.created_at, // DB creation time is authoritative
+      ticket: dbVmRecord.ticket,
+      finalClientId: dbVmRecord.final_client_id,
+      finalClientName: dbVmRecord.final_client_name,
+      tags: dbVmRecord.tags || hypervisorData.tags || [], // Prefer DB tags, merge or fallback
+      ipAddress: hypervisorData.ipAddress || null,
+      ipAddresses: hypervisorData.ipAddresses || [],
+      moid: hypervisorData.moid,
+      hostname: hypervisorData.hostname,
+      vmwareToolsStatus: hypervisorData.vmwareToolsStatus,
+    };
+
+    res.json(finalVmDetails);
   } catch (error) {
     console.error(`Error fetching details for VM ${vmExternalId}:`, error);
     let errorDetails;
@@ -953,6 +1037,7 @@ app.get('/api/vms/:id', authenticate, async (req, res) => {
     });
   }
 });
+
 
 // GET /api/vms/:id/metrics - Get current performance metrics for a single VM
 app.get('/api/vms/:id/metrics', authenticate, async (req, res) => {

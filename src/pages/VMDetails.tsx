@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Server, Cpu, MemoryStick as Memory, HardDrive, Power, Network, Clock, Activity, Info, ServerCog, NetworkIcon, Tag } from 'lucide-react'; // Added Info, ServerCog, NetworkIcon, Tag
+import { Server, Cpu, MemoryStick as Memory, HardDrive, Power, Network, Clock, Activity, Info, ServerCog, NetworkIcon, Tag, Ticket, Users } from 'lucide-react'; // Added Ticket
 import type { VM, VMMetrics } from '../types/vm'; // Use the correct VM type and import VMMetrics
 import { formatBytes } from '../utils/formatters'; // Helper function to format bytes (create this file if needed)
 import { toast } from 'react-hot-toast';
@@ -169,7 +169,7 @@ export default function VMDetails() {
         </div>
 
         {/* Additional Information Section (Combined) */}
-        {(vm.description || vm.hypervisorType || vm.nodeName || (vm.tags && vm.tags.length > 0)) && ( // Add condition for tags
+        {(vm.description || vm.hypervisorType || vm.nodeName || (vm.tags && vm.tags.length > 0) || vm.ticket || vm.finalClientName) && (
           <div className="border-t border-slate-200 dark:border-slate-700 p-6">
             <h3 className="text-xl font-semibold text-slate-800 dark:text-slate-100 mb-4 flex items-center">
               <Info className="w-6 h-6 mr-2 text-primary-600" />
@@ -229,7 +229,26 @@ export default function VMDetails() {
             </div>
           </div>
         )}
-
+{/* Ticket */}
+{vm.ticket && (
+                <div className="flex items-start space-x-2">
+                  <Ticket className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Ticket:</span>
+                    <p className="text-slate-800 dark:text-slate-100">{vm.ticket}</p>
+                  </div>
+                </div>
+              )}
+              {/* Final Client */}
+              {vm.finalClientName && (
+                <div className="flex items-start space-x-2">
+                  <Users className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" /> {/* Assuming Users icon from lucide */}
+                  <div>
+                    <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Cliente Final:</span>
+                    <p className="text-slate-800 dark:text-slate-100">{vm.finalClientName}</p>
+                  </div>
+                </div>
+              )}
 
         {/* Performance Metrics Section */}
         {vm.status === 'running' && (
