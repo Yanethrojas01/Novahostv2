@@ -450,7 +450,13 @@ app.post('/api/vms', authenticate, async (req, res) => {
         const isIso = params.templateId && params.templateId.includes(':') && params.templateId.toLowerCase().includes('.iso');
 
         if (isIso) {
-            pyVmomiCreateParams.iso_path = params.templateId; // Full path like "[DS1] isos/ubuntu.iso"
+            // Extract the datastore name and the actual ISO path
+            // params.templateId is like "datastore-moid:[DatastoreName] path/to/iso.iso"
+            // or "[DatastoreName] path/to/iso.iso" if moid wasn't available
+            const parts = params.templateId.split(':');
+            const isoPathWithinDatastore = parts.length > 1 ? parts[1] : parts[0]; // Get the part after the first colon, or the whole string if no colon
+            
+            pyVmomiCreateParams.iso_path = isoPathWithinDatastore; // e.g., "[datastore1] isos/ubuntu-20.04.2.0-desktop-amd64.iso"
             // Ensure specs.os (guestId) is provided by the frontend for ISO creation
             if (!params.specs?.os) {
                  console.error('vSphere ISO creation: Missing OS identifier (guestId) in specs.os');
@@ -1236,7 +1242,7 @@ async function fetchVSphereIsoFiles(hypervisor) { // Pass full hypervisor object
 
         // Fields required by VMTemplate:
         hypervisorType: 'vsphere',
-        os: 'otherGuest64', // <<< DEFAULT GUEST ID FOR ISOs. This needs to be more intelligent.
+        os: 'otherGuest64', // Ensure this is a string literal
         specs: { // Default specs for an ISO "template"
           cpu: 1,
           memory: 1024, // MB
@@ -1249,7 +1255,11 @@ async function fetchVSphereIsoFiles(hypervisor) { // Pass full hypervisor object
     console.warn("PyVmomi /isos did not return an array:", pyvmomiIsos);
     return [];
   } catch (error) {
-    console.error(`vSphere ISOs: Error fetching ISOs via PyVmomi for ${hypervisor.id}:`, error.details?.error || error.message);
+    // More detailed error logging to help pinpoint future issues
+    console.error(`[DEBUG] Caught error in fetchVSphereIsoFiles for ${hypervisor.id}:`);
+    console.error("[DEBUG] error.message:", error.message);
+    console.error("[DEBUG] error.details:", error.details);
+    console.error("[DEBUG] error.stack:", error.stack);
     return [];
   }
 }

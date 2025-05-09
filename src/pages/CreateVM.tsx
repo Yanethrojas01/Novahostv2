@@ -3,10 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Server, Cpu, MemoryStick as Memory } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { VMCreateParams, VMTemplate, VMPlan } from '../types/vm'; // Import VMPlan
-import { Hypervisor } from '../types/hypervisor';
+import { Hypervisor, StorageResource } from '../types/hypervisor'; // Import StorageResource
 import { FinalClient } from '../types/client';
 import { useAuth } from '../hooks/useAuth'; // Import useAuth
 // import { supabase } from '../lib/supabase'; // Remove direct Supabase usage
+import { formatBytes } from '../utils/formatters'; // Import formatBytes
 import { toast } from 'react-hot-toast';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL; // Read from .env
@@ -18,10 +19,12 @@ export default function CreateVM() {
   const [isFetchingHypervisors, setIsFetchingHypervisors] = useState(true);
   const [isFetchingTemplates, setIsFetchingTemplates] = useState(false);
   const [isFetchingPlans, setIsFetchingPlans] = useState(false); // State for fetching plans
+  const [isFetchingDatastores, setIsFetchingDatastores] = useState(false); // State for fetching datastores
   const [isFetchingClients, setIsFetchingClients] = useState(false); // State for fetching clients
   const [availableHypervisors, setAvailableHypervisors] = useState<Hypervisor[]>([]);
   const [templates, setTemplates] = useState<VMTemplate[]>([]); // Use VMTemplate type
   const [availableClients, setAvailableClients] = useState<FinalClient[]>([]); // State for final clients
+  const [availableDatastores, setAvailableDatastores] = useState<StorageResource[]>([]); // State for datastores
   const [availablePlans, setAvailablePlans] = useState<VMPlan[]>([]); // State for VM Plans
   const [configMode, setConfigMode] = useState<'plan' | 'custom'>('plan'); // 'plan' or 'custom'
 
@@ -41,7 +44,7 @@ export default function CreateVM() {
     ticket: '', // Initialize ticket
     finalClientId: undefined, // Initialize finalClientId
     // vSphere specific fields (optional, can be added to UI later if needed)
-    // datastoreName: undefined,
+    datastoreName: undefined, // For vSphere ISO creation
     // resourcePoolName: undefined,
   });
 
@@ -115,10 +118,12 @@ export default function CreateVM() {
   useEffect(() => {
     setTemplates([]); // Clear previous templates
     setVmParams(prev => ({ ...prev, templateId: undefined, specs: { ...prev.specs, os: undefined } })); // Clear selected template and os
+    setAvailableDatastores([]); // Clear datastores when hypervisor changes
+    setVmParams(prev => ({ ...prev, datastoreName: undefined })); // Clear selected datastore
 
     if (vmParams.hypervisorId && authToken) {
       const fetchTemplates = async () => {
-        setIsFetchingTemplates(true);
+        setIsFetchingTemplates(true); // This state is for templates
         try {
           const response = await fetch(`${API_BASE_URL}/hypervisors/${vmParams.hypervisorId}/templates`, {
             headers: { ...(authToken && { 'Authorization': `Bearer ${authToken}` }) },
@@ -134,8 +139,32 @@ export default function CreateVM() {
         }
       };
       fetchTemplates();
+
+      // If vSphere, also fetch datastores
+      const selectedHypervisor = availableHypervisors.find(h => h.id === vmParams.hypervisorId);
+      if (selectedHypervisor?.type === 'vsphere') {
+        const fetchDatastores = async () => {
+          setIsFetchingDatastores(true);
+          try {
+            const response = await fetch(`${API_BASE_URL}/hypervisors/${vmParams.hypervisorId}/storage`, { // Assuming endpoint is /storage
+              headers: { ...(authToken && { 'Authorization': `Bearer ${authToken}` }) },
+            });
+            if (!response.ok) throw new Error('Failed to fetch datastores');
+            const data: StorageResource[] = await response.json();
+            setAvailableDatastores(data);
+          } catch (error) {
+            console.error('Error fetching datastores:', error);
+            toast.error('Could not load datastores for vSphere.');
+          } finally {
+            setIsFetchingDatastores(false);
+          }
+        };
+        fetchDatastores();
+      }
+    } else { // If hypervisorId is cleared or authToken is missing
+      setAvailableDatastores([]); // Clear datastores
     }
-  }, [vmParams.hypervisorId, authToken]);
+  }, [vmParams.hypervisorId, authToken, availableHypervisors]); // Add availableHypervisors
 
   const handleNext = () => {
     if (currentStep < 3) {
@@ -175,8 +204,8 @@ export default function CreateVM() {
       setVmParams(prev => ({
         ...prev,
         planId: selectedPlan.id,
-        specs: { 
-          ...prev.specs, 
+        specs: {
+          ...prev.specs,
           cpu: selectedPlan.specs.cpu,
           memory: selectedPlan.specs.memory,
           disk: selectedPlan.specs.disk,
@@ -195,6 +224,9 @@ export default function CreateVM() {
     const payload: VMCreateParams = {
       ...vmParams,
     };
+    // --- INICIO DEBUG ---
+    console.log('Payload being sent from CreateVM.tsx:', JSON.stringify(payload, null, 2));
+    // --- FIN DEBUG ---
     try {
       const response = await fetch(`${API_BASE_URL}/vms`, {
         method: 'POST',
@@ -230,7 +262,11 @@ export default function CreateVM() {
       return !vmParams.name || !vmParams.hypervisorId;
     }
     if (currentStep === 2) {
-      return !vmParams.templateId || (configMode === 'plan' && !vmParams.planId);
+      const isVSphereIso = availableHypervisors.find(h => h.id === vmParams.hypervisorId)?.type === 'vsphere' &&
+                           templates.find(t => t.id === vmParams.templateId)?.name?.toLowerCase().includes('.iso');
+      return !vmParams.templateId ||
+             (configMode === 'plan' && !vmParams.planId) ||
+             (isVSphereIso && !vmParams.datastoreName); // Require datastore for vSphere ISO
     }
     // No specific validation for step 3 that would disable "Next" (which is "Create VM")
     // as resource inputs have defaults or are derived.
@@ -447,7 +483,7 @@ export default function CreateVM() {
                     onChange={() => {
                       setConfigMode('plan');
                       if (availablePlans.length > 0) {
-                        handlePlanSelect(availablePlans[0].id); 
+                        handlePlanSelect(availablePlans[0].id);
                       } else {
                          setVmParams(prev => ({ ...prev, planId: undefined }));
                       }
@@ -465,7 +501,7 @@ export default function CreateVM() {
                     checked={configMode === 'custom'}
                     onChange={() => {
                       setConfigMode('custom');
-                      setVmParams(prev => ({ ...prev, planId: undefined })); 
+                      setVmParams(prev => ({ ...prev, planId: undefined }));
                     }}
                     className="form-radio"
                   />
@@ -506,11 +542,14 @@ export default function CreateVM() {
                             ? 'border-primary-500 dark:border-primary-400 bg-primary-50 dark:bg-primary-900/20 ring-2 ring-primary-300'
                             : 'border-slate-200 dark:border-slate-700'
                         }`}
-                        onClick={() => setVmParams(prev => ({
-                          ...prev,
-                          templateId: template.id,
-                          specs: { ...prev.specs, os: template.os } // Copy guestId from template
-                        }))}
+                        onClick={() => {
+                          console.log('Selected Template Object:', template); // Debug the template object
+                          setVmParams(prev => ({
+                            ...prev,
+                            templateId: template.id,
+                            specs: { ...prev.specs, os: template.os } // Copy guestId from template
+                          }));
+                        }}
                       >
                         <Server className="h-8 w-8 mx-auto mb-2 text-slate-500 dark:text-slate-400" />
                         <div className="text-sm font-medium">{template.name}</div>
@@ -520,7 +559,7 @@ export default function CreateVM() {
                           </div>
                         )}
                         <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                          {(template.size / (1024 * 1024 * 1024)).toFixed(1)} GB
+                          {template.size.toFixed(1)} GB
                         </div>
                       </button>
                     ))
@@ -529,6 +568,38 @@ export default function CreateVM() {
                   )}
                 </div>
               </div>
+
+              {/* --- INICIO DEBUG DATASOTRE DROPDOWN --- */}
+              {console.log('DEBUG: Datastore Dropdown Conditions:', {
+                isVSphere: availableHypervisors.find(h => h.id === vmParams.hypervisorId)?.type === 'vsphere',
+                isIsoTemplate: templates.find(t => t.id === vmParams.templateId)?.name?.toLowerCase().includes('.iso'),
+                vmParamsHypervisorId: vmParams.hypervisorId,
+                vmParamsTemplateId: vmParams.templateId,
+                availableDatastoresCount: availableDatastores.length,
+                isFetchingDatastores: isFetchingDatastores
+              })}
+              {/* --- FIN DEBUG DATASOTRE DROPDOWN --- */}
+              {/* Datastore Selection for vSphere ISO */}
+              {availableHypervisors.find(h => h.id === vmParams.hypervisorId)?.type === 'vsphere' &&
+               templates.find(t => t.id === vmParams.templateId)?.name?.toLowerCase().includes('.iso') &&
+               (
+                <div>
+                  <label htmlFor="datastoreName" className="form-label">Datastore de Destino (para Disco VM)</label>
+                  <select
+                    id="datastoreName"
+                    className="form-select"
+                    value={vmParams.datastoreName || ''}
+                    onChange={(e) => setVmParams(prev => ({ ...prev, datastoreName: e.target.value }))}
+                    disabled={isFetchingDatastores || availableDatastores.length === 0}
+                  >
+                    <option value="">{isFetchingDatastores ? 'Cargando datastores...' : (availableDatastores.length === 0 ? 'No hay datastores' : 'Selecciona un datastore')}</option>
+                    {availableDatastores.map(ds => (
+                      <option key={ds.id} value={ds.name}>{ds.name} (Libre: {formatBytes(ds.available)})</option>
+                    ))}
+                  </select>
+                  {availableDatastores.length === 0 && !isFetchingDatastores && <p className="text-xs text-warning-600 mt-1">No se encontraron datastores o el hypervisor no está conectado.</p>}
+                </div>
+              )}
 
               {/* Disk Size Slider (only if configMode is 'custom') */}
               {configMode === 'custom' && (
@@ -743,7 +814,7 @@ export default function CreateVM() {
           </button>
           <button
             type="button"
-            onClick={handleNext}
+            onClick={() => handleNext()}
             disabled={isNextDisabled() || isLoading}
             className="btn btn-primary"
           >
