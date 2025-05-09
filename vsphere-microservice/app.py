@@ -278,6 +278,7 @@ def list_vms():
                 'memory_mb': summary.config.memorySizeMB,
                 'disk_gb': total_disk_gb,
                 'hostname': guest.hostName if guest else None,
+                'boot_time': summary.runtime.bootTime.isoformat() if hasattr(summary.runtime, 'bootTime') and summary.runtime.bootTime else None,
                 'vmware_tools_status': guest.toolsStatus if guest else 'toolsNotInstalled',
                 # Opcional: si quieres una lista de todas las IPs
                 # 'ip_addresses': [nic.ipAddress for nic in guest.net if hasattr(guest, 'net') and guest.net and nic.ipAddress] if guest else []

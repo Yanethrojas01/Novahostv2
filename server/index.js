@@ -1902,33 +1902,132 @@ app.delete('/api/final-clients/:id', authenticate, requireAdmin, async (req, res
   } catch (err) { res.status(500).json({ error: 'Failed to delete final client' }); }
 });
 
-// --- Statistics Routes --- (Mantenidas como estaban)
+// --- Statistics Routes ---
 app.get('/api/stats/vm-creation-count', authenticate, async (req, res) => {
   const { startDate, endDate } = req.query;
-  const MAX_DAYS_FOR_DAILY_COUNTS = 90;
+  const MAX_DAYS_FOR_DAILY_COUNTS = 366; // Allow up to a year for daily counts
   if (!startDate || !endDate) return res.status(400).json({ error: 'startDate and endDate are required.' });
   const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
   if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) return res.status(400).json({ error: 'Dates must be YYYY-MM-DD.' });
-  const start = new Date(startDate), end = new Date(endDate);
+  
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  
   if (isNaN(start.getTime()) || isNaN(end.getTime())) return res.status(400).json({ error: 'Invalid date format.' });
   if (start > end) return res.status(400).json({ error: 'startDate cannot be after endDate.' });
-  const endOfDay = new Date(end); endOfDay.setDate(endOfDay.getDate() + 1);
+  
+  const endOfDay = new Date(end); endOfDay.setDate(endOfDay.getDate() + 1); // Exclusive end for query
+
   try {
-    const totalCountResult = await pool.query('SELECT COUNT(*) FROM virtual_machines WHERE created_at >= $1 AND created_at < $2', [start, endOfDay]);
-    const count = parseInt(totalCountResult.rows[0].count, 10);
+    const uniqueVms = new Map(); // Key: hypervisorId:hypervisorVmId, Value: { createdAt: Date }
+
+    // 1. Fetch VMs from Database, including hypervisor_type
+    const dbVmsResult = await pool.query(
+      `SELECT id, hypervisor_id, hypervisor_vm_id, created_at 
+       FROM virtual_machines 
+       WHERE created_at IS NOT NULL`
+    );
+    for (const dbVm of dbVmsResult.rows) {
+      if (dbVm.hypervisor_id && dbVm.hypervisor_vm_id && dbVm.created_at) {
+        const key = `${dbVm.hypervisor_id}:${dbVm.hypervisor_vm_id}`;
+        // We need hypervisor_type here. Let's fetch it with the hypervisor details.
+        // For now, we'll add it when iterating through connectedHypervisors.
+        // A more optimized way would be to JOIN hypervisors table here.
+        uniqueVms.set(key, { createdAt: new Date(dbVm.created_at), type: null }); // type will be filled later
+      }
+    }
+    console.log(`Stats: Found ${uniqueVms.size} VMs from database with creation dates.`);
+
+    // 2. Fetch VMs from Connected Hypervisors
+    const { rows: connectedHypervisors } = await pool.query(
+      `SELECT id, type, host, username, api_token, token_name, name as hypervisor_name 
+       FROM hypervisors WHERE status = 'connected'`
+    );
+
+    for (const hypervisor of connectedHypervisors) {
+      try {
+        if (hypervisor.type === 'proxmox') {
+          const proxmox = await getProxmoxClient(hypervisor.id);
+          const vmResources = await proxmox.cluster.resources.$get({ type: 'vm' });
+          for (const vm of vmResources) {
+            const vmIdStr = vm.vmid.toString();
+            const key = `${hypervisor.id}:${vmIdStr}`;
+            if (uniqueVms.has(key)) {
+              const existingVm = uniqueVms.get(key);
+              if (!existingVm.type) existingVm.type = 'proxmox'; // Fill type if from DB
+            } else if (vm.uptime) { // New VM not in DB
+              const estimatedCreationDate = new Date(Date.now() - (vm.uptime * 1000));
+              uniqueVms.set(key, { createdAt: estimatedCreationDate, type: 'proxmox' });
+            } else {
+                console.warn(`Stats: Proxmox VM ${vmIdStr} from ${hypervisor.name} missing uptime for creation date estimation.`);
+            }
+          }
+        } else if (hypervisor.type === 'vsphere') {
+          const pyvmomiVmsRaw = await callPyvmomiService('GET', '/vms', hypervisor);
+          if (Array.isArray(pyvmomiVmsRaw)) {
+            for (const vm of pyvmomiVmsRaw) {
+              const key = `${hypervisor.id}:${vm.uuid}`;
+              if (uniqueVms.has(key)) {
+                const existingVm = uniqueVms.get(key);
+                if (!existingVm.type) existingVm.type = 'vsphere'; // Fill type if from DB
+              } else if (vm.boot_time) { // New VM not in DB
+                const estimatedCreationDate = new Date(vm.boot_time);
+                uniqueVms.set(key, { createdAt: estimatedCreationDate, type: 'vsphere' });
+              } else if (!uniqueVms.has(key)) {
+                // Fallback if boot_time is not available, maybe log or skip
+                console.warn(`Stats: vSphere VM ${vm.uuid} from ${hypervisor.name} missing boot_time for creation date estimation.`);
+                // uniqueVms.set(key, { createdAt: new Date(0), type: 'vsphere' }); // Or handle as unknown creation date
+              }
+            }
+          }
+        }
+      } catch (hypervisorError) {
+        console.error(`Stats: Error fetching VMs from hypervisor ${hypervisor.name} (ID: ${hypervisor.id}):`, hypervisorError.message);
+      }
+    }
+    console.log(`Stats: Total unique VMs (DB + Hypervisors) before date filtering: ${uniqueVms.size}`);
+
+    // 3. Filter by Date Range and Count
+    const filteredVmCreationDates = [];
+    uniqueVms.forEach(vmData => {
+      if (vmData.type && vmData.createdAt >= start && vmData.createdAt < endOfDay) { // Ensure type is set
+        filteredVmCreationDates.push({ date: vmData.createdAt, type: vmData.type });
+      }
+    });
+
+    const count = filteredVmCreationDates.length;
     let dailyCounts = null;
+
     const diffTime = Math.abs(end.getTime() - start.getTime());
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+
     if (diffDays <= MAX_DAYS_FOR_DAILY_COUNTS) {
-      const dailyResult = await pool.query(
-        `SELECT DATE(created_at) as date, COUNT(*) as count FROM virtual_machines WHERE created_at >= $1 AND created_at < $2 GROUP BY DATE(created_at) ORDER BY date ASC`,
-        [start, endOfDay]
-      );
-      dailyCounts = dailyResult.rows.map(row => ({ date: new Date(row.date).toISOString().split('T')[0], count: parseInt(row.count, 10) }));
+      const countsByDate = {};
+      filteredVmCreationDates.forEach(vm => {
+        const dateString = vm.date.toISOString().split('T')[0]; // YYYY-MM-DD
+        if (!countsByDate[dateString]) {
+          countsByDate[dateString] = { date: dateString, proxmox: 0, vsphere: 0, total: 0 };
+        }
+        if (vm.type === 'proxmox') {
+          countsByDate[dateString].proxmox += 1;
+        } else if (vm.type === 'vsphere') {
+          countsByDate[dateString].vsphere += 1;
+        }
+        countsByDate[dateString].total +=1;
+      });
+      dailyCounts = Object.values(countsByDate)
+        .sort((a, b) => new Date(a.date) - new Date(b.date));
     }
+
+    console.log(`Stats: VMs created between ${startDate} and ${endDate}: ${count}. Daily counts generated: ${!!dailyCounts}`);
     res.json({ count, startDate, endDate, dailyCounts });
-  } catch (err) { res.status(500).json({ error: 'Failed to retrieve VM creation statistics' }); }
+  } catch (err) {
+    console.error('Error in /api/stats/vm-creation-count:', err);
+    res.status(500).json({ error: 'Failed to retrieve VM creation statistics' });
+  }
 });
+
+
 app.get('/api/stats/client-vms/:clientId', authenticate, async (req, res) => {
   const { clientId } = req.params;
   const page = parseInt(req.query.page || '1', 10);

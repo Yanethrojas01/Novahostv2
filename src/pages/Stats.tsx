@@ -3,7 +3,7 @@ import { Calendar, Users, Server, ChevronLeft, ChevronRight } from 'lucide-react
 import { toast } from 'react-hot-toast';
 import {
   LineChart, // Changed from BarChart
-  Line,      // Changed from Bar
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -11,6 +11,8 @@ import {
   ResponsiveContainer,
   Legend,    // Optional: if you want a legend
 } from 'recharts';
+import { BarChart, Bar } from 'recharts'; // Import BarChart and Bar for the new chart type
+
 import { Link } from 'react-router-dom'; // Import Link from react-router-dom
 import { FinalClient } from '../types/client'; // Import FinalClient type
 import { VM } from '../types/vm'; // Import VM type
@@ -22,8 +24,12 @@ interface VMCreationStats {
   count: number;
   startDate: string;
   endDate: string;
-  // Podrías añadir más detalles si la API los devuelve, como datos por día para un gráfico
-  dailyCounts?: { date: string; count: number }[] | null; // Allow null
+  dailyCounts?: {
+    date: string;
+    proxmox: number;
+    vsphere: number;
+    total: number; // Keep total if you still want to show it or use it
+  }[] | null;
 }
 
 export default function StatsPage() {
@@ -202,32 +208,34 @@ export default function StatsPage() {
           <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">máquinas virtuales.</p>
 
           {/* Gráfico de Barras si hay datos diarios */}
-          {stats.dailyCounts && stats.dailyCounts.length > 0 && (
+          {stats.dailyCounts && stats.dailyCounts.length > 0 ? (
             <div className="mt-8">
               <h3 className="text-md font-medium text-slate-900 dark:text-white mb-4">Creaciones por Día</h3>
               <ResponsiveContainer width="100%" height={300}>
-                <LineChart // Changed from BarChart
+                <BarChart
                   data={stats.dailyCounts}
                   margin={{ top: 5, right: 20, left: -10, bottom: 5 }} // Ajusta márgenes si es necesario
                 >
                   <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2} />
                   <XAxis dataKey="date" tick={{ fontSize: 12 }} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
-                  <Tooltip 
-                    contentStyle={{ 
+                  <Tooltip
+                    contentStyle={{
                       backgroundColor: 'rgba(30, 41, 59, 0.8)', // bg-slate-800 with opacity
                       borderColor: 'rgba(71, 85, 105, 0.8)', // border-slate-600 with opacity
                       borderRadius: '0.375rem' // rounded-md
-                    }} 
+                    }}
                     itemStyle={{ color: '#cbd5e1' }} // text-slate-300
                     labelStyle={{ color: '#f1f5f9', fontWeight: 'bold' }} // text-slate-100
                   />
-                <Legend /> 
-                  <Line type="monotone" dataKey="count" stroke="var(--color-primary-500)" strokeWidth={2} activeDot={{ r: 6 }} name="VMs Creadas" /> {/* Changed from Bar */}
-                </LineChart>
+                  <Legend />
+                  {/* <Bar dataKey="total" fill="var(--color-primary-500)" name="Total VMs" /> */}
+                  <Bar dataKey="proxmox" stackId="a" fill="var(--color-orange-500)" name="Proxmox" />
+                  <Bar dataKey="vsphere" stackId="a" fill="var(--color-blue-500)" name="vSphere" />
+                </BarChart>
               </ResponsiveContainer>
             </div>
-          )}
+          ) : null} {/* Explicitly return null if condition is false */}
 
         </div>
       )}
