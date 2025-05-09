@@ -1349,19 +1349,102 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
       if (hypervisor.type === 'proxmox') {
         // ... (Proxmox details fetching - Mantenida como estaba)
         console.log(`Hypervisor ${id} (Proxmox) is connected, fetching details...`);
+        // --- Fetch Proxmox Details ---
         try {
-            const proxmox = await getProxmoxClient(hypervisor.id);
-            const [basicNodesData, storageData, templatesData] = await Promise.all([
-                proxmox.nodes.$get().catch(e => { console.error(`Error fetching Proxmox node list for ${id}:`, e.message); return []; }),
-                proxmox.storage.$get().catch(e => { console.error(`Error fetching Proxmox storage for ${id}:`, e.message); return []; }),
-                fetchProxmoxTemplates(proxmox).catch(e => { console.error(`Error fetching Proxmox templates for ${id}:`, e.message); return []; })
-            ]);
-            // ... (resto de la lógica de agregación y capacidad de Proxmox) ...
-            // (Esta parte es larga y se mantiene igual, solo se omite aquí por brevedad)
-            hypervisor.nodes = basicNodesData; // Simplificado para el ejemplo
-            hypervisor.storage = storageData;
-            hypervisor.templates = templatesData;
-            // Calcular aggregatedStats y planCapacityEstimates como antes...
+          const proxmox = await getProxmoxClient(hypervisor.id);
+          const [nodesData, storageData, templatesData, vmPlansData] = await Promise.all([
+            proxmox.nodes.$get().catch(e => { console.error(`Proxmox nodes fetch error for ${id}: ${e.message}`); return []; }),
+            proxmox.storage.$get().catch(e => { console.error(`Proxmox storage fetch error for ${id}: ${e.message}`); return []; }),
+            fetchProxmoxTemplates(proxmox).catch(e => { console.error(`Proxmox templates fetch error for ${id}: ${e.message}`); return []; }),
+            pool.query('SELECT id, name, specs FROM vm_plans WHERE is_active = true').catch(e => { console.error(`DB vm_plans fetch error: ${e.message}`); return { rows: [] }; })
+          ]);
+
+          hypervisor.storage = storageData.map(s => ({
+            id: s.storage, name: s.storage, type: s.type,
+            size: s.total || 0, used: s.used || 0, available: s.avail || 0,
+            path: s.path,
+          }));
+
+          hypervisor.templates = templatesData; // Already formatted by fetchProxmoxTemplates
+
+          // Fetch detailed status for each node for Proxmox
+          hypervisor.nodes = await Promise.all(nodesData.map(async (node) => {
+            try {
+              const nodeStatus = await proxmox.nodes.$(node.node).status.$get();
+              const totalLogicalCpus = (nodeStatus.cpuinfo?.cores || 0) * (nodeStatus.cpuinfo?.sockets || 1);
+              
+              // Plan capacity estimation for this node
+              const planCapacityEstimates = vmPlansData.rows.map(plan => {
+                const planSpecs = typeof plan.specs === 'string' ? JSON.parse(plan.specs) : plan.specs;
+                let estimatedCount = 0;
+                if (planSpecs && planSpecs.cpu > 0 && planSpecs.memory > 0 && nodeStatus.memory?.free > 0 && totalLogicalCpus > 0) {
+                  const cpuAvailableForEstimation = totalLogicalCpus * (1 - (nodeStatus.cpu || 0)); // Available CPU capacity (fraction * cores)
+                  const memoryAvailableForEstimationMB = (nodeStatus.memory.free / (1024 * 1024)); // Available memory in MB
+
+                  const vmsByCpu = Math.floor(cpuAvailableForEstimation / planSpecs.cpu);
+                  const vmsByMemory = Math.floor(memoryAvailableForEstimationMB / planSpecs.memory);
+                  estimatedCount = Math.min(vmsByCpu, vmsByMemory);
+                }
+                return {
+                  planId: plan.id,
+                  planName: plan.name,
+                  estimatedCount: Math.max(0, estimatedCount), // Ensure non-negative
+                  specs: planSpecs,
+                };
+              });
+
+              return {
+                id: node.node, name: node.node, status: node.status === 'online' ? 'online' : 'offline',
+                cpu: { cores: totalLogicalCpus, usage: nodeStatus.cpu || 0 }, // usage is 0-1 fraction
+                memory: {
+                  total: nodeStatus.memory?.total || 0,
+                  used: nodeStatus.memory?.used || 0,
+                  free: nodeStatus.memory?.free || 0,
+                },
+                rootfs: nodeStatus.rootfs ? {
+                  total: nodeStatus.rootfs.total || 0,
+                  used: nodeStatus.rootfs.used || 0,
+                } : undefined,
+                planCapacityEstimates,
+                // physicalDisks would require additional calls, e.g., smartctl or lshw on node if API exposed it
+              };
+            } catch (nodeDetailError) {
+              console.error(`Error fetching details for Proxmox node ${node.node}: ${nodeDetailError.message}`);
+              return { id: node.node, name: node.node, status: 'unknown', cpu: undefined, memory: undefined };
+            }
+          }));
+
+          // Calculate AggregatedStats for Proxmox
+          let totalCores = 0;
+          let totalCpuUsageSum = 0; // Sum of (usage * cores)
+          let totalMemoryBytes = 0;
+          let usedMemoryBytes = 0;
+
+          hypervisor.nodes.forEach(node => {
+            if (node.cpu) {
+              totalCores += node.cpu.cores;
+              totalCpuUsageSum += (node.cpu.usage * node.cpu.cores);
+            }
+            if (node.memory) {
+              totalMemoryBytes += node.memory.total;
+              usedMemoryBytes += node.memory.used;
+            }
+          });
+          const avgCpuUsagePercent = totalCores > 0 ? (totalCpuUsageSum / totalCores) * 100 : 0;
+
+          let totalDiskBytesAgg = 0;
+          let usedDiskBytesAgg = 0;
+          hypervisor.storage.forEach(s => {
+            totalDiskBytesAgg += s.size;
+            usedDiskBytesAgg += s.used;
+          });
+
+          hypervisor.aggregatedStats = {
+            totalCores, avgCpuUsagePercent, totalMemoryBytes, usedMemoryBytes,
+            totalDiskBytes: totalDiskBytesAgg, usedDiskBytes: usedDiskBytesAgg,
+            storagePoolCount: hypervisor.storage?.length || 0,
+          };
+
         } catch (detailError) {
             console.error(`Failed to fetch Proxmox details for connected hypervisor ${id}:`, detailError);
             hypervisor.detailsError = detailError.message || 'Failed to load Proxmox details';
@@ -1369,17 +1452,45 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
       } else if (hypervisor.type === 'vsphere') {
         console.log(`Hypervisor ${id} (vSphere) is connected, fetching details via PyVmomi...`);
         try {
-          // TODO: PYVMOMI: Consider a single '/hypervisor-details' endpoint in app.py
-          // that returns nodes, storage, templates, and aggregated stats in one call.
-          // For now, making separate calls as per previous structure.
 
           // Fetch Nodes (ESXi Hosts) via PyVmomi
           const pyvmomiNodes = await callPyvmomiService('GET', '/hosts', hypervisor).catch(e => { console.error(`PyVmomi /hosts error: ${e.message}`); return []; });
-          hypervisor.nodes = Array.isArray(pyvmomiNodes) ? pyvmomiNodes.map(h => ({ /* map to frontend structure */ id: h.moid || h.name, name: h.name, status: 'online', cpu: {}, memory: {} })) : [];
+          if (Array.isArray(pyvmomiNodes)) {
+            hypervisor.nodes = pyvmomiNodes.map(host => ({
+              id: host.moid || host.name,
+              name: host.name,
+              status: (host.connection_state === 'connected' && host.power_state === 'poweredOn')
+                        ? (host.overall_status === 'green' ? 'online' : (host.overall_status === 'yellow' || host.overall_status === 'red' ? 'warning' : 'unknown'))
+                        : 'offline',
+              cpu: {
+                cores: host.cpu_cores || 0,
+                usage: (host.cpu_usage_percent || 0) / 100, // Convert percentage from Python (0-100) to fraction (0-1)
+              },
+              memory: {
+                total: host.memory_total_bytes || 0,
+                used: host.memory_used_bytes || 0,
+                free: (host.memory_total_bytes || 0) - (host.memory_used_bytes || 0),
+              },
+              vmCount: host.vm_count,
+              powerState: host.power_state,
+              connectionState: host.connection_state,
+              // physicalDisks and planCapacityEstimates can be populated if app.py /hosts provides them
+            }));
+          } else {
+            hypervisor.nodes = [];
+          }
           
           // Fetch Storage (Datastores) via PyVmomi
           const pyvmomiStorage = await callPyvmomiService('GET', '/datastores', hypervisor).catch(e => { console.error(`PyVmomi /datastores error: ${e.message}`); return []; });
-          hypervisor.storage = Array.isArray(pyvmomiStorage) ? pyvmomiStorage.map(s => ({ /* map to frontend structure */ id: s.moid || s.name, name: s.name, size: s.capacity_bytes, used: s.capacity_bytes - s.free_space_bytes })) : [];
+          hypervisor.storage = Array.isArray(pyvmomiStorage) ? pyvmomiStorage.map(ds => ({
+            id: ds.moid || ds.name,
+            name: ds.name,
+            type: ds.type,
+            size: ds.capacity_bytes || 0,
+            used: (ds.capacity_bytes || 0) - (ds.free_space_bytes || 0),
+            available: ds.free_space_bytes || 0,
+            path: null, // Not typically relevant for vSphere datastores
+          })) : [];
 
           // Fetch Templates & ISOs via PyVmomi
           const vmTemplates = await fetchVSphereVMTemplates(hypervisor).catch(e => { console.error(`PyVmomi /templates error: ${e.message}`); return []; });
@@ -1387,7 +1498,43 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
           hypervisor.templates = vmTemplates.concat(isoFiles);
 
           console.log(`Fetched vSphere details for ${id} via PyVmomi: ${hypervisor.nodes.length} nodes, ${hypervisor.storage.length} storage, ${hypervisor.templates.length} templates/ISOs`);
-          // Calcular aggregatedStats y planCapacityEstimates para vSphere como antes, usando los datos de PyVmomi...
+          
+          // Calculate AggregatedStats for vSphere
+          if (hypervisor.nodes && hypervisor.nodes.length > 0) {
+            let totalCores = 0;
+            let totalCpuUsageSum = 0; // Sum of (usage * cores) to average later
+            let totalMemoryBytes = 0;
+            let usedMemoryBytes = 0;
+
+            hypervisor.nodes.forEach(node => {
+              if (node.cpu) {
+                totalCores += node.cpu.cores;
+                totalCpuUsageSum += (node.cpu.usage * node.cpu.cores); // Weighted sum for accurate averaging
+              }
+              if (node.memory) {
+                totalMemoryBytes += node.memory.total;
+                usedMemoryBytes += node.memory.used;
+              }
+            });
+            
+            const avgCpuUsagePercent = totalCores > 0 ? (totalCpuUsageSum / totalCores) * 100 : 0;
+
+            let totalDiskBytesAgg = 0;
+            let usedDiskBytesAgg = 0;
+            if (hypervisor.storage && hypervisor.storage.length > 0) {
+              hypervisor.storage.forEach(s => {
+                totalDiskBytesAgg += s.size;
+                usedDiskBytesAgg += s.used;
+              });
+            }
+
+            hypervisor.aggregatedStats = {
+              totalCores, avgCpuUsagePercent, totalMemoryBytes, usedMemoryBytes,
+              totalDiskBytes: totalDiskBytesAgg, usedDiskBytes: usedDiskBytesAgg,
+              storagePoolCount: hypervisor.storage?.length || 0,
+            };
+          }
+          // TODO: Calculate planCapacityEstimates for vSphere if needed, similar to Proxmox
         } catch (detailError) {
           console.error(`Failed to fetch vSphere details via PyVmomi for ${id}:`, detailError);
           hypervisor.detailsError = detailError.message || 'Failed to load vSphere details via PyVmomi';
