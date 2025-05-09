@@ -113,13 +113,15 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
         throw new Error(updatedHypervisorData.error || `HTTP error! status: ${response.status}`);
       }
 
-      // The backend /connect endpoint ONLY returns { status, lastSync }
+      // The backend /connect endpoint ONLY returns { status, last_sync }
       // We need to merge this with the existing hypervisor data
       const formattedHypervisor: Hypervisor = {
-        ...hypervisor, // Keep existing data
-        status: updatedHypervisorData.status, // Update status
-        last_sync: updatedHypervisorData.lastSync ? new Date(updatedHypervisorData.lastSync).toISOString() : null,
-        updated_at: new Date().toISOString(), // Assume update time is now
+        ...hypervisor, // Mantener datos existentes
+        status: updatedHypervisorData.status, // Actualizar estado
+        // Leer 'last_sync' (snake_case) de la respuesta del API
+        // El backend ya devuelve last_sync como una cadena ISO o null.
+        last_sync: updatedHypervisorData.last_sync || null,
+        updated_at: new Date().toISOString(), // Asumir que la hora de actualización es ahora
       };
 
       toast.success(`¡Conexión ${getStatusText(formattedHypervisor.status)}!`, { id: toastId }); // Use translated status

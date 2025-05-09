@@ -1244,7 +1244,7 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
   }
 
   let status = 'disconnected';
-  let lastSync = null;
+  let last_sync = null;
   let cleanHost = host;
   const name = host.replace(/^https?:\/\//, '').split(/[/:]/)[0].replace(/[^\w-]/g, '-').substring(0, 50);
   let determinedVsphereSubtype = clientVsphereSubtype || null; // Use provided subtype or determine later
@@ -1272,7 +1272,7 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
       const versionResponse = await proxmox.nodes.$(nodeName).version.$get();
       if (!versionResponse?.version) throw new Error('Invalid Proxmox version response');
       status = 'connected';
-      lastSync = new Date();
+      last_sync = new Date();
       console.log(`Connected to Proxmox ${versionResponse.version} at ${cleanHost}:${port}`);
     } else if (type === 'vsphere') {
       console.log(`Attempting vSphere connection to: ${host} with user: ${username} via PyVmomi microservice`);
@@ -1291,7 +1291,7 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
         });
         
         status = 'connected'; // If callPyvmomiService doesn't throw, connection is successful
-        lastSync = new Date();
+        last_sync = new Date();
         determinedVsphereSubtype = connectResponse.vsphere_subtype || clientVsphereSubtype || 'esxi'; // Prefer subtype from microservice
         console.log(`Successfully connected to vSphere via PyVmomi. Response:`, connectResponse);
         cleanHost = host.split(':')[0]; // Store clean host
@@ -1314,7 +1314,7 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
             (type === 'vsphere' ? password : (apiToken || null)),
             (type === 'proxmox' ? (tokenName || null) : null),
             determinedVsphereSubtype,
-            status, lastSync
+            status, last_sync
         ]
     );
     const responseData = dbResult.rows[0];
@@ -1671,7 +1671,7 @@ app.post('/api/hypervisors/:id/connect', authenticate, requireAdmin, async (req,
     if (!hypervisor) return res.status(404).json({ error: 'Hypervisor not found' });
 
     let newStatus = 'error';
-    let lastSync = null;
+    let last_sync = null;
     let connectionMessage = `Connection attempt for hypervisor ${id} (${hypervisor.type}).`;
     let determinedVsphereSubtype = hypervisor.vsphere_subtype; // Keep existing if not redetermined
 
@@ -1690,7 +1690,7 @@ app.post('/api/hypervisors/:id/connect', authenticate, requireAdmin, async (req,
       if (!versionResponse?.version) throw new Error('Failed to retrieve Proxmox version.');
       // const permissionsInfo = await proxmox.access.permissions.$get(); // Optional: permission check
       newStatus = 'connected';
-      lastSync = new Date();
+      last_sync = new Date();
       connectionMessage = `Successfully connected to Proxmox user ${hypervisor.username} on ${cleanHost}:${port}`;
     } else if (hypervisor.type === 'vsphere') {
       console.log(`Attempting vSphere connection for hypervisor ${id} (${hypervisor.host}) via PyVmomi`);
@@ -1698,7 +1698,7 @@ app.post('/api/hypervisors/:id/connect', authenticate, requireAdmin, async (req,
         // Pass the full hypervisor object from DB to callPyvmomiService
         const connectResponse = await callPyvmomiService('POST', '/connect', hypervisor, {});
         newStatus = 'connected';
-        lastSync = new Date();
+        last_sync = new Date();
         determinedVsphereSubtype = connectResponse.vsphere_subtype || hypervisor.vsphere_subtype || 'esxi';
         connectionMessage = `Successfully connected to vSphere via PyVmomi. Subtype: ${determinedVsphereSubtype}.`;
         console.log(connectionMessage, connectResponse);
@@ -1715,7 +1715,7 @@ app.post('/api/hypervisors/:id/connect', authenticate, requireAdmin, async (req,
     const { rows: [updatedHypervisor] } = await pool.query(
       `UPDATE hypervisors SET status = $1, last_sync = $2, vsphere_subtype = $3, updated_at = NOW()
        WHERE id = $4 RETURNING id, name, status, last_sync, vsphere_subtype`,
-      [newStatus, lastSync, determinedVsphereSubtype, id]
+      [newStatus, last_sync, determinedVsphereSubtype, id]
     );
     res.json({ ...updatedHypervisor, message: connectionMessage });
     console.log(`Updated hypervisor ${id} status to ${newStatus}.`);

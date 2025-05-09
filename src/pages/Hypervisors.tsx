@@ -39,7 +39,7 @@ export default function Hypervisors() {
       // Also ensure vsphere_subtype is handled (it should be included in ...h)
       const formattedData = data.map(h => ({
         ...h,
-        lastSync: h.last_sync ? new Date(h.last_sync) : null,
+        last_sync: h.last_sync ? new Date(h.last_sync) : null,
         createdAt: h.created_at ? new Date(h.created_at) : undefined, // Convert createdAt
         updatedAt: h.updated_at ? new Date(h.updated_at) : undefined, // Convert updatedAt
       }));
