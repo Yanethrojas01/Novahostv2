@@ -11,6 +11,7 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [rememberMe, setRememberMe] = useState(false); // Estado para "Recuérdame"
   const [isLoading, setIsLoading] = useState(false);
 
   const { login } = useAuth(); // Keep using the context's login function to store state
@@ -44,7 +45,7 @@ export default function Login() {
 
       // If login is successful, call the context's login function with the received data
       // The context function should handle storing the token and user info
-      login(data.accessToken, data.user); // Pass token and user info to context
+      login(data.accessToken, data.user, rememberMe); // Pass token, user info, and rememberMe state to context
 
       navigate('/');
     } catch (err) { // Catch specific error type if possible
@@ -148,6 +149,8 @@ export default function Login() {
                     name="remember-me"
                     type="checkbox"
                     className="form-checkbox"
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
                   />
                   <label htmlFor="remember-me" className="ml-2 block text-sm text-slate-700 dark:text-slate-300">
                     Recuérdame
