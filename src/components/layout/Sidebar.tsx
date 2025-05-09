@@ -28,10 +28,6 @@ export default function Sidebar({ mobile = false, onClose }: SidebarProps) {
     navigation.splice(1, 0, { name: 'Crear VM', href: '/create-vm', icon: Plus });
     // Add "Configuración" for admin and user roles
     navigation.push({ name: 'Configuración', href: '/settings', icon: Cog });
-  } else if (user?.role === 'admin') { // Only admin can see settings if not user (though above covers it)
-    // This specific else if might be redundant if admin is already covered by the first if.
-    // However, if you wanted different items for admin vs user, this structure helps.
-    navigation.push({ name: 'Configuración', href: '/settings', icon: Cog });
   }
   return (
     <div className="flex flex-col h-full border-r border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
