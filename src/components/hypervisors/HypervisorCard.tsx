@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom'; // Import Link
-import { Cloud, Server as Servers, Clock, AlertCircle, Layers, Cpu, MemoryStick, Database, ExternalLink, ServerCog } from 'lucide-react'; // Added Cpu, MemoryStick, Database, ExternalLink, ServerCog
+import { Cloud, Server as Servers, Clock, AlertCircle, Layers, Cpu, MemoryStick, Database, ExternalLink, ServerCog, KeyRound, X } from 'lucide-react'; // Added KeyRound, X
+import { useAuth } from '../../hooks/useAuth'; // Import useAuth hook
 import { Hypervisor, NodeResource, StorageResource } from '../../types/hypervisor'; // Removed NodeTemplate
 import { VMTemplate } from '../../types/vm'; // Import VMTemplate from vm.ts
 import { formatDistanceToNow } from 'date-fns';
@@ -16,6 +17,7 @@ interface HypervisorCardProps {
   onConnectionChange: (updatedHypervisor: Hypervisor) => void; // Callback to update parent state
 }
 
+
 export default function HypervisorCard({ hypervisor, onDelete, onConnectionChange }: HypervisorCardProps) {
   const [isConnecting, setIsConnecting] = useState(false);
   // State for detailed resources
@@ -23,6 +25,15 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
   const [storage, setStorage] = useState<StorageResource[] | null>(null);
   const [templates, setTemplates] = useState<VMTemplate[] | null>(null); // Use VMTemplate[] type
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+  const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
+  const [updateCredentials, setUpdateCredentials] = useState({
+    new_password: '',
+    new_api_token: '',
+    new_token_name: '',
+  });
+  const [isUpdatingCredentials, setIsUpdatingCredentials] = useState(false);
+
+  const { user } = useAuth(); // Get the current user from auth context
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -148,6 +159,57 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
     }
   }, [hypervisor.id, hypervisor.status]); // Re-fetch if ID or status changes
 
+  const handleUpdateCredentialsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setUpdateCredentials(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleUpdateCredentialsSubmit = async () => {
+    setIsUpdatingCredentials(true);
+    const toastId = toast.loading('Actualizando credenciales...');
+
+    const payload: any = {
+      // Incluir campos existentes para que no se borren si el backend los espera
+      name: hypervisor.name,
+      host: hypervisor.host,
+      username: hypervisor.username,
+    };
+
+    if (hypervisor.type === 'vsphere') {
+      if (updateCredentials.new_password) payload.new_password = updateCredentials.new_password;
+    } else if (hypervisor.type === 'proxmox') {
+      if (updateCredentials.new_password) payload.new_password = updateCredentials.new_password;
+      if (updateCredentials.new_api_token) payload.new_api_token = updateCredentials.new_api_token;
+      if (updateCredentials.new_token_name) payload.new_token_name = updateCredentials.new_token_name;
+    }
+
+    try {
+      const token = localStorage.getItem('authToken');
+      const response = await fetch(`${API_BASE_URL}/hypervisors/${hypervisor.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token && { 'Authorization': `Bearer ${token}` }),
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const updatedData = await response.json();
+      if (!response.ok) {
+        throw new Error(updatedData.error || `Error HTTP: ${response.status}`);
+      }
+
+      toast.success('Credenciales actualizadas y conexión verificada.', { id: toastId });
+      onConnectionChange(updatedData); // Actualizar estado en el padre
+      setIsUpdateModalOpen(false);
+      setUpdateCredentials({ new_password: '', new_api_token: '', new_token_name: '' }); // Reset form
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Error desconocido';
+      toast.error(`Fallo al actualizar: ${message}`, { id: toastId });
+    } finally {
+      setIsUpdatingCredentials(false);
+    }
+  };
   // --- Calculation Helpers for Aggregated Stats ---
   const calculateAggregatedStats = () => {
     const onlineNodes = nodes?.filter(n => n.status === 'online') || [];
@@ -335,37 +397,121 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
             )}
           </div>
         )}
-        {/* End Detailed Resource Section */}
+        {/* End Detailed Resource Section - This div should close the "p-5" content area */}
+      </div>
 
         {/* Action Buttons Section */}
-        <div className="border-t border-slate-200 dark:border-slate-700 pt-3 mt-4 flex justify-between items-center">
-          {/* Connect/Test Button */}
-          {hypervisor.status === 'disconnected' || hypervisor.status === 'error' ? (
+        {/* Only show action buttons if the current user is an admin */}
+        {user?.role === 'admin' && (
+          <div className="border-t border-slate-200 dark:border-slate-700 pt-3 mt-4 flex flex-wrap gap-2 justify-between items-center">
+            <div className="flex gap-2">
+              {/* Connect/Test Button */}
+              {hypervisor.status === 'disconnected' || hypervisor.status === 'error' ? (
+                <button
+                  onClick={handleConnectionAttempt}
+                  className="btn btn-primary text-xs"
+                  disabled={isConnecting}
+                >
+                  {isConnecting ? 'Conectando...' : 'Conectar'}
+                </button>
+              ) : (
+                <button
+                  onClick={handleConnectionAttempt} // Use the same handler for testing
+                  className="btn btn-outline text-xs"
+                  disabled={isConnecting}
+                >
+                  {isConnecting ? 'Probando...' : 'Probar Conexión'}
+                </button>
+              )}
+              <button
+                onClick={() => setIsUpdateModalOpen(true)}
+                className="btn btn-secondary text-xs"
+              >
+                <KeyRound className="h-3 w-3 mr-1" /> Actualizar Creds
+              </button>
+            </div>
+            {/* Delete Button */}
             <button
-              onClick={handleConnectionAttempt}
-              className="btn btn-primary text-xs"
-              disabled={isConnecting}
+              onClick={() => onDelete(hypervisor.id)}
+              className="btn btn-danger text-xs"
             >
-              {isConnecting ? 'Conectando...' : 'Conectar'}
+              Eliminar
             </button>
-          ) : (
-            <button
-              onClick={handleConnectionAttempt} // Use the same handler for testing
-              className="btn btn-outline text-xs"
-              disabled={isConnecting}
-            >
-              {isConnecting ? 'Probando...' : 'Probar Conexión'}
-            </button>
-          )}
-          {/* Delete Button */}
-          <button
-            onClick={() => onDelete(hypervisor.id)}
-            className="btn btn-danger text-xs"
+          </div>        
+        )}
+
+      {/* Update Credentials Modal */}
+      {isUpdateModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-xl w-full max-w-md"
           >
-            Eliminar
-          </button>
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Actualizar Credenciales para {hypervisor.name}</h2>
+              <button onClick={() => setIsUpdateModalOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {hypervisor.type === 'vsphere' && (
+                <div>
+                  <label className="form-label">Nueva Contraseña vSphere</label>
+                  <input
+                    type="password"
+                    name="new_password"
+                    className="form-input"
+                    value={updateCredentials.new_password}
+                    onChange={handleUpdateCredentialsChange}
+                  />
+                </div>
+              )}
+              {hypervisor.type === 'proxmox' && (
+                <>
+                  <div>
+                    <label className="form-label">Nueva Contraseña Proxmox (Opcional si usa Token)</label>
+                    <input
+                      type="password"
+                      name="new_password"
+                      className="form-input"
+                      value={updateCredentials.new_password}
+                      onChange={handleUpdateCredentialsChange}
+                    />
+                  </div>
+                  <p className="text-xs text-center text-slate-500 dark:text-slate-400 my-2">O</p>
+                  <div>
+                    <label className="form-label">Nuevo Nombre del Token API Proxmox</label>
+                    <input
+                      type="text"
+                      name="new_token_name"
+                      className="form-input"
+                      placeholder="ej. novahost_token"
+                      value={updateCredentials.new_token_name}
+                      onChange={handleUpdateCredentialsChange}
+                    />
+                  </div>
+                  <div>
+                    <label className="form-label">Nuevo Secreto del Token API Proxmox</label>
+                    <input
+                      type="password" // Usar password para ocultar el token
+                      name="new_api_token"
+                      className="form-input"
+                      placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                      value={updateCredentials.new_api_token}
+                      onChange={handleUpdateCredentialsChange}
+                    />
+                  </div>
+                </>
+              )}
+              <button onClick={handleUpdateCredentialsSubmit} className="btn btn-primary w-full" disabled={isUpdatingCredentials}>
+                {isUpdatingCredentials ? 'Actualizando...' : 'Actualizar y Probar'}
+              </button>
+            </div>
+          </motion.div>
         </div>
-      </div>
+      )}
     </motion.div>
   );
 }

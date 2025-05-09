@@ -1682,16 +1682,87 @@ function getProxmoxError(error) {
 app.put('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) => {
   const { id } = req.params;
   console.log(`PUT /api/hypervisors/${id} called with body:`, req.body);
-  const { name, host, username, apiToken } = req.body;
+  const {
+    name, host, username, // Campos existentes
+    new_password, new_api_token, new_token_name // Nuevos campos para credenciales
+  } = req.body;
 
-  if (!name || !host || !username) {
-      return res.status(400).json({ error: 'Missing required fields: name, host, username' });
+  if (!name && !host && !username && !new_password && !new_api_token && !new_token_name) {
+    return res.status(400).json({ error: 'No fields provided for update.' });
   }
+
   try {
+    const { rows: [currentHypervisor] } = await pool.query(
+      'SELECT id, type, host as current_host, username as current_username, api_token as current_api_token, token_name as current_token_name, name as current_name FROM hypervisors WHERE id = $1',
+      [id]
+    );
+
+    if (!currentHypervisor) {
+      return res.status(404).json({ error: 'Hypervisor not found' });
+    }
+
+    // Determinar los valores finales para la actualización
+    const finalName = name || currentHypervisor.current_name;
+    const finalHost = host || currentHypervisor.current_host;
+    const finalUsername = username || currentHypervisor.current_username;
+    let finalApiToken = currentHypervisor.current_api_token;
+    let finalTokenName = currentHypervisor.current_token_name;
+    let status = currentHypervisor.status; // Mantener estado actual por defecto
+    let last_sync = currentHypervisor.last_sync;
+
+    // Si se proporcionan nuevas credenciales, probarlas
+    if (new_password || (new_api_token && new_token_name)) {
+      console.log(`Attempting to verify new credentials for hypervisor ${id}`);
+      const testHypervisorData = { // Usar datos finales para la prueba
+        id: currentHypervisor.id,
+        type: currentHypervisor.type,
+        host: finalHost,
+        username: finalUsername,
+        api_token: new_password || new_api_token, // Para vSphere, api_token es la contraseña
+        token_name: new_token_name || null, // Solo para Proxmox
+      };
+
+      try {
+        if (currentHypervisor.type === 'proxmox') {
+          const [dbHost, dbPortStr] = testHypervisorData.host.split(':');
+          const port = dbPortStr ? parseInt(dbPortStr, 10) : 8006;
+          const cleanHost = dbHost;
+          const proxmoxConfig = {
+            host: cleanHost, port: port, username: testHypervisorData.username,
+            timeout: 15000, rejectUnauthorized: false
+          };
+          if (new_api_token && new_token_name) {
+            proxmoxConfig.tokenID = `${testHypervisorData.username}!${new_token_name}`;
+            proxmoxConfig.tokenSecret = new_api_token;
+          } else if (new_password) {
+            proxmoxConfig.password = new_password;
+          }
+          const proxmox = proxmoxApi(proxmoxConfig);
+          await proxmox.version.$get(); // Prueba de conexión
+          finalApiToken = new_api_token || (new_password ? new_password : finalApiToken); // Guardar nueva contraseña/token
+          finalTokenName = new_token_name || (new_password ? null : finalTokenName); // Guardar nuevo nombre de token o limpiar si se usa contraseña
+        } else if (currentHypervisor.type === 'vsphere') {
+          // Para vSphere, new_password se pasa como api_token a callPyvmomiService
+          await callPyvmomiService('POST', '/connect', { ...testHypervisorData, api_token: new_password }, {});
+          finalApiToken = new_password; // Guardar nueva contraseña
+        }
+        status = 'connected';
+        last_sync = new Date();
+        console.log(`New credentials for hypervisor ${id} verified successfully.`);
+      } catch (connectionError) {
+        console.error(`Failed to verify new credentials for hypervisor ${id}:`, connectionError.message);
+        return res.status(400).json({ error: 'Failed to connect with new credentials.', details: connectionError.message });
+      }
+    }
+
+    // Actualizar la base de datos
       const result = await pool.query(
-          'UPDATE hypervisors SET name = $1, host = $2, username = $3, api_token = $4, updated_at = now() WHERE id = $5 RETURNING id, name, type, host, username, status, last_sync, created_at, updated_at',
-          [name, host, username, apiToken || null, id]
+          `UPDATE hypervisors SET name = $1, host = $2, username = $3, api_token = $4, token_name = $5, status = $6, last_sync = $7, updated_at = now() 
+           WHERE id = $8 
+           RETURNING id, name, type, host, username, status, last_sync, vsphere_subtype, created_at, updated_at`,
+          [finalName, finalHost, finalUsername, finalApiToken, finalTokenName, status, last_sync, id]
       );
+
       if (result.rows.length > 0) res.json(result.rows[0]);
       else res.status(404).json({ error: 'Hypervisor not found' });
   } catch (err) {
