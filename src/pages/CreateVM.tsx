@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { VMCreateParams, VMTemplate, VMPlan } from '../types/vm'; // Import VMPlan
 import { Hypervisor } from '../types/hypervisor';
 import { FinalClient } from '../types/client';
+import { useAuth } from '../hooks/useAuth'; // Import useAuth
 // import { supabase } from '../lib/supabase'; // Remove direct Supabase usage
 import { toast } from 'react-hot-toast';
 
@@ -45,15 +46,16 @@ export default function CreateVM() {
   });
 
   const [tagInput, setTagInput] = useState('');
+  const { token: authToken } = useAuth(); // Get token from context
 
   // Fetch hypervisors on mount
   useEffect(() => {
     const fetchHypervisors = async () => {
       setIsFetchingHypervisors(true);
-      const token = localStorage.getItem('authToken'); // Recuperar token
+      //const token = localStorage.getItem('authToken'); // Recuperar token
       try {
         const response = await fetch(`${API_BASE_URL}/hypervisors`, {
-          headers: { ...(token && { 'Authorization': `Bearer ${token}` }) }, // Usar token real
+          headers: { ...(authToken && { 'Authorization': `Bearer ${authToken}` }) }, // Usar token real
         });
         if (!response.ok) throw new Error('Failed to fetch hypervisors');
         const data: Hypervisor[] = await response.json();
@@ -72,11 +74,11 @@ export default function CreateVM() {
   useEffect(() => {
     const fetchPlans = async () => {
       setIsFetchingPlans(true);
-      const token = localStorage.getItem('authToken'); // Recuperar token
+      //const token = localStorage.getItem('authToken'); // Recuperar token
       try {
         // Assuming the backend filters active plans or we filter here
         const response = await fetch(`${API_BASE_URL}/vm-plans`, {
-          headers: { ...(token && { 'Authorization': `Bearer ${token}` }) }, // Usar token real
+          headers: { ...(authToken && { 'Authorization': `Bearer ${authToken}` }) }, // Usar token real
         });
         if (!response.ok) throw new Error('Failed to fetch VM plans');
         const data: VMPlan[] = await response.json();
@@ -95,11 +97,11 @@ export default function CreateVM() {
   useEffect(() => {
     const fetchClients = async () => {
       setIsFetchingClients(true);
-      const token = localStorage.getItem('authToken');
+      //const token = localStorage.getItem('authToken');
       try {
         // Assuming pagination is handled or we fetch all for the dropdown
         const response = await fetch(`${API_BASE_URL}/final-clients?limit=1000`, { // Fetch a large number for dropdown
-          headers: { ...(token && { 'Authorization': `Bearer ${token}` }) },
+          headers: { ...(authToken && { 'Authorization': `Bearer ${authToken}` }) },
         });
         if (!response.ok) throw new Error('Failed to fetch final clients');
         const data = await response.json(); // Assuming API returns { items: [...] }
@@ -122,10 +124,10 @@ export default function CreateVM() {
     if (vmParams.hypervisorId) {
       const fetchTemplates = async () => {
         setIsFetchingTemplates(true);
-        const token = localStorage.getItem('authToken'); // Recuperar token
+        //const token = localStorage.getItem('authToken'); // Recuperar token
         try {
           const response = await fetch(`${API_BASE_URL}/hypervisors/${vmParams.hypervisorId}/templates`, {
-            headers: { ...(token && { 'Authorization': `Bearer ${token}` }) }, // Usar token real
+            headers: { ...(authToken && { 'Authorization': `Bearer ${authToken}` }) }, // Usar token real
           });
           if (!response.ok) throw new Error('Failed to fetch templates');
           const data: VMTemplate[] = await response.json();
@@ -139,7 +141,7 @@ export default function CreateVM() {
       };
       fetchTemplates();
     }
-  }, [vmParams.hypervisorId]);
+  }, [vmParams.hypervisorId, authToken]);
 
   const handleNext = () => {
     if (currentStep < 3) {
@@ -201,14 +203,14 @@ export default function CreateVM() {
       // Ensure memory is in MB (already is, but good to be explicit if units change)
       // specs: { ...vmParams.specs, memory: vmParams.specs.memory } 
     };
-    const token = localStorage.getItem('authToken'); // Recuperar token
+    //const token = localStorage.getItem('authToken'); // Recuperar token
     try {
       // Call the backend API to create the VM
       const response = await fetch(`${API_BASE_URL}/vms`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token && { 'Authorization': `Bearer ${token}` }), // Usar token real
+          ...(authToken && { 'Authorization': `Bearer ${authToken}` }), // Usar token real
         },
         body: JSON.stringify(payload),
       });

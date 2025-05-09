@@ -21,17 +21,17 @@ export default function Hypervisors() {
     tokenName: '', // Initialize tokenName
   });
 
-  const { user } = useAuth(); // Get current user
+  const { user, token: authToken } = useAuth(); // Get current user and token
 
   // Function to fetch hypervisors from the API
   const fetchHypervisors = async () => {
     setIsLoading(true);
     try {
-      const token = localStorage.getItem('authToken'); // Recuperar token
+      // //const token = localStorage.getItem('authToken'); // Ya no se usa directamente
       const response = await fetch(`${API_BASE_URL}/hypervisors`, {
         headers: {
           // Include auth header if needed by your backend middleware
-          ...(token && { 'Authorization': `Bearer ${token}` }), // Usar token real
+          ...(authToken && { 'Authorization': `Bearer ${authToken}` }), // Usar token del contexto
         },
       });
       if (!response.ok) {
@@ -61,11 +61,10 @@ export default function Hypervisors() {
 
   const handleDelete = async (id: string) => {
     try {
-      const token = localStorage.getItem('authToken'); // Recuperar token
       const response = await fetch(`${API_BASE_URL}/hypervisors/${id}`, {
         method: 'DELETE',
         headers: {
-          ...(token && { 'Authorization': `Bearer ${token}` }), // Usar token real
+          ...(authToken && { 'Authorization': `Bearer ${authToken}` }), // Usar token del contexto
         },
       });
 
@@ -95,12 +94,11 @@ export default function Hypervisors() {
       console.log('Payload to send:', payload); // Debugging line
       setIsLoading(true); // Indicate activity
       try {
-        const token = localStorage.getItem('authToken'); // Recuperar token
         const response = await fetch(`${API_BASE_URL}/hypervisors`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(token && { 'Authorization': `Bearer ${token}` }), // Usar token real
+            ...(authToken && { 'Authorization': `Bearer ${authToken}` }), // Usar token del contexto
           },
           body: JSON.stringify(payload), // Send potentially modified payload
         });

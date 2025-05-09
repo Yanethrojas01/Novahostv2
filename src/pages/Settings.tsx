@@ -11,7 +11,7 @@ import type { FinalClient } from '../types/client'; // Import FinalClient type
 export default function Settings() {
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
   // const [emailNotifications, setEmailNotifications] = useState(true);
-  const { user: currentUser } = useAuth(); // Get current user info for token
+  const { user: currentUser, token: authToken  } = useAuth(); // Get current user info for token
   // const [slackNotifications, setSlackNotifications] = useState(false);
   // const [autoBackups, setAutoBackups] = useState(true);
   // const [apiKey, setApiKey] = useState('');
@@ -54,24 +54,24 @@ export default function Settings() {
     fetchPlans();
     fetchUsers(); // Fetch users on mount
     fetchClients();
-  }, []);
+  }, [authToken]);
 
   // Helper to get the auth token
   const getAuthToken = () => {
-    // Assuming you store the token in localStorage as 'authToken'
-    // Adjust this based on your actual token storage mechanism in AuthContext
-    const token = localStorage.getItem('authToken');
-    if (!token) toast.error("Authentication token not found. Please log in again.");
-    return token ? `Bearer ${token}` : null;
+    if (!authToken) toast.error("Authentication token not found. Please log in again.");
+    return authToken ? `Bearer ${authToken}` : null;
+ 
   };
 
   const fetchClients = async (page = 1, search = clientSearchTerm) => {
-    const authToken = getAuthToken();
-    if (!authToken) return;
+    if (!authToken) {
+      toast.error("Authentication token not found. Please log in again.");
+      return;
+    }
     setIsLoadingClients(true);
     try {
       const response = await fetch(`${API_BASE_URL}/final-clients?page=${page}&limit=10&search=${encodeURIComponent(search)}`, {
-        headers: { 'Authorization': authToken },
+        headers: { 'Authorization': `Bearer ${authToken}` },
       });
       if (!response.ok) throw new Error('Failed to fetch clients');
       const data = await response.json();
@@ -89,18 +89,19 @@ export default function Settings() {
 
   // Effect to refetch clients when search term changes (with debounce)
   useEffect(() => {
-    const handler = setTimeout(() => fetchClients(1, clientSearchTerm), 500); // Debounce search
-    return () => clearTimeout(handler);
-  }, [clientSearchTerm]);
+    const handler = setTimeout(() => {
+      if (authToken) fetchClients(1, clientSearchTerm);
+  }, 500); // Debounce search    return () => clearTimeout(handler);
+  }, [clientSearchTerm, authToken]);
 
   const fetchPlans = async () => {
     try {
-      const authToken = getAuthToken(); // Get the token
-      if (!authToken) return; // Stop if no token
+      if (!authToken) { toast.error("Token no encontrado."); return; }
+
       setIsLoading(true); // Use the combined loading state
       const response = await fetch(`${API_BASE_URL}/vm-plans`, {
         headers: {
-          'Authorization': authToken, // Use the actual token
+          'Authorization': `Bearer ${authToken}`, // Use the actual token
         },
       });
       if (!response.ok) {
@@ -119,12 +120,12 @@ export default function Settings() {
   };
 
   const fetchUsers = async () => {
-    const authToken = getAuthToken();
-    if (!authToken) return;
+    if (!authToken) { toast.error("Token no encontrado."); return; }
+
     setIsLoadingUsers(true);
     try {
       const response = await fetch(`${API_BASE_URL}/users`, {
-        headers: { 'Authorization': authToken },
+        headers: { 'Authorization': `Bearer ${authToken}` },
       });
       if (!response.ok) throw new Error('Failed to fetch users');
       const data = await response.json();
@@ -138,14 +139,14 @@ export default function Settings() {
   };
 
   const handleAddPlan = async () => {
-    const authToken = getAuthToken();
-    if (!authToken) return;
+    if (!authToken) { toast.error("Token no encontrado."); return; }
+
     try {
       const response = await fetch(`${API_BASE_URL}/vm-plans`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': authToken,
+          'Authorization': `Bearer ${authToken}`,
         },
         body: JSON.stringify({
           name: newPlan.name,
@@ -176,13 +177,13 @@ export default function Settings() {
   };
  
   const handleDeletePlan = async (id: string) => {
-    const authToken = getAuthToken();
-    if (!authToken) return;
+    if (!authToken) { toast.error("Token no encontrado."); return; }
+
     try {
       const response = await fetch(`${API_BASE_URL}/vm-plans/${id}`, {
         method: 'DELETE',
         headers: {
-          'Authorization': authToken,
+          'Authorization': `Bearer ${authToken}`,
         },
       });
 
@@ -207,14 +208,14 @@ export default function Settings() {
   };
 
   const handleTogglePlan = async (id: string, is_active: boolean) => {
-    const authToken = getAuthToken();
-    if (!authToken) return;
+    if (!authToken) { toast.error("Token no encontrado."); return; }
+
     try {
       const response = await fetch(`${API_BASE_URL}/vm-plans/${id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': authToken,
+          'Authorization': `Bearer ${authToken}`,
         },
         body: JSON.stringify({ is_active }),
       });
@@ -229,8 +230,8 @@ export default function Settings() {
   };
 
   const handleAddClient = async () => {
-    const authToken = getAuthToken();
-    if (!authToken) return;
+    if (!authToken) { toast.error("Token no encontrado."); return; }
+
     if (!newClient.name || !newClient.rif) {
       toast.error("Name and RIF are required for a new client.");
       return;
@@ -240,7 +241,7 @@ export default function Settings() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': authToken,
+          'Authorization': `Bearer ${authToken}`,
         },
         body: JSON.stringify(newClient),
       });
@@ -259,14 +260,14 @@ export default function Settings() {
   };
 
   const handleDeleteClient = async (clientId: string) => {
-    const authToken = getAuthToken();
-    if (!authToken) return;
+    if (!authToken) { toast.error("Token no encontrado."); return; }
+
     if (!window.confirm("Are you sure you want to delete this client? This action cannot be undone.")) return;
 
     try {
       const response = await fetch(`${API_BASE_URL}/final-clients/${clientId}`, {
         method: 'DELETE',
-        headers: { 'Authorization': authToken },
+        headers: { 'Authorization': `Bearer ${authToken}` },
       });
 
       if (!response.ok) {
@@ -294,8 +295,8 @@ export default function Settings() {
 
 
   const handleAddUser = async () => {
-    const authToken = getAuthToken();
-    if (!authToken) return;
+    if (!authToken) { toast.error("Token no encontrado."); return; }
+
     // Basic validation
     if (!newUser.username || !newUser.email || !newUser.password) {
       toast.error("Username, email, and password are required.");
@@ -306,7 +307,7 @@ export default function Settings() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': authToken,
+          'Authorization': `Bearer ${authToken}`,
         },
         body: JSON.stringify(newUser),
       });
@@ -333,8 +334,8 @@ export default function Settings() {
 
   // TODO: Implement Delete User functionality
   const handleDeleteUser = async (userId: string) => {
-    const authToken = getAuthToken();
-    if (!authToken) return;
+    if (!authToken) { toast.error("Token no encontrado."); return; }
+
     if (!window.confirm("Are you sure you want to delete this user? This action cannot be undone.")) return;
 
     try {
@@ -342,7 +343,7 @@ export default function Settings() {
       const response = await fetch(`${API_BASE_URL}/users/${userId}`, {
         method: 'DELETE',
         headers: {
-          'Authorization': authToken,
+          'Authorization': `Bearer ${authToken}`,
         },
       });
 

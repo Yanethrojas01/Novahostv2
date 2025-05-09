@@ -5,7 +5,8 @@ export interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (token: string, userData: User) => void;
+  token: string | null; // Añadir token al contexto
+  login: (token: string, userData: User, remember?: boolean) => void; // Asegurar que remember es opcional
   logout: () => void;
 }
 

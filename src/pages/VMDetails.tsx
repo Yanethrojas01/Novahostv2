@@ -4,6 +4,7 @@ import { Server, Cpu, MemoryStick as Memory, HardDrive, Power, Network, Clock, A
 import type { VM, VMMetrics } from '../types/vm'; // Use the correct VM type and import VMMetrics
 import { formatBytes } from '../utils/formatters'; // Helper function to format bytes (create this file if needed)
 import { toast } from 'react-hot-toast';
+import { useAuth } from '../hooks/useAuth'; // Import useAuth
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL; // Read from .env
 
@@ -13,15 +14,16 @@ export default function VMDetails() {
   const [loading, setLoading] = useState(true);
   const [metrics, setMetrics] = useState<VMMetrics | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
+  const { token: authToken } = useAuth(); // Get token from context
 
   useEffect(() => {
     const fetchVM = async () => {
       setLoading(true);
       try {
-        const token = localStorage.getItem('authToken'); // Recuperar token
+        //const token = localStorage.getItem('authToken'); // Recuperar token
         const response = await fetch(`${API_BASE_URL}/vms/${id}`, {
           headers: {
-            ...(token && { 'Authorization': `Bearer ${token}` }), // Usar token real
+            ...(authToken && { 'Authorization': `Bearer ${authToken}` }), // Usar token real
           }
         });
         if (!response.ok) {
@@ -39,7 +41,7 @@ export default function VMDetails() {
     };
 
     fetchVM();
-  }, [id]);
+  }, [id, authToken]);
 
   // Fetch metrics periodically
   useEffect(() => {
@@ -51,10 +53,10 @@ export default function VMDetails() {
     const fetchMetrics = async () => {
       setMetricsLoading(true);
       try {
-        const token = localStorage.getItem('authToken');
+        //const token = localStorage.getItem('authToken');
         const response = await fetch(`${API_BASE_URL}/vms/${id}/metrics`, {
           headers: {
-            ...(token && { 'Authorization': `Bearer ${token}` }),
+            ...(authToken && { 'Authorization': `Bearer ${authToken}` }),
           }
         });
         if (!response.ok) {
@@ -77,7 +79,7 @@ export default function VMDetails() {
     const intervalId = setInterval(fetchMetrics, 10000); // Fetch every 10 seconds
 
     return () => clearInterval(intervalId); // Cleanup interval on unmount or when VM/status changes
-  }, [id, vm, vm?.status]); // Re-run if VM data or status changes
+  }, [id, vm, vm?.status, authToken]); // Re-run if VM data or status changes
 
   if (loading) {
     return (

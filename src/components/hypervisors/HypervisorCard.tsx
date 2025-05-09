@@ -33,7 +33,8 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
   });
   const [isUpdatingCredentials, setIsUpdatingCredentials] = useState(false);
 
-  const { user } = useAuth(); // Get the current user from auth context
+    const { user, token: authToken } = useAuth(); 
+; // Get the current user from auth context
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -71,8 +72,8 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
     setTemplates(null);
 
     try {
-      const token = localStorage.getItem('authToken'); // Recuperar token
-      const headers = { ...(token && { 'Authorization': `Bearer ${token}` }) }; // Añadir token si existe
+      //const token = localStorage.getItem('authToken'); // Recuperar token
+      const headers = { ...(authToken && { 'Authorization': `Bearer ${authToken}` }) }; // Añadir token si existe
       const [nodesRes, storageRes, templatesRes] = await Promise.all([
         fetch(`${API_BASE_URL}/hypervisors/${hypervisor.id}/nodes`, { headers }),
         fetch(`${API_BASE_URL}/hypervisors/${hypervisor.id}/storage`, { headers }),
@@ -107,12 +108,12 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
     const toastId = toast.loading('Intentando conexión...');
 
     try {
-      const token = localStorage.getItem('authToken'); // Recuperar token
+      //const token = localStorage.getItem('authToken'); // Recuperar token
       const response = await fetch(`${API_BASE_URL}/hypervisors/${hypervisor.id}/connect`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token && { 'Authorization': `Bearer ${token}` }) // Añadir token si existe
+          ...(authToken && { 'Authorization': `Bearer ${authToken}` }) // Añadir token si existe
         },
 
         // Body might be needed if passing specific connection parameters in the future
@@ -184,12 +185,12 @@ export default function HypervisorCard({ hypervisor, onDelete, onConnectionChang
     }
 
     try {
-      const token = localStorage.getItem('authToken');
+      //const token = localStorage.getItem('authToken');
       const response = await fetch(`${API_BASE_URL}/hypervisors/${hypervisor.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          ...(token && { 'Authorization': `Bearer ${token}` }),
+          ...(authToken && { 'Authorization': `Bearer ${authToken}` }),
         },
         body: JSON.stringify(payload),
       });

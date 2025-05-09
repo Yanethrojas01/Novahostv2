@@ -5,6 +5,7 @@ import { Hypervisor, AggregatedStats } from '../types/hypervisor'; // Import Agg
 import { toast } from 'react-hot-toast';
 // import { formatDistanceToNow } from 'date-fns'; // Removed unused import
 import { formatBytes } from '../utils/formatters'; // Assuming you have this utility
+import { useAuth } from '../hooks/useAuth'; // Import useAuth
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
@@ -14,6 +15,7 @@ export default function HypervisorDetails() {
   const [hypervisor, setHypervisor] = useState<Hypervisor | null>(null); // <-- Use Hypervisor type
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { token: authToken } = useAuth(); // Get token from context
 
   useEffect(() => {
     const fetchHypervisorDetails = async () => {
@@ -21,12 +23,12 @@ export default function HypervisorDetails() {
 
       setLoading(true);
       setError(null);
-      const token = localStorage.getItem('authToken');
+      //const token = localStorage.getItem('authToken');
 
       try {
         const response = await fetch(`${API_BASE_URL}/hypervisors/${id}`, {
           headers: {
-            ...(token && { 'Authorization': `Bearer ${token}` }),
+            ...(authToken && { 'Authorization': `Bearer ${authToken}` }),
           },
         });
 
@@ -60,7 +62,7 @@ export default function HypervisorDetails() {
     };
 
     fetchHypervisorDetails();
-  }, [id]); // Re-fetch if ID changes
+  }, [id, authToken]); // Re-fetch if ID changes
 
   // Helper to render status badge
   const renderStatusBadge = (status: Hypervisor['status']) => {

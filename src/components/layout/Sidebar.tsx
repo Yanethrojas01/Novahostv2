@@ -11,7 +11,8 @@ interface SidebarProps {
 
 export default function Sidebar({ mobile = false, onClose }: SidebarProps) {
   const location = useLocation();
-  const { user } = useAuth(); // Get current user
+    const { user, token: authToken } = useAuth(); 
+; // Get current user
   
   const baseNavigation = [
     { name: 'Dashboard', href: '/', icon: Home },

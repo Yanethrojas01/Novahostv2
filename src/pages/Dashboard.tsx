@@ -14,11 +14,12 @@ export default function Dashboard() {
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [filter, setFilter] = useState<string>('all');
-  const { user } = useAuth(); // Get current user
+  const { user, token: authToken } = useAuth(); 
+; // Get current user
 
   // Define fetchVMs outside useEffect, wrapped in useCallback
   const fetchVMs = useCallback(async () => {
-    const token = localStorage.getItem('authToken'); // Recuperar token
+    // //const token = localStorage.getItem('authToken'); // Ya no se usa directamente
 
     setIsLoading(true);
     
@@ -28,7 +29,7 @@ export default function Dashboard() {
          headers: {
            // Include auth header if needed by your backend middleware
            // Asegúrate de que el token exista antes de añadir la cabecera
-           ...(token && { 'Authorization': `Bearer ${token}` }),
+           ...(authToken && { 'Authorization': `Bearer ${authToken}` }), // Usar token del contexto
     
          },
       });
@@ -67,13 +68,13 @@ export default function Dashboard() {
     ));
 
     try {
-      const token = localStorage.getItem('authToken'); // Recuperar token
+      //const token = localStorage.getItem('authToken'); // Recuperar token
       const response = await fetch(`${API_BASE_URL}/vms/${vmId}/action`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           // Asegúrate de que el token exista antes de añadir la cabecera
-          ...(token && { 'Authorization': `Bearer ${token}` }),
+          ...(authToken && { 'Authorization': `Bearer ${authToken}` }),
         },
         body: JSON.stringify({ action }), // Send the action in the body
       });

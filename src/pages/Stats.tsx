@@ -16,6 +16,7 @@ import { BarChart, Bar } from 'recharts'; // Import BarChart and Bar for the new
 import { Link } from 'react-router-dom'; // Import Link from react-router-dom
 import { FinalClient } from '../types/client'; // Import FinalClient type
 import { VM } from '../types/vm'; // Import VM type
+import { useAuth } from '../hooks/useAuth'; // Import useAuth
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL; // Read from .env
 
@@ -49,12 +50,16 @@ export default function StatsPage() {
   const [clientVmsPagination, setClientVmsPagination] = useState<{ currentPage: number, totalPages: number, totalItems: number, limit: number } | null>(null);
   const [isFetchingClients, setIsFetchingClients] = useState<boolean>(true);
   const [isFetchingClientVms, setIsFetchingClientVms] = useState<boolean>(false);
+  const { token: authToken } = useAuth(); // Get token from context
 
   const fetchStats = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     setStats(null); // Limpia estadísticas anteriores
-    const token = localStorage.getItem('authToken');
+    if (!authToken) {
+      toast.error("Token de autenticación no encontrado.");
+      setIsLoading(false); return;
+    }
 
     // Validar fechas
     if (!startDate || !endDate || new Date(startDate) > new Date(endDate)) {
@@ -71,7 +76,7 @@ export default function StatsPage() {
 
       const response = await fetch(url.toString(), {
         headers: {
-          ...(token && { 'Authorization': `Bearer ${token}` }),
+          'Authorization': `Bearer ${authToken}`,
         },
       });
 
@@ -91,7 +96,7 @@ export default function StatsPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [startDate, endDate]); // Depende de las fechas seleccionadas
+  }, [startDate, endDate, authToken]); // Depende de las fechas seleccionadas
 
   // Opcional: Cargar estadísticas iniciales al montar el componente
    useEffect(() => {
@@ -101,11 +106,14 @@ export default function StatsPage() {
   // Fetch Final Clients
   useEffect(() => {
     const fetchClients = async () => {
+      if (!authToken) {
+        setIsFetchingClients(false); return;
+      }
       setIsFetchingClients(true);
-      const token = localStorage.getItem('authToken');
+      //const token = localStorage.getItem('authToken');
       try {
         const response = await fetch(`${API_BASE_URL}/final-clients?limit=1000`, { // Fetch a large number for dropdown
-          headers: { ...(token && { 'Authorization': `Bearer ${token}` }) },
+          headers: { 'Authorization': `Bearer ${authToken}` },
         });
         if (!response.ok) throw new Error('Failed to fetch final clients');
         const data = await response.json();
@@ -118,7 +126,7 @@ export default function StatsPage() {
       }
     };
     fetchClients();
-  }, []);
+  }, [authToken]);
 
   // Fetch VMs for selected client
   const fetchClientVms = useCallback(async (clientId: string, page = 1) => {
@@ -127,11 +135,14 @@ export default function StatsPage() {
       setClientVmsPagination(null);
       return;
     }
+    if (!authToken) {
+      toast.error("Token de autenticación no encontrado.");
+      return;
+    }
     setIsFetchingClientVms(true);
-    const token = localStorage.getItem('authToken');
     try {
       const response = await fetch(`${API_BASE_URL}/stats/client-vms/${clientId}?page=${page}&limit=5`, {
-        headers: { ...(token && { 'Authorization': `Bearer ${token}` }) },
+        headers: { 'Authorization': `Bearer ${authToken}` },
       });
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ message: 'Error desconocido del servidor' }));
@@ -149,7 +160,7 @@ export default function StatsPage() {
     } finally {
       setIsFetchingClientVms(false);
     }
-  }, []);
+  }, [authToken]);
 
   useEffect(() => {
     if (selectedClientId) {
