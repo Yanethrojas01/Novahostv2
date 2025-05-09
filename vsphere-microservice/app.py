@@ -20,51 +20,72 @@ def list_vms():
     host = request.args.get('host')
     user = request.args.get('user')
     password = request.args.get('password')
-    port = int(request.args.get('port', 443)) # Consistent port handling
+    port = int(request.args.get('port', 443))
 
     if not host or not user or not password:
+        app.logger.error("Listing VMs: Missing connection parameters")
         return jsonify({'error': 'Missing connection parameters'}), 400
 
-    si = None # Define si here for the finally block
+    si = None
     try:
-        si = connect_vsphere(host, user, password, port) # Pass port
+        si = connect_vsphere(host, user, password, port)
         content = si.RetrieveContent()
+        app.logger.info(f"Listing VMs: Successfully connected to vSphere: {host}")
+        
         container = content.rootFolder
         viewType = [vim.VirtualMachine]
         recursive = True
         containerView = content.viewManager.CreateContainerView(container, viewType, recursive)
-        vms_objects = containerView.view # Renamed to avoid confusion with 'vms' module/package
+        vms_objects = containerView.view
         app.logger.info(f"Listing VMs: Found {len(vms_objects)} total VM objects in view.")
+        
         vm_list = []
         for vm_obj in vms_objects:
             summary = vm_obj.summary
-            # Ensure guest property exists before trying to access ipAddress
-            guest_ip = summary.guest.ipAddress if hasattr(summary, 'guest') and summary.guest else None
+            config = vm_obj.config # Necesario para algunos detalles de hardware y anotaciones
+            guest = vm_obj.guest   # Necesario para hostname, toolsStatus, IP
+
+            # Calcular el tamaño total del disco para la VM
+            total_disk_gb = 0
+            if hasattr(config, 'hardware') and config.hardware and hasattr(config.hardware, 'device'):
+                for dev in config.hardware.device:
+                    if isinstance(dev, vim.vm.device.VirtualDisk):
+                        total_disk_gb += dev.capacityInKB
+            # Convertir de KB a GB, redondear a 2 decimales si es mayor que 0
+            total_disk_gb = round(total_disk_gb / (1024 * 1024), 2) if total_disk_gb > 0 else 0
             
-            app.logger.info(f"Listing VM: Name='{summary.config.name}', UUID='{summary.config.uuid}'")
+            app.logger.debug(f"Processing VM for list: Name='{summary.config.name}', UUID='{summary.config.uuid}'")
+            
             vm_info = {
                 'name': summary.config.name,
                 'power_state': summary.runtime.powerState,
                 'guest_os': summary.config.guestFullName,
-                'ip_address': guest_ip,
-                'uuid': summary.config.uuid
-                # Note: This version does not include cpu_count, memory_mb, disk_gb, hostname, vmware_tools_status
-                # which were discussed for VirtualMachineCard.tsx.
-                # If those are needed for the card directly from this list endpoint,
-                # they would need to be added here similar to how they are in the /details endpoint.
+                'ip_address': guest.ipAddress if guest else None,
+                'uuid': summary.config.uuid,
+                'cpu_count': summary.config.numCpu,
+                'memory_mb': summary.config.memorySizeMB,
+                'disk_gb': total_disk_gb,
+                'hostname': guest.hostName if guest else None,
+                'vmware_tools_status': guest.toolsStatus if guest else 'toolsNotInstalled',
+                # Opcional: si quieres una lista de todas las IPs
+                # 'ip_addresses': [nic.ipAddress for nic in guest.net if hasattr(guest, 'net') and guest.net and nic.ipAddress] if guest else []
             }
             vm_list.append(vm_info)
-        containerView.Destroy() # Important to destroy views
+            
+        containerView.Destroy() # Importante para liberar recursos
+        app.logger.info(f"Listing VMs: Successfully prepared list of {len(vm_list)} VMs.")
         return jsonify(vm_list)
+        
     except vim.fault.InvalidLogin:
         app.logger.error(f"Listing VMs: vSphere login failed for user {user} on host {host}")
         return jsonify({'error': 'vSphere login failed. Check credentials.'}), 401
     except Exception as e:
         app.logger.error(f"Listing VMs: Error for host {host}: {str(e)}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': f'An error occurred in Python service while listing VMs: {str(e)}'}), 500
     finally:
         if si:
             disconnect_vsphere(si)
+
 
 @app.route('/vm/<vm_uuid>/power', methods=['POST'])
 def power_vm(vm_uuid):
