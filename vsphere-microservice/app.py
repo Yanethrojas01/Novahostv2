@@ -323,5 +323,156 @@ def vm_metrics_route(vm_uuid): # El parámetro de la función ahora coincide con
         if si:
             disconnect_vsphere(si)
 
+@app.route('/hosts', methods=['GET'])
+def list_hosts():
+    host_param = request.args.get('host')
+    user_param = request.args.get('user')
+    password_param = request.args.get('password')
+    port_param = int(request.args.get('port', 443))
+
+    app.logger.info(f"Hosts: Attempting for vSphere: {host_param}")
+    if not all([host_param, user_param, password_param]):
+        return jsonify({'error': 'Missing connection parameters'}), 400
+
+    si = None
+    try:
+        si = connect_vsphere(host_param, user_param, password_param, port_param)
+        content = si.RetrieveContent()
+        
+        host_view = content.viewManager.CreateContainerView(content.rootFolder, [vim.HostSystem], True)
+        esxi_hosts = []
+        for esxi_host in host_view.view:
+            summary = esxi_host.summary
+            overall_status = summary.overallStatus
+            # Quick stats for CPU and Memory (overallCpuUsage is in MHz, memory is in MB)
+            # For a more accurate percentage, you'd need host's total CPU capacity.
+            # This is a simplified representation.
+            cpu_usage_mhz = summary.quickStats.overallCpuUsage if summary.quickStats else 0
+            total_cpu_mhz = summary.hardware.cpuMhz * summary.hardware.numCpuCores if summary.hardware else 0
+            cpu_usage_percent = (cpu_usage_mhz / total_cpu_mhz) * 100 if total_cpu_mhz > 0 else 0
+            
+            memory_total_bytes = summary.hardware.memorySize if summary.hardware else 0
+            memory_used_mb = summary.quickStats.overallMemoryUsage if summary.quickStats else 0
+            memory_used_bytes = memory_used_mb * 1024 * 1024 if memory_used_mb is not None else 0
+
+            esxi_hosts.append({
+                'moid': esxi_host._moId,
+                'name': esxi_host.name,
+                'overall_status': str(overall_status), # e.g., 'green', 'yellow', 'red'
+                'connection_state': str(esxi_host.runtime.connectionState), # e.g., 'connected', 'disconnected'
+                'power_state': str(esxi_host.runtime.powerState), # e.g., 'poweredOn'
+                'cpu_cores': summary.hardware.numCpuCores if summary.hardware else 0,
+                'cpu_usage_percent': round(cpu_usage_percent, 2),
+                'memory_total_bytes': memory_total_bytes,
+                'memory_used_bytes': memory_used_bytes,
+                'vm_count': len(esxi_host.vm)
+            })
+        host_view.Destroy()
+        app.logger.info(f"Hosts: Found {len(esxi_hosts)} ESXi hosts for {host_param}")
+        return jsonify(esxi_hosts)
+    except vim.fault.InvalidLogin:
+        return jsonify({'error': 'vSphere login failed'}), 401
+    except Exception as e:
+        app.logger.error(f"Hosts: Error for {host_param}: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if si:
+            disconnect_vsphere(si)
+
+@app.route('/datastores', methods=['GET'])
+def list_datastores():
+    host_param = request.args.get('host')
+    user_param = request.args.get('user')
+    password_param = request.args.get('password')
+    port_param = int(request.args.get('port', 443))
+
+    app.logger.info(f"Datastores: Attempting for vSphere: {host_param}")
+    if not all([host_param, user_param, password_param]):
+        return jsonify({'error': 'Missing connection parameters'}), 400
+
+    si = None
+    try:
+        si = connect_vsphere(host_param, user_param, password_param, port_param)
+        content = si.RetrieveContent()
+        
+        datastore_view = content.viewManager.CreateContainerView(content.rootFolder, [vim.Datastore], True)
+        datastores_info = []
+        for ds in datastore_view.view:
+            summary = ds.summary
+            datastores_info.append({
+                'moid': ds._moId,
+                'name': summary.name,
+                'type': summary.type, # e.g., VMFS, NFS, vSAN
+                'capacity_bytes': summary.capacity,
+                'free_space_bytes': summary.freeSpace,
+                'url': summary.url, # e.g., ds:///vmfs/volumes/xxxxxxxx-xxxxxxx-xxxx-xxxxxxxxxxxx/
+                'accessible': summary.accessible
+            })
+        datastore_view.Destroy()
+        app.logger.info(f"Datastores: Found {len(datastores_info)} datastores for {host_param}")
+        return jsonify(datastores_info)
+    except vim.fault.InvalidLogin:
+        return jsonify({'error': 'vSphere login failed'}), 401
+    except Exception as e:
+        app.logger.error(f"Datastores: Error for {host_param}: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if si:
+            disconnect_vsphere(si)
+
+@app.route('/templates', methods=['GET'])
+def list_templates():
+    host_param = request.args.get('host')
+    user_param = request.args.get('user')
+    password_param = request.args.get('password')
+    port_param = int(request.args.get('port', 443))
+
+    app.logger.info(f"Templates: Attempting for vSphere: {host_param}")
+    if not all([host_param, user_param, password_param]):
+        return jsonify({'error': 'Missing connection parameters'}), 400
+
+    si = None
+    try:
+        si = connect_vsphere(host_param, user_param, password_param, port_param)
+        content = si.RetrieveContent()
+        
+        vm_view = content.viewManager.CreateContainerView(content.rootFolder, [vim.VirtualMachine], True)
+        templates_info = []
+        for vm_obj in vm_view.view:
+            if vm_obj.config.template: # Check if the VM is a template
+                summary = vm_obj.summary
+                config = vm_obj.config
+                # Calculate total disk size for the template
+                disk_capacity_bytes = sum([dev.capacityInBytes for dev in config.hardware.device if isinstance(dev, vim.vm.device.VirtualDisk)])
+
+                templates_info.append({
+                    'uuid': config.uuid,
+                    'name': config.name,
+                    'guest_os': config.guestFullName,
+                    'disk_capacity_bytes': disk_capacity_bytes,
+                    'datastore_name': vm_obj.datastore[0].name if vm_obj.datastore else None # Primary datastore
+                })
+        vm_view.Destroy()
+        app.logger.info(f"Templates: Found {len(templates_info)} templates for {host_param}")
+        return jsonify(templates_info)
+    except vim.fault.InvalidLogin:
+        return jsonify({'error': 'vSphere login failed'}), 401
+    except Exception as e:
+        app.logger.error(f"Templates: Error for {host_param}: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if si:
+            disconnect_vsphere(si)
+
+# La ruta /isos es más compleja y requiere navegar por datastores.
+# Por ahora, la dejaremos pendiente o con una respuesta vacía.
+@app.route('/isos', methods=['GET'])
+def list_isos():
+    app.logger.warn("ISO listing endpoint called, but not fully implemented. Returning empty list.")
+    # Implementar la lógica de búsqueda de ISOs aquí si es necesario.
+    # Esto implicaría usar DatastoreBrowser.SearchDatastoreSubFolders_Task y SearchDatastore_Task
+    return jsonify([])
+
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True) # Added debug=True for development
