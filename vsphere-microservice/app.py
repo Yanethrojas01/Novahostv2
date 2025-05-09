@@ -3,8 +3,220 @@ from pyVim.connect import SmartConnect, Disconnect
 from pyVmomi import vim
 import ssl
 import atexit
+import time
 
 app = Flask(__name__)
+
+def get_obj(content, vimtype, name=None, uuid=None):
+    """
+    Devuelve un objeto vSphere.
+    Busca por nombre si se proporciona, o por UUID si se proporciona.
+    """
+    obj = None
+    container = content.viewManager.CreateContainerView(content.rootFolder, vimtype, True)
+    if uuid:
+        for c in container.view:
+            if hasattr(c, 'config') and c.config is not None and c.config.uuid == uuid:
+                obj = c
+                break
+    elif name:
+         for c in container.view:
+            if c.name == name:
+                obj = c
+                break
+    else: # Devuelve todos los objetos si no se especifica nombre ni uuid
+        obj = [c for c in container.view]
+
+    container.Destroy()
+    return obj
+
+def wait_for_tasks(si, tasks, action_name="VM action"):
+    """
+    Espera a que una lista de tareas de vCenter se complete.
+    """
+    property_collector = si.content.propertyCollector
+    task_list = [str(task) for task in tasks]
+
+    # Crear un filtro para monitorizar las tareas
+    obj_specs = [vim.PropertyCollector.ObjectSpec(obj=task) for task in tasks]
+    prop_spec = vim.PropertyCollector.PropertySpec(type=vim.Task, pathSet=[], all=True)
+    filter_spec = vim.PropertyCollector.FilterSpec(objectSet=obj_specs, propSet=[prop_spec])
+    pcfilter = property_collector.CreateFilter(filter_spec, True)
+
+    try:
+        start_time = time.time()
+        while len(task_list):
+            update = property_collector.WaitForUpdates(None) # Espera indefinidamente por defecto
+            if not update or not update.filterSet:
+                continue
+
+            for filter_set in update.filterSet:
+                for obj_set in filter_set.objectSet:
+                    task = obj_set.obj
+                    for change in obj_set.changeSet:
+                        if change.name == 'info':
+                            state = change.val.state
+                        elif change.name == 'key':
+                            state = task.info.state
+                        else:
+                            continue
+
+                        if str(task) in task_list:
+                            if state == vim.TaskInfo.State.success:
+                                # Eliminar tarea de la lista de monitorización
+                                task_list.remove(str(task))
+                                app.logger.info(f"Task {task} completed successfully for {action_name}.")
+                            elif state == vim.TaskInfo.State.error:
+                                task_list.remove(str(task))
+                                error_msg = task.info.error.msg if task.info.error else "Unknown error"
+                                app.logger.error(f"Task {task} failed for {action_name}: {error_msg}")
+                                raise Exception(f"Task {task} for {action_name} failed: {error_msg}")
+            # Timeout para evitar bucles infinitos si algo va mal con WaitForUpdates
+            if time.time() - start_time > 300: # 5 minutos de timeout
+                app.logger.error(f"Timeout waiting for tasks: {task_list} for {action_name}")
+                raise Exception(f"Timeout waiting for tasks for {action_name}")
+    finally:
+        if pcfilter:
+            pcfilter.Destroy()
+
+
+@app.route('/vms/create', methods=['POST'])
+def create_vm():
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'Request body must be JSON'}), 400
+
+    # Credenciales del hypervisor (pasadas por index.js)
+    host_param = data.get('host')
+    user_param = data.get('user')
+    password_param = data.get('password')
+    port_param = int(data.get('port', 443))
+
+    # Parámetros de la VM
+    vm_name = data.get('name')
+    template_uuid = data.get('template_id') # UUID de la plantilla vSphere
+    specs = data.get('specs', {})
+    cpu_count = specs.get('cpu')
+    memory_mb = specs.get('memory') # Asumimos que 'memory' viene en MB desde CreateVM.tsx
+    power_on_after_creation = data.get('start_vm', False)
+    target_datastore_name = data.get('datastore_name') # Opcional
+
+    app.logger.info(f"Create VM request: Name='{vm_name}', TemplateUUID='{template_uuid}', CPU={cpu_count}, MemMB={memory_mb}, PowerOn={power_on_after_creation}, Datastore='{target_datastore_name}'")
+
+    if not all([host_param, user_param, password_param, vm_name, template_uuid, cpu_count, memory_mb]):
+        missing_params = [p for p, v in {
+            "host": host_param, "user": user_param, "password": password_param,
+            "name": vm_name, "template_id": template_uuid,
+            "specs.cpu": cpu_count, "specs.memory": memory_mb
+        }.items() if not v]
+        app.logger.error(f"Create VM: Missing parameters: {', '.join(missing_params)}")
+        return jsonify({'error': f"Missing parameters: {', '.join(missing_params)}"}), 400
+
+    si = None
+    try:
+        si = connect_vsphere(host_param, user_param, password_param, port_param)
+        content = si.RetrieveContent()
+        app.logger.info(f"Create VM: Connected to vSphere {host_param}")
+
+        template_vm = get_obj(content, [vim.VirtualMachine], uuid=template_uuid)
+        if not template_vm:
+            app.logger.error(f"Create VM: Template with UUID '{template_uuid}' not found.")
+            return jsonify({'error': f"Template with UUID '{template_uuid}' not found"}), 404
+        app.logger.info(f"Create VM: Found template '{template_vm.name}'")
+
+        # --- Determinación de la ubicación ---
+        # Carpeta: Usar la carpeta padre de la plantilla
+        dest_folder = template_vm.parent
+        if not isinstance(dest_folder, vim.Folder): # Si el padre no es una carpeta (ej. un host directamente), usar la carpeta raíz de VMs del datacenter
+            datacenter = get_obj(content, [vim.Datacenter], name=template_vm.summary.runtime.host.parent.name) # Asume que el host está en un Datacenter
+            if datacenter:
+                dest_folder = datacenter.vmFolder
+            else: # Fallback a la carpeta raíz si no se encuentra el datacenter
+                dest_folder = content.rootFolder
+        app.logger.info(f"Create VM: Target folder: '{dest_folder.name if hasattr(dest_folder, 'name') else 'Root'}'")
+
+
+        # Resource Pool: Usar el resource pool de la plantilla
+        resource_pool = template_vm.resourcePool
+        if not resource_pool: # Si la plantilla no está asociada directamente a un RP (ej. en un host)
+            resource_pool = template_vm.summary.runtime.host.parent.resourcePool # RP del cluster/host
+        app.logger.info(f"Create VM: Target resource pool: '{resource_pool.name if hasattr(resource_pool, 'name') else 'Default'}'")
+
+        # Datastore
+        relocate_spec = vim.vm.RelocateSpec()
+        if target_datastore_name:
+            target_ds = get_obj(content, [vim.Datastore], name=target_datastore_name)
+            if not target_ds:
+                app.logger.error(f"Create VM: Target datastore '{target_datastore_name}' not found.")
+                return jsonify({'error': f"Datastore '{target_datastore_name}' not found"}), 404
+            relocate_spec.datastore = target_ds
+            app.logger.info(f"Create VM: Target datastore (specified): '{target_ds.name}'")
+        else:
+            # Usar el mismo datastore que la plantilla (el primero si tiene múltiples)
+            if template_vm.datastore and len(template_vm.datastore) > 0:
+                relocate_spec.datastore = template_vm.datastore[0] # Tomar el primer datastore de la plantilla
+                app.logger.info(f"Create VM: Target datastore (from template): '{template_vm.datastore[0].name}'")
+            else:
+                app.logger.error("Create VM: Template has no associated datastores and no target datastore specified.")
+                return jsonify({'error': 'Template has no datastores and no target datastore specified'}), 400
+        
+        relocate_spec.pool = resource_pool
+        # relocate_spec.host = template_vm.summary.runtime.host # Opcional: especificar host si es necesario
+
+        # --- Especificación de Clonación ---
+        clone_spec = vim.vm.CloneSpec(
+            location=relocate_spec,
+            powerOn=False, # Encenderemos después de reconfigurar si se solicita
+            template=False
+        )
+
+        app.logger.info(f"Create VM: Initiating clone of '{template_vm.name}' to '{vm_name}'...")
+        clone_task = template_vm.CloneVM_Task(folder=dest_folder, name=vm_name, spec=clone_spec)
+        wait_for_tasks(si, [clone_task], action_name=f"Cloning VM {vm_name}")
+        
+        new_vm = clone_task.info.result
+        if not new_vm:
+            app.logger.error("Create VM: Clone task completed but new VM object is null.")
+            raise Exception("Failed to get new VM object after cloning.")
+        app.logger.info(f"Create VM: VM '{vm_name}' cloned successfully. New VM MOID: {new_vm._moId}, UUID: {new_vm.config.uuid}")
+
+        # --- Reconfiguración de CPU y Memoria ---
+        config_spec = vim.vm.ConfigSpec()
+        config_spec.numCPUs = int(cpu_count)
+        config_spec.memoryMB = int(memory_mb)
+        
+        app.logger.info(f"Create VM: Reconfiguring VM '{vm_name}' with CPU={cpu_count}, MemoryMB={memory_mb}...")
+        reconfig_task = new_vm.ReconfigureVM_Task(spec=config_spec)
+        wait_for_tasks(si, [reconfig_task], action_name=f"Reconfiguring VM {vm_name}")
+        app.logger.info(f"Create VM: VM '{vm_name}' reconfigured successfully.")
+
+        # --- Encender VM si se solicita ---
+        if power_on_after_creation:
+            if new_vm.runtime.powerState != vim.VirtualMachinePowerState.poweredOn:
+                app.logger.info(f"Create VM: Powering on VM '{vm_name}'...")
+                poweron_task = new_vm.PowerOnVM_Task()
+                wait_for_tasks(si, [poweron_task], action_name=f"Powering on VM {vm_name}")
+                app.logger.info(f"Create VM: VM '{vm_name}' powered on.")
+            else:
+                app.logger.info(f"Create VM: VM '{vm_name}' is already powered on.")
+
+        return jsonify({
+            'status': 'success',
+            'message': f"VM '{vm_name}' created successfully.",
+            'vm_uuid': new_vm.config.uuid,
+            'vm_name': new_vm.name,
+            'vm_moid': new_vm._moId
+        }), 201
+
+    except vim.fault.InvalidLogin:
+        app.logger.error(f"Create VM: vSphere login failed for user {user_param} on host {host_param}")
+        return jsonify({'error': 'vSphere login failed. Check credentials.'}), 401
+    except Exception as e:
+        app.logger.error(f"Create VM: Error for host {host_param}: {str(e)}", exc_info=True)
+        return jsonify({'error': f'An error occurred in Python service while creating VM: {str(e)}'}), 500
+    finally:
+        if si:
+            disconnect_vsphere(si)
 
 def connect_vsphere(host, user, password, port=443):
     context = ssl._create_unverified_context()

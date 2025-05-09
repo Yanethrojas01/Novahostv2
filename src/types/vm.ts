@@ -102,7 +102,12 @@ export interface VMCreateParams {
   tags?: string[];
   ticket?: string; // Added ticket field
   finalClientId?: string; // Added final client ID field
-  planId?: string;
+  planId?: string; // If creating from a plan
+
+  // vSphere specific (optional, backend might use defaults or template's settings)
+  datastoreName?: string;
+  resourcePoolName?: string; // Less common for simple UI, but possible
+  folderName?: string; // VM folder in vCenter
 }
 
 export interface VMPlan {

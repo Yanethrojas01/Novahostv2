@@ -4,7 +4,7 @@ import { ArrowLeft, Server, Cpu, MemoryStick as Memory } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { VMCreateParams, VMTemplate, VMPlan } from '../types/vm'; // Import VMPlan
 import { Hypervisor } from '../types/hypervisor';
-import { FinalClient } from '../types/client'; // Import FinalClient type
+import { FinalClient } from '../types/client';
 // import { supabase } from '../lib/supabase'; // Remove direct Supabase usage
 import { toast } from 'react-hot-toast';
 
@@ -39,6 +39,9 @@ export default function CreateVM() {
     templateId: undefined, // Initialize templateId
     ticket: '', // Initialize ticket
     finalClientId: undefined, // Initialize finalClientId
+    // vSphere specific fields (optional, can be added to UI later if needed)
+    // datastoreName: undefined,
+    // resourcePoolName: undefined,
   });
 
   const [tagInput, setTagInput] = useState('');
@@ -191,6 +194,13 @@ export default function CreateVM() {
 
   const handleCreate = async () => {
     setIsLoading(true);
+    const selectedHypervisor = availableHypervisors.find(h => h.id === vmParams.hypervisorId);
+
+    const payload: VMCreateParams = {
+      ...vmParams,
+      // Ensure memory is in MB (already is, but good to be explicit if units change)
+      // specs: { ...vmParams.specs, memory: vmParams.specs.memory } 
+    };
     const token = localStorage.getItem('authToken'); // Recuperar token
     try {
       // Call the backend API to create the VM
@@ -200,7 +210,7 @@ export default function CreateVM() {
           'Content-Type': 'application/json',
           ...(token && { 'Authorization': `Bearer ${token}` }), // Usar token real
         },
-        body: JSON.stringify(vmParams),
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {

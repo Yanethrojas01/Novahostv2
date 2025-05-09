@@ -428,17 +428,18 @@ app.post('/api/vms', authenticate, async (req, res) => {
       }
     } else if (hypervisor.type === 'vsphere') {
       console.log(`Attempting to create VM on vSphere via PyVmomi microservice: ${params.name}`);
-      // TODO: PYVMOMI: Implement '/vms/create' (or similar) endpoint in app.py
-      // This endpoint would need to handle cloning from template or creating from ISO,
-      // placement (datastore, host, resource pool), hardware customization, power on.
       try {
         const pyVmomiCreateParams = {
             name: params.name,
-            template_id: params.templateId, // Could be template UUID or ISO path (e.g., "[datastoreName] ISOs/image.iso")
+            template_id: params.templateId, // vSphere template UUID
             specs: params.specs, // cpu, memory, disk
             description: params.description,
             tags: params.tags,
             start_vm: params.start || false,
+            // vSphere specific params from VMCreateParams if provided by frontend
+            datastore_name: params.datastoreName,
+            // resource_pool_name: params.resourcePoolName, // Future: if UI supports it
+            // folder_name: params.folderName, // Future: if UI supports it
             // Potentially add placement details if known:
             // datastore_name: params.datastoreName,
             // host_name: params.nodeName, // if nodeName is ESXi host for vCenter
@@ -446,7 +447,7 @@ app.post('/api/vms', authenticate, async (req, res) => {
         };
         // Asumimos que el microservicio devuelve el UUID de la nueva VM o un ID de tarea
         const responseFromPyvmomi = await callPyvmomiService('POST', '/vms/create', hypervisor, pyVmomiCreateParams);
-        newVmId = responseFromPyvmomi.vm_uuid || responseFromPyvmomi.task_id || responseFromPyvmomi.id; // Adapt based on actual microservice response
+        newVmId = responseFromPyvmomi.vm_uuid; // PyVmomi /vms/create now returns vm_uuid
         creationResult = responseFromPyvmomi.task_id || newVmId; // Task ID or new VM ID
         console.log(`vSphere VM creation initiated via PyVmomi, response:`, responseFromPyvmomi);
 
