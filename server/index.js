@@ -1634,6 +1634,18 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
             pool.query('SELECT id, name, specs FROM vm_plans WHERE is_active = true').catch(e => { console.error(`DB vm_plans fetch error: ${e.message}`); return { rows: [] }; })
           ]);
 
+          // Calcular el espacio total disponible en disco para VMs en Proxmox (en GB)
+          let totalAvailableDiskSpaceForVmsGB_Proxmox = 0;
+          if (storageData) {
+            storageData.forEach(s => {
+              if (s.content && s.content.includes('images') && s.avail) {
+                totalAvailableDiskSpaceForVmsGB_Proxmox += (s.avail / (1024 * 1024 * 1024)); // Convertir bytes a GB
+              }
+            });
+            console.log(`Hypervisor ${id} (Proxmox) - Total available disk space for VMs (GB): ${totalAvailableDiskSpaceForVmsGB_Proxmox.toFixed(2)}`);
+          }
+
+
           hypervisor.storage = storageData.map(s => ({
             id: s.storage, name: s.storage, type: s.type,
             size: s.total || 0, used: s.used || 0, available: s.avail || 0,
@@ -1652,13 +1664,23 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
               const planCapacityEstimates = vmPlansData.rows.map(plan => {
                 const planSpecs = typeof plan.specs === 'string' ? JSON.parse(plan.specs) : plan.specs;
                 let estimatedCount = 0;
+                // Asegurar que planSpecs.disk sea un número positivo si se va a usar
                 if (planSpecs && planSpecs.cpu > 0 && planSpecs.memory > 0 && nodeStatus.memory?.free > 0 && totalLogicalCpus > 0) {
                   const cpuAvailableForEstimation = totalLogicalCpus * (1 - (nodeStatus.cpu || 0)); // Available CPU capacity (fraction * cores)
                   const memoryAvailableForEstimationMB = (nodeStatus.memory.free / (1024 * 1024)); // Available memory in MB
 
                   const vmsByCpu = Math.floor(cpuAvailableForEstimation / planSpecs.cpu);
                   const vmsByMemory = Math.floor(memoryAvailableForEstimationMB / planSpecs.memory);
-                  estimatedCount = Math.min(vmsByCpu, vmsByMemory);
+
+                  let vmsByDisk = Infinity;
+                  if (planSpecs.disk && planSpecs.disk > 0) { // Si el plan define un disco
+                    if (totalAvailableDiskSpaceForVmsGB_Proxmox > 0) {
+                      vmsByDisk = Math.floor(totalAvailableDiskSpaceForVmsGB_Proxmox / planSpecs.disk);
+                    } else {
+                      vmsByDisk = 0; // No hay espacio en disco, no se pueden crear VMs que requieran disco
+                    }
+                  }
+                  estimatedCount = Math.min(vmsByCpu, vmsByMemory, vmsByDisk);
                 }
                 return {
                   planId: plan.id,
@@ -1737,6 +1759,18 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
             pool.query('SELECT id, name, specs FROM vm_plans WHERE is_active = true').catch(e => { console.error(`DB vm_plans fetch error: ${e.message}`); return { rows: [] }; })
           ]);
 
+          // Calcular el espacio total disponible en disco para VMs en vSphere (en GB)
+          let totalAvailableDiskSpaceForVmsGB_vSphere = 0;
+          if (Array.isArray(pyvmomiStorage)) {
+            pyvmomiStorage.forEach(ds => {
+              const availableSpaceBytes = ds.free_space_bytes || ds.available || 0;
+              if (availableSpaceBytes > 0) {
+                totalAvailableDiskSpaceForVmsGB_vSphere += (availableSpaceBytes / (1024 * 1024 * 1024)); // Convertir bytes a GB
+              }
+            });
+            console.log(`Hypervisor ${id} (vSphere) - Total available disk space for VMs (GB): ${totalAvailableDiskSpaceForVmsGB_vSphere.toFixed(2)}`);
+          }
+
           if (Array.isArray(pyvmomiNodes)) {
             hypervisor.nodes = pyvmomiNodes.map(host => {
               const planCapacityEstimates = vmPlansData.rows.map(plan => {
@@ -1748,14 +1782,24 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
                 const hostMemoryTotalBytes = host.memory_total_bytes || 0;
                 const hostMemoryUsedBytes = host.memory_used_bytes || 0;
                 const hostMemoryFreeBytes = hostMemoryTotalBytes - hostMemoryUsedBytes;
-
+                
+                // Asegurar que planSpecs.disk sea un número positivo si se va a usar
                 if (planSpecs && planSpecs.cpu > 0 && planSpecs.memory > 0 && hostMemoryFreeBytes > 0 && hostCpuCores > 0) {
                   const cpuAvailableForEstimation = hostCpuCores * (1 - hostCpuUsageFraction);
                   const memoryAvailableForEstimationMB = hostMemoryFreeBytes / (1024 * 1024);
 
                   const vmsByCpu = Math.floor(cpuAvailableForEstimation / planSpecs.cpu);
                   const vmsByMemory = Math.floor(memoryAvailableForEstimationMB / planSpecs.memory);
-                  estimatedCount = Math.min(vmsByCpu, vmsByMemory);
+
+                  let vmsByDisk = Infinity;
+                  if (planSpecs.disk && planSpecs.disk > 0) { // Si el plan define un disco
+                    if (totalAvailableDiskSpaceForVmsGB_vSphere > 0) {
+                      vmsByDisk = Math.floor(totalAvailableDiskSpaceForVmsGB_vSphere / planSpecs.disk);
+                    } else {
+                      vmsByDisk = 0; // No hay espacio en disco
+                    }
+                  }
+                  estimatedCount = Math.min(vmsByCpu, vmsByMemory, vmsByDisk);
                 }
                 return {
                   planId: plan.id,
