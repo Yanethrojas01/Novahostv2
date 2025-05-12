@@ -1554,7 +1554,7 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
       last_sync = new Date();
       console.log(`Connected to Proxmox ${versionResponse.version} at ${cleanHost}:${port}`);
     } else if (type === 'vsphere') {
-      console.log(`Attempting vSphere connection to: ${host} with user: ${username} via PyVmomi microservice`);
+      //console.log(`Attempting vSphere connection to: ${host} with user: ${username} via PyVmomi microservice`);
       // For vSphere, we now use the PyVmomi microservice to test connection.
       // The microservice's /connect endpoint should attempt SmartConnect.
       // It should also try to determine if it's vCenter or ESXi if possible.
@@ -1623,7 +1623,7 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
     if (hypervisor.status === 'connected') {
       if (hypervisor.type === 'proxmox') {
         // ... (Proxmox details fetching - Mantenida como estaba)
-        console.log(`Hypervisor ${id} (Proxmox) is connected, fetching details...`);
+        //console.log(`Hypervisor ${id} (Proxmox) is connected, fetching details...`);
         // --- Fetch Proxmox Details ---
         try {
           const proxmox = await getProxmoxClient(hypervisor.id);
