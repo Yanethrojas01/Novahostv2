@@ -245,12 +245,13 @@ export default function Hypervisors() {
               <input
                 type="text"
                 className="form-input"
-                placeholder={newHypervisor.type === 'proxmox' ? 'root' : 'administrator@vsphere.local'}
+                placeholder={newHypervisor.type === 'proxmox' ? 'root@proxmox' : 'administrator@vsphere.local'}
                 value={newHypervisor.username}
                 onChange={(e) => setNewHypervisor(prev => ({ ...prev, username: e.target.value }))}
               />
             </div>
-
+            {newHypervisor.type === 'vsphere' && (
+            <> 
             <div>
               <label className="form-label">Contraseña</label>
               <input
@@ -259,12 +260,13 @@ export default function Hypervisors() {
                 value={newHypervisor.password}
                 onChange={(e) => setNewHypervisor(prev => ({ ...prev, password: e.target.value }))}
               />
-            </div>
+            </div></>
+          )}
 
             {newHypervisor.type === 'proxmox' && (
               <>
                 <div className="sm:col-span-1">
-                  <label className="form-label">Nombre del Token (Opcional)</label>
+                  <label className="form-label">Nombre del Token </label>
                   <input
                     type="text"
                     className="form-input"
@@ -274,7 +276,7 @@ export default function Hypervisors() {
                   />
                 </div>
                 <div className="sm:col-span-1">
-                  <label className="form-label">Secreto del Token API (Opcional)</label>
+                  <label className="form-label">Secreto del Token API </label>
                   <input
                     type="text"
                     className="form-input"
