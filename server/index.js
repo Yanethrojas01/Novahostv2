@@ -1507,7 +1507,10 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
       if (!hasToken && !hasPassword) validationErrors.push('Proxmox requires either password or API token + token name');
       if (apiToken && !tokenName) validationErrors.push('Token name is required when using API token');
       if (tokenName && !apiToken) validationErrors.push('API token secret is required when using token name');
-      if (!/^https?:\/\/[\w.-]+(:\d+)?$/.test(host)) validationErrors.push('Invalid Proxmox host format. Use http(s)://hostname[:port]');
+      // Updated Proxmox host validation to allow hostname without protocol, https will be prepended by default.
+      if (!/^[\w.-]+(:\d+)?$/.test(host) && !/^https?:\/\/[\w.-]+(:\d+)?$/.test(host)) {
+        validationErrors.push('Invalid Proxmox host format. Use hostname[:port] or http(s)://hostname[:port]');
+      }
   } else if (type === 'vsphere') {
       if (!password) validationErrors.push('Password is required for vSphere connection');
       if (!/^[\w.-]+(:\d+)?$/.test(host) && !/^https?:\/\/[\w.-]+(:\d+)?$/.test(host)) {
