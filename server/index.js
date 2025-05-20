@@ -875,16 +875,25 @@ app.post('/api/vms/:id/console', authenticate, async (req, res) => {
     if (targetHypervisor.type === 'proxmox') {
       console.log(`Console: Requesting VNC proxy for Proxmox VM ${vmExternalId} on node ${targetNode}`);
       const vncProxyResponse = await proxmoxClientInstance.nodes.$(targetNode).qemu.$(vmExternalId).vncproxy.$post({});
-      // The VNC WebSocket connection should be made to the actual Proxmox node
-      // where the VM is running. We use the IP from the hypervisor's configured host,
-      // assuming it's the accessible IP for the node running the VM.
-      const proxmoxApiHost = targetHypervisor.host.split(':')[0];
+     // The host for the VNC connection should be the IP address of the targetNode.
+      // Since targetNode (name, e.g., "proxmox06") is not DNS resolvable by the client,
+      // we use the IP from the hypervisor's DB entry (`targetHypervisor.host`).
+      // This assumes targetHypervisor.host is the correct, client-accessible IP for the targetNode's VNC service.
+      const connectionHostIp = targetHypervisor.host.split(':')[0];
+
+ 
+      console.log(`Proxmox vncproxy response (port, ticket): port=${vncProxyResponse.port}, ticket=${vncProxyResponse.ticket ? 'present' : 'missing'}. Using connection host IP: ${connectionHostIp} for node ${targetNode}`);
+
+      if (!vncProxyResponse.port || !vncProxyResponse.ticket) {
+        console.error(`Proxmox vncproxy response for VM ${vmExternalId} on node ${targetNode} is missing port or ticket.`);
+        throw new Error('Proxmox vncproxy response was incomplete (missing port or ticket).');
+      }
  
 
       res.json({
         type: 'proxmox',
         connectionDetails: {
-          host: proxmoxApiHost, // Use the IP from the configured hypervisor host
+          host: connectionHostIp, // Use the IP from the configured hypervisor host
           port: vncProxyResponse.port,
           ticket: vncProxyResponse.ticket, // This is the password for VNC
           vmid: vmExternalId,
