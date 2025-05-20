@@ -48,6 +48,18 @@ export default function Settings() {
      contact_info: {},
      additional_info: ''
      });
+
+     // State for Final Client Editing Modal
+  const [isEditClientModalOpen, setIsEditClientModalOpen] = useState(false);
+  const [editingClient, setEditingClient] = useState<FinalClient | null>(null);
+  const [editedClientData, setEditedClientData] = useState<{
+    name: string;
+    rif: string;
+    
+  }>({
+    name: '', rif: '',
+  });
+
  // State for User Editing Modal
  const [isEditUserModalOpen, setIsEditUserModalOpen] = useState(false);
  const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -301,7 +313,51 @@ export default function Settings() {
     }
   };
 
-  // TODO: Implement Edit Client functionality
+  const handleEditClient = (clientToEdit: FinalClient) => {
+    setEditingClient(clientToEdit);
+    setEditedClientData({
+      name: clientToEdit.name,
+      rif: clientToEdit.rif,
+      
+    });
+    setIsEditClientModalOpen(true);
+  };
+
+  const handleUpdateClient = async () => {
+    if (!editingClient || !authToken) {
+      toast.error("No client selected for editing or token missing.");
+      return;
+    }
+
+    if (!editedClientData.name || !editedClientData.rif) {
+      toast.error("Name and RIF are required.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/final-clients/${editingClient.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+        body: JSON.stringify({ // Send only name and RIF
+          name: editedClientData.name,
+          rif: editedClientData.rif,
+          // contact_info and additional_info are no longer sent from this modal
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Failed to parse error response' }));
+        throw new Error(errorData.error || `Failed to update client (status: ${response.status})`);
+      }
+      toast.success('Client updated successfully!');
+      setIsEditClientModalOpen(false);
+      setEditingClient(null);
+      fetchClients(clientCurrentPage); // Refresh the client list on the current page
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'An unknown error occurred';
+      toast.error(`Failed to update client: ${message}`);
+    }
+  };
 
 
   const handleAddUser = async () => {
@@ -796,7 +852,7 @@ export default function Settings() {
                         <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Nombre</th>
                         <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">RIF</th>
                         <th scope="col" className="relative px-6 py-3">
-                          <span className="sr-only">Actions</span>
+                          <span className="sr-only">Acciones</span>
                         </th>
                       </tr>
                     </thead>
@@ -809,8 +865,11 @@ export default function Settings() {
                             <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-900 dark:text-white">{client.name}</td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500 dark:text-slate-400">{client.rif}</td>
                             <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
-                              <button onClick={() => toast(`Edit for ${client.name} not implemented`)} className="text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-200">
-                                <Edit className="h-4 w-4 inline" />
+                                
+                                
+                              <button onClick={() => handleEditClient(client)} className="text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-200 inline-flex items-center">
+                                <Edit className="h-4 w-4 mr-1" />
+                                Editar
                               </button>
                               <button onClick={() => handleDeleteClient(client.id)} className="text-danger-600 hover:text-danger-900 dark:text-danger-400 dark:hover:text-danger-200">
                                 <Trash2 className="h-4 w-4 inline" />
@@ -858,7 +917,7 @@ export default function Settings() {
               transition={{ duration: 0.2 }}
               className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-xl w-full max-w-md"
             >
-              <h3 className="text-xl font-semibold text-slate-900 dark:text-white mb-6">Edit User: <span className="font-normal">{editingUser.username}</span></h3>
+              <h3 className="text-xl font-semibold text-slate-900 dark:text-white mb-6">Editar Usuario: <span className="font-normal">{editingUser.username}</span></h3>
               
               <div className="space-y-4">
                 <div>
@@ -909,6 +968,49 @@ export default function Settings() {
               <div className="flex justify-end space-x-3 mt-8">
                 <button type="button" className="btn btn-secondary" onClick={() => { setIsEditUserModalOpen(false); setEditingUser(null); }}>Cancel</button>
                 <button type="button" className="btn btn-primary" onClick={handleUpdateUser} disabled={!editedUserData.username || !editedUserData.email}>Save Changes</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+ {/* Edit Client Modal */}
+ {isEditClientModalOpen && editingClient && (
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50 transition-opacity duration-300 ease-in-out">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: -20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: -20 }}
+              transition={{ duration: 0.2 }}
+              className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-xl w-full max-w-md"
+            >
+              <h3 className="text-xl font-semibold text-slate-900 dark:text-white mb-6">Editar Cliente: <span className="font-normal">{editingClient.name}</span></h3>
+              
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="edit-client-name" className="form-label">Nombre Cliente</label>
+                  <input
+                    id="edit-client-name"
+                    type="text"
+                    className="form-input"
+                    value={editedClientData.name}
+                    onChange={(e) => setEditedClientData(prev => ({ ...prev, name: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="edit-client-rif" className="form-label">RIF</label>
+                  <input
+                    id="edit-client-rif"
+                    type="text"
+                    className="form-input"
+                    value={editedClientData.rif}
+                    onChange={(e) => setEditedClientData(prev => ({ ...prev, rif: e.target.value }))}
+                  />
+                </div>
+                
+              </div>
+
+              <div className="flex justify-end space-x-3 mt-8">
+                <button type="button" className="btn btn-secondary" onClick={() => { setIsEditClientModalOpen(false); setEditingClient(null); }}>Cancel</button>
+                <button type="button" className="btn btn-primary" onClick={handleUpdateClient} disabled={!editedClientData.name || !editedClientData.rif}>Save Changes</button>
               </div>
             </motion.div>
           </div>
