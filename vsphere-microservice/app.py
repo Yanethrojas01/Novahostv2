@@ -877,6 +877,62 @@ def list_isos():
         if si:
             disconnect_vsphere(si)
 
+@app.route('/vm/<string:vm_uuid>/console', methods=['POST'])
+def vm_console_ticket(vm_uuid):
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'Request body must be JSON'}), 400
+
+    host_param = data.get('host')
+    user_param = data.get('user')
+    password_param = data.get('password')
+    port_param = int(data.get('port', 443))
+    # vm_name_param = data.get('vm_name', vm_uuid) # For logging or if needed
+
+    original_vm_uuid_param = vm_uuid
+    vm_uuid = vm_uuid.strip()
+    app.logger.info(f"Console Ticket: Request for VM UUID '{original_vm_uuid_param}' (stripped: '{vm_uuid}') on vSphere {host_param}")
+
+    if not all([host_param, user_param, password_param]):
+        app.logger.error("Console Ticket: Missing connection parameters in request body")
+        return jsonify({'error': 'Missing vSphere connection parameters in request body'}), 400
+
+    si = None
+    try:
+        si = connect_vsphere(host_param, user_param, password_param, port_param)
+        content = si.RetrieveContent()
+        app.logger.info(f"Console Ticket: Connected to vSphere {host_param}")
+
+        vm = get_obj(content, [vim.VirtualMachine], uuid=vm_uuid)
+        if not vm:
+            app.logger.error(f"Console Ticket: VM with UUID '{vm_uuid}' not found.")
+            return jsonify({'error': f'VM with UUID {vm_uuid} not found'}), 404
+
+        app.logger.info(f"Console Ticket: Found VM '{vm.name}'. Acquiring WebMKS ticket...")
+        
+        # Acquire WebMKS ticket
+        mks_ticket = vm.AcquireTicket('webmks')
+        
+        app.logger.info(f"Console Ticket: WebMKS ticket acquired for VM '{vm.name}'. Host: {mks_ticket.host}, Port: {mks_ticket.port}")
+
+        return jsonify({
+            'ticket': mks_ticket.ticket,
+            'host': mks_ticket.host, # This is the ESXi host, or vCenter if it proxies
+            'port': mks_ticket.port, # Typically 9443 for vCenter proxy, 443 for direct ESXi
+            'sslThumbprint': mks_ticket.sslThumbprint,
+            # 'cfgFile': mks_ticket.cfgFile, # Not usually needed by client
+            # 'vmId': vm._moId # MOID, if needed by frontend for any reason
+        }), 200
+
+    except vim.fault.InvalidLogin:
+        app.logger.error(f"Console Ticket: vSphere login failed for {user_param}@{host_param}")
+        return jsonify({'error': 'vSphere login failed. Check credentials.'}), 401
+    except Exception as e:
+        app.logger.error(f"Console Ticket: Error acquiring MKS ticket for VM {vm_uuid} on {host_param}: {str(e)}", exc_info=True)
+        return jsonify({'error': f'An error occurred: {str(e)}'}), 500
+    finally:
+        if si:
+            disconnect_vsphere(si)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True) # Added debug=True for development

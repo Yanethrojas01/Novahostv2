@@ -1,4 +1,4 @@
-# Novahost (anteriormente VM-Forge)
+# Novahost 
 
 Novahost is a modern web application for managing virtual machines across Proxmox and vSphere environments. It provides a unified interface for creating, monitoring, and managing VMs across different hypervisor platforms.
 
@@ -34,7 +34,7 @@ Novahost is a modern web application for managing virtual machines across Proxmo
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/yourusername/vm-forge.git
+   git clone https://github.com/yourusername/Novahost.git
    cd vm-forge
    ```
 
