@@ -758,7 +758,7 @@ export default function Settings() {
                             <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
                             <button onClick={() => handleEditUser(user)} className="text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-200 inline-flex items-center">
                                 <Edit className="h-4 w-4 mr-1" />
-                                Edit
+                                Editar
                               </button>                              {/* Prevent deleting the current user - Use currentUser.id */}
                               {currentUser?.id !== user.id && (
                                 <button onClick={() => handleDeleteUser(user.id)} className="text-danger-600 hover:text-danger-900 dark:text-danger-400 dark:hover:text-danger-200">Delete</button>
