@@ -48,7 +48,17 @@ export default function Settings() {
      contact_info: {},
      additional_info: ''
      });
-
+ // State for User Editing Modal
+ const [isEditUserModalOpen, setIsEditUserModalOpen] = useState(false);
+ const [editingUser, setEditingUser] = useState<User | null>(null);
+ const [editedUserData, setEditedUserData] = useState<{
+   username: string;
+   email: string;
+   role_name: 'admin' | 'user' | 'viewer'; // Matches backend expectation and User type 'role'
+   is_active: boolean;
+ }>({
+   username: '', email: '', role_name: 'user', is_active: true,
+ });
 
   useEffect(() => {
     fetchPlans();
@@ -326,13 +336,60 @@ export default function Settings() {
     }
   };
 
-  // TODO: Implement Edit User functionality
-  const handleEditUser = (user: User) => {
-    toast(`Edit functionality for ${user.email} not yet implemented.`);
-    // Logic to open modal or enable inline editing
+  const handleEditUser = (userToEdit: User) => {
+    setEditingUser(userToEdit);
+    setEditedUserData({
+      username: userToEdit.username,
+      email: userToEdit.email,
+      role_name: userToEdit.role, // Frontend 'role' maps to backend 'role_name'
+      is_active: userToEdit.is_active ?? false,
+    });
+    setIsEditUserModalOpen(true);
   };
 
-  // TODO: Implement Delete User functionality
+  const handleUpdateUser = async () => {
+    if (!editingUser || !authToken) {
+      toast.error("No user selected for editing or token missing.");
+      return;
+    }
+
+    if (!editedUserData.username || !editedUserData.email) {
+      toast.error("Username and email are required.");
+      return;
+    }
+    if (editedUserData.role_name && !['admin', 'user', 'viewer'].includes(editedUserData.role_name)) {
+        toast.error("Invalid role selected. Must be admin, user, or viewer.");
+        return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/${editingUser.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ // Send all editable fields
+          username: editedUserData.username,
+          email: editedUserData.email,
+          role_name: editedUserData.role_name,
+          is_active: editedUserData.is_active,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Failed to parse error response' }));
+        throw new Error(errorData.error || `Failed to update user (status: ${response.status})`);
+      }
+      toast.success('User updated successfully!');
+      setIsEditUserModalOpen(false);
+      setEditingUser(null);
+      fetchUsers(); // Refresh the user list
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'An unknown error occurred';
+      toast.error(`Failed to update user: ${message}`);
+    }
+  };
   const handleDeleteUser = async (userId: string) => {
     if (!authToken) { toast.error("Token no encontrado."); return; }
 
@@ -643,8 +700,10 @@ export default function Settings() {
                               </span>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
-                              <button onClick={() => handleEditUser(user)} className="text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-200">Edit</button>
-                              {/* Prevent deleting the current user - Use currentUser.id */}
+                            <button onClick={() => handleEditUser(user)} className="text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-200 inline-flex items-center">
+                                <Edit className="h-4 w-4 mr-1" />
+                                Edit
+                              </button>                              {/* Prevent deleting the current user - Use currentUser.id */}
                               {currentUser?.id !== user.id && (
                                 <button onClick={() => handleDeleteUser(user.id)} className="text-danger-600 hover:text-danger-900 dark:text-danger-400 dark:hover:text-danger-200">Delete</button>
                               )}
@@ -789,7 +848,71 @@ export default function Settings() {
             </div>
           </div>
         </motion.section>
+{/* Edit User Modal */}
+{isEditUserModalOpen && editingUser && (
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50 transition-opacity duration-300 ease-in-out">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: -20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: -20 }}
+              transition={{ duration: 0.2 }}
+              className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-xl w-full max-w-md"
+            >
+              <h3 className="text-xl font-semibold text-slate-900 dark:text-white mb-6">Edit User: <span className="font-normal">{editingUser.username}</span></h3>
+              
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="edit-username" className="form-label">Username</label>
+                  <input
+                    id="edit-username"
+                    type="text"
+                    className="form-input"
+                    value={editedUserData.username}
+                    onChange={(e) => setEditedUserData(prev => ({ ...prev, username: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="edit-email" className="form-label">Email</label>
+                  <input
+                    id="edit-email"
+                    type="email"
+                    className="form-input"
+                    value={editedUserData.email}
+                    onChange={(e) => setEditedUserData(prev => ({ ...prev, email: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="edit-role" className="form-label">Role</label>
+                  <select
+                    id="edit-role"
+                    className="form-select"
+                    value={editedUserData.role_name} // Bind to role_name for consistency with backend
+                    onChange={(e) => setEditedUserData(prev => ({ ...prev, role_name: e.target.value as 'admin' | 'user' | 'viewer' }))}
+                  >
+                    <option value="user">User</option>
+                    <option value="viewer">Viewer</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
+                <div className="flex items-center">
+                  <input
+                    id="edit-is_active"
+                    type="checkbox"
+                    className="form-checkbox h-5 w-5 text-primary-600 rounded focus:ring-primary-500"
+                    checked={editedUserData.is_active}
+                    onChange={(e) => setEditedUserData(prev => ({ ...prev, is_active: e.target.checked }))}
+                  />
+                  <label htmlFor="edit-is_active" className="ml-2 text-sm text-slate-700 dark:text-slate-300">Active</label>
+                </div>
+              </div>
 
+              <div className="flex justify-end space-x-3 mt-8">
+                <button type="button" className="btn btn-secondary" onClick={() => { setIsEditUserModalOpen(false); setEditingUser(null); }}>Cancel</button>
+                <button type="button" className="btn btn-primary" onClick={handleUpdateUser} disabled={!editedUserData.username || !editedUserData.email}>Save Changes</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
         {/* Backup Settings */}
         {/* ... (Backup settings section remains commented out) ... */}
       </div>

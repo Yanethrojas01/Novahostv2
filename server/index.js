@@ -333,6 +333,45 @@ app.get('/api/users', authenticate, requireAdmin, async (req, res) => {
   }
 });
 
+// DELETE /api/users/:id - Delete a user (Admin Only)
+app.delete('/api/users/:id', authenticate, requireAdmin, async (req, res) => {
+  const { id: userIdToDelete } = req.params;
+  const adminUserId = req.user.userId; // From authenticate middleware
+
+  console.log(`--- DELETE /api/users/${userIdToDelete} --- Requested by admin: ${adminUserId}`);
+
+  // Prevent admin from deleting their own account
+  // Ensure consistent type for comparison (req.params.id is string, req.user.userId might be number)
+  if (userIdToDelete === String(adminUserId)) {
+    console.log(`Admin user ${adminUserId} attempted to delete self.`);
+    return res.status(403).json({ error: 'Los administradores no pueden eliminar su propia cuenta.' });
+  }
+
+  try {
+    // Optional: Check if the user exists before attempting to delete.
+    const userCheck = await pool.query('SELECT id FROM users WHERE id = $1', [userIdToDelete]);
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Usuario no encontrado.' });
+    }
+
+    // Consider foreign key constraints (e.g., created_by_user_id in virtual_machines)
+    // You might need to set related fields to NULL or prevent deletion if dependencies exist.
+    const result = await pool.query('DELETE FROM users WHERE id = $1 RETURNING id', [userIdToDelete]);
+
+    if (result.rowCount > 0) {
+      console.log(`Successfully deleted user ${userIdToDelete}`);
+      res.status(204).send(); // No Content
+    } else {
+      // This case might be redundant if userCheck is performed, but good as a fallback.
+      res.status(404).json({ error: 'Usuario no encontrado o ya eliminado.' });
+    }
+  } catch (error) {
+    console.error(`Error deleting user ${userIdToDelete}:`, error);
+    res.status(500).json({ error: 'Error al eliminar el usuario.' });
+  }
+});
+
+
 // --- User Profile & Password Management for Logged-in User ---
 app.put('/api/auth/profile', authenticate, async (req, res) => {
   const { userId } = req.user; // From authenticate middleware
