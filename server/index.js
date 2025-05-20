@@ -875,14 +875,16 @@ app.post('/api/vms/:id/console', authenticate, async (req, res) => {
     if (targetHypervisor.type === 'proxmox') {
       console.log(`Console: Requesting VNC proxy for Proxmox VM ${vmExternalId} on node ${targetNode}`);
       const vncProxyResponse = await proxmoxClientInstance.nodes.$(targetNode).qemu.$(vmExternalId).vncproxy.$post({});
-      // The Proxmox node itself hosts the WebSocket. We need its accessible address.
-      // For simplicity, we'll use the main hypervisor host. This might need adjustment if nodes are not directly addressable via this host.
+      // The VNC WebSocket connection should be made to the actual Proxmox node
+      // where the VM is running. We use the IP from the hypervisor's configured host,
+      // assuming it's the accessible IP for the node running the VM.
       const proxmoxApiHost = targetHypervisor.host.split(':')[0];
+ 
 
       res.json({
         type: 'proxmox',
         connectionDetails: {
-          host: proxmoxApiHost, // Host for WebSocket connection (Proxmox node)
+          host: proxmoxApiHost, // Use the IP from the configured hypervisor host
           port: vncProxyResponse.port,
           ticket: vncProxyResponse.ticket, // This is the password for VNC
           vmid: vmExternalId,

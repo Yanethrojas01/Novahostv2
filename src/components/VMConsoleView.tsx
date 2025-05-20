@@ -31,7 +31,8 @@ export interface VSphereConnectionDetails {
 }
 
 interface VMConsoleViewProps {
-  
+  consoleDetails: ConsoleDetailsData; // Asegúrate de que esta línea esté presente
+
   onClose: () => void;
   onError?: (message: string) => void;
 }
