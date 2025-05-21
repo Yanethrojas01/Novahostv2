@@ -251,15 +251,19 @@ app.post('/api/users', authenticate, requireAdmin, async (req, res) => {
 
 app.put('/api/users/:id', authenticate, requireAdmin, async (req, res) => {
   const { id } = req.params;
-  const { username, email, role_name, is_active } = req.body;
+  const { username, email, role_name, is_active, password } = req.body; // Added password
 
-  console.log(`--- PUT /api/users/${id} --- Updating user: ${email}, Role: ${role_name}, Active: ${is_active}`);
+  console.log(`--- PUT /api/users/${id} --- Updating user. Email: ${email}, Role: ${role_name}, Active: ${is_active}, Password change requested: ${!!password}`);
 
   if (!username || !email) {
     return res.status(400).json({ error: 'Username and email are required' });
   }
   if (role_name && !['admin', 'user', 'viewer'].includes(role_name)) {
     return res.status(400).json({ error: 'Invalid role specified. Must be admin, user, or viewer.' });
+  }
+  // Validate password if provided (e.g., minimum length)
+  if (password && password.length < 6) {
+    return res.status(400).json({ error: 'New password must be at least 6 characters long.' });
   }
   if (typeof is_active !== 'boolean') {
     return res.status(400).json({ error: 'is_active must be a boolean value.' });
@@ -282,6 +286,11 @@ app.put('/api/users/:id', authenticate, requireAdmin, async (req, res) => {
     updates.push(`username = $${valueIndex++}`); values.push(username);
     updates.push(`email = $${valueIndex++}`); values.push(email);
     if (roleId) { updates.push(`role_id = $${valueIndex++}`); values.push(roleId); }
+    if (password) {
+      const saltRounds = 10;
+      const passwordHash = await bcrypt.hash(password, saltRounds);
+      updates.push(`password_hash = $${valueIndex++}`); values.push(passwordHash);
+    }
     updates.push(`is_active = $${valueIndex++}`); values.push(is_active);
     updates.push(`updated_at = now()`);
 

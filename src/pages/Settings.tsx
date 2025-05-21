@@ -68,8 +68,9 @@ export default function Settings() {
    email: string;
    role_name: 'admin' | 'user' | 'viewer'; // Matches backend expectation and User type 'role'
    is_active: boolean;
+   password?: string; // For changing user password
  }>({
-   username: '', email: '', role_name: 'user', is_active: true,
+   username: '', email: '', role_name: 'user', is_active: true, password: '',
  });
 
   useEffect(() => {
@@ -80,14 +81,14 @@ export default function Settings() {
 
   // Helper to get the auth token
   const getAuthToken = () => {
-    if (!authToken) toast.error("Authentication token not found. Please log in again.");
+    if (!authToken) toast.error("Token de autenticación no encontrado. Por favor, inicie sesión de nuevo.");
     return authToken ? `Bearer ${authToken}` : null;
  
   };
 
   const fetchClients = async (page = 1, search = clientSearchTerm) => {
     if (!authToken) {
-      toast.error("Authentication token not found. Please log in again.");
+      toast.error("Token de autenticación no encontrado. Por favor, inicie sesión de nuevo.");
       return;
     }
     setIsLoadingClients(true);
@@ -102,7 +103,7 @@ export default function Settings() {
       setClientTotalPages(data.pagination.totalPages);
     } catch (error) {
       console.error('Error fetching clients:', error);
-      toast.error('Could not load final clients.');
+      toast.error('No se pudieron cargar los clientes finales.');
       setClients([]); // Clear clients on error
     } finally {
       setIsLoadingClients(false);
@@ -127,14 +128,14 @@ export default function Settings() {
         },
       });
       if (!response.ok) {
-        throw new Error('Failed to fetch plans');
+        throw new Error('No se pudieron obtener los planes');
       }
       const data = await response.json();
 
       setPlans(data || []);
     } catch (error) {
       console.error('Error fetching plans:', error);
-      toast.error('Could not load VM plans.');
+      toast.error('No se pudieron cargar los planes de VM.');
     } finally {
       // Make sure isLoading is set to false even if there's an error
       setIsLoading(false); // Use the combined loading state
@@ -149,17 +150,16 @@ export default function Settings() {
       const response = await fetch(`${API_BASE_URL}/users`, {
         headers: { 'Authorization': `Bearer ${authToken}` },
       });
-      if (!response.ok) throw new Error('Failed to fetch users');
+      if (!response.ok) throw new Error('No se pudieron obtener los usuarios');
       const data = await response.json();
       setUsers(data || []);
     } catch (error) {
       console.error('Error fetching users:', error);
-      toast.error('Could not load users.');
+      toast.error('No se pudieron cargar los usuarios.');
     } finally {
       setIsLoadingUsers(false);
     }
   };
-
   const handleAddPlan = async () => {
     if (!authToken) { toast.error("Token no encontrado."); return; }
 
@@ -178,7 +178,7 @@ export default function Settings() {
         }),
       });
 
-      if (!response.ok) throw new Error('Failed to add plan');
+      if (!response.ok) throw new Error('No se pudo agregar el plan');
       const addedPlan = await response.json();
       setPlans([...plans, addedPlan]);
       setNewPlan({ // Reset form
@@ -191,10 +191,10 @@ export default function Settings() {
         },
         is_active: true
       });
-      toast.success('VM Plan added successfully!');
+      toast.success('¡Plan de VM agregado exitosamente!');
     } catch (error) {
       console.error('Error adding plan:', error);
-      toast.error('Failed to add VM plan.');
+      toast.error('Error al agregar el plan de VM.');
     }
   };
  
@@ -209,23 +209,23 @@ export default function Settings() {
         },
       });
 
-      if (!response.ok) throw new Error('Failed to delete plan');
+      if (!response.ok) throw new Error('No se pudo eliminar el plan');
 
       // Check for 204 No Content status
       if (response.status === 204) {
         setPlans(plans.filter(plan => plan.id !== id));
-        toast.success('VM Plan deleted.');
+        toast.success('Plan de VM eliminado.');
       } else {
         // Handle unexpected successful responses if needed
         const data = await response.json().catch(() => null); // Try to parse JSON, ignore if no body
         console.warn('Unexpected response status after delete:', response.status, data);
-        toast.error('Plan deleted, but received unexpected server response.');
+        toast.error('Plan eliminado, pero con error de respuesta del servidor.');
         // Still remove from list locally if server confirmed deletion despite status code
         setPlans(plans.filter(plan => plan.id !== id));
       }
     } catch (error) {
       console.error('Error deleting plan:', error);
-      toast.error('Failed to delete VM plan.');
+      toast.error('Falla en eliminar Plan.');
     }
   };
 
@@ -241,13 +241,13 @@ export default function Settings() {
         },
         body: JSON.stringify({ is_active }),
       });
-      if (!response.ok) throw new Error('Failed to update plan status');
+      if (!response.ok) throw new Error('No se pudo actualizar el estado del plan');
       const updatedPlan = await response.json();
       setPlans(plans.map(plan => (plan.id === id ? updatedPlan : plan)));
-      toast.success(`Plan ${is_active ? 'activated' : 'deactivated'}.`);
+      toast.success(`Plan ${is_active ? 'activado' : 'desactivado'}.`);
     } catch (error) {
       console.error('Error updating plan:', error);
-      toast.error('Failed to update plan status.');
+      toast.error('Error al actualizar el estado del plan.');
     }
   };
 
@@ -255,7 +255,7 @@ export default function Settings() {
     if (!authToken) { toast.error("Token no encontrado."); return; }
 
     if (!newClient.name || !newClient.rif) {
-      toast.error("Name and RIF are required for a new client.");
+      toast.error("Nombre y RIF son requeridos.");
       return;
     }
     try {
@@ -268,48 +268,48 @@ export default function Settings() {
         body: JSON.stringify(newClient),
       });
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Failed to parse error response' }));
-        throw new Error(errorData.error || `Failed to add client (status: ${response.status})`);
+        const errorData = await response.json().catch(() => ({ error: 'Error al analizar la respuesta de error' }));
+        throw new Error(errorData.error || `Error al agregar cliente (estado: ${response.status})`);
       }
-      toast.success('Final client added successfully!');
+      toast.success('¡Nuevo Cliente Final agregado!');
       setNewClient({ name: '', rif: '', contact_info: {}, additional_info: '' }); // Reset form
       fetchClients(clientCurrentPage); // Refresh client list on current page
     } catch (error: unknown) {
       console.error('Error adding client:', error);
       const message = error instanceof Error ? error.message : 'Unknown error';
-      toast.error(`Failed to add client: ${message}`);
+      toast.error(`Error al agregar cliente: ${message}`);
     }
   };
 
   const handleDeleteClient = async (clientId: string) => {
     if (!authToken) { toast.error("Token no encontrado."); return; }
 
-    if (!window.confirm("Are you sure you want to delete this client? This action cannot be undone.")) return;
+    if (!window.confirm("¿Seguro que quiere eliminar este cliente? Esta acción no se puede revertir.")) return;
 
     try {
-      const response = await fetch(`${API_BASE_URL}/final-clients/${clientId}`, {
+      const response = await fetch(`${API_BASE_URL}/final-clients/${clientId}`, { // Ensure this matches your API endpoint
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${authToken}` },
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: 'Failed to parse error response' }));
-        throw new Error(errorData.error || `Failed to delete client (status: ${response.status})`);
+        throw new Error(errorData.error || `Error al eliminar cliente (estado: ${response.status})`);
       }
 
       if (response.status === 204) {
-        toast.success('Client deleted successfully!');
+        toast.success('¡Cliente eliminado exitosamente!');
         // Refetch, considering if the current page might become empty
         fetchClients(clients.length === 1 && clientCurrentPage > 1 ? clientCurrentPage - 1 : clientCurrentPage);
       } else {
         console.warn('Unexpected response status after client delete:', response.status);
-        toast.error('Client deleted, but received unexpected server response.');
+        toast.error('Cliente eliminado, pero se recibió una respuesta inesperada del servidor.');
         fetchClients(clientCurrentPage); // Refresh list anyway
       }
     } catch (error: unknown) {
       console.error('Error deleting client:', error);
       const message = error instanceof Error ? error.message : 'Unknown error';
-      toast.error(`Failed to delete client: ${message}`);
+      toast.error(`Error al eliminar cliente: ${message}`);
     }
   };
 
@@ -325,12 +325,12 @@ export default function Settings() {
 
   const handleUpdateClient = async () => {
     if (!editingClient || !authToken) {
-      toast.error("No client selected for editing or token missing.");
+      toast.error("Ningún cliente seleccionado para editar o falta el token.");
       return;
     }
 
     if (!editedClientData.name || !editedClientData.rif) {
-      toast.error("Name and RIF are required.");
+      toast.error("El nombre y el RIF son obligatorios.");
       return;
     }
 
@@ -347,15 +347,15 @@ export default function Settings() {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: 'Failed to parse error response' }));
-        throw new Error(errorData.error || `Failed to update client (status: ${response.status})`);
+        throw new Error(errorData.error || `Error al actualizar cliente (estado: ${response.status})`);
       }
-      toast.success('Client updated successfully!');
+      toast.success('¡Cliente actualizado exitosamente!');
       setIsEditClientModalOpen(false);
       setEditingClient(null);
       fetchClients(clientCurrentPage); // Refresh the client list on the current page
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'An unknown error occurred';
-      toast.error(`Failed to update client: ${message}`);
+      toast.error(`Error al actualizar cliente: ${message}`);
     }
   };
 
@@ -365,7 +365,7 @@ export default function Settings() {
 
     // Basic validation
     if (!newUser.username || !newUser.email || !newUser.password) {
-      toast.error("Username, email, and password are required.");
+      toast.error("El nombre de usuario, el correo electrónico y la contraseña son obligatorios.");
       return;
     }
     try {
@@ -379,16 +379,16 @@ export default function Settings() {
       });
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: 'Failed to parse error response' }));
-        throw new Error(errorData.error || `Failed to add user (status: ${response.status})`);
+        throw new Error(errorData.error || `Error al agregar usuario (estado: ${response.status})`);
       }
       // const addedUser = await response.json(); // Use if needed
-      toast.success('User added successfully!');
+      toast.success('¡Usuario agregado exitosamente!');
       setNewUser({ username: '', email: '', password: '', role_name: 'user' }); // Reset form
       fetchUsers(); // Refresh user list
     } catch (error: unknown) {
       console.error('Error adding user:', error);
       const message = error instanceof Error ? error.message : 'Unknown error';
-      toast.error(`Failed to add user: ${message}`);
+      toast.error(`Error al agregar usuario: ${message}`);
     }
   };
 
@@ -398,24 +398,30 @@ export default function Settings() {
       username: userToEdit.username,
       email: userToEdit.email,
       role_name: userToEdit.role, // Frontend 'role' maps to backend 'role_name'
-      is_active: userToEdit.is_active ?? false,
+      is_active: userToEdit.is_active ?? true, // Default to true if undefined
+      password: '', // Initialize password field as empty
     });
     setIsEditUserModalOpen(true);
   };
 
   const handleUpdateUser = async () => {
     if (!editingUser || !authToken) {
-      toast.error("No user selected for editing or token missing.");
+      toast.error("Ningún usuario seleccionado para editar o falta el token.");
       return;
     }
 
     if (!editedUserData.username || !editedUserData.email) {
-      toast.error("Username and email are required.");
+      toast.error("El nombre de usuario y el correo electrónico son obligatorios.");
       return;
     }
     if (editedUserData.role_name && !['admin', 'user', 'viewer'].includes(editedUserData.role_name)) {
-        toast.error("Invalid role selected. Must be admin, user, or viewer.");
+        toast.error("Rol inválido seleccionado. Debe ser admin, user o viewer.");
         return;
+    }
+    // Optional: Password validation (e.g., length)
+    if (editedUserData.password && editedUserData.password.length > 0 && editedUserData.password.length < 6) {
+      toast.error("La nueva contraseña debe tener al menos 6 caracteres.");
+      return;
     }
 
     try {
@@ -425,48 +431,51 @@ export default function Settings() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${authToken}`,
         },
-        body: JSON.stringify({ // Send all editable fields
+        body: JSON.stringify({
           username: editedUserData.username,
           email: editedUserData.email,
           role_name: editedUserData.role_name,
           is_active: editedUserData.is_active,
+          // Conditionally include password if it's being changed
+          ...(editedUserData.password && editedUserData.password.length > 0 && { password: editedUserData.password }),
         }),
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: 'Failed to parse error response' }));
-        throw new Error(errorData.error || `Failed to update user (status: ${response.status})`);
+        throw new Error(errorData.error || `Error al actualizar usuario (estado: ${response.status})`);
       }
-      toast.success('User updated successfully!');
+      toast.success('¡Usuario actualizado exitosamente!');
       setIsEditUserModalOpen(false);
       setEditingUser(null);
+      setEditedUserData(prev => ({ ...prev, password: '' })); // Clear password field
       fetchUsers(); // Refresh the user list
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'An unknown error occurred';
-      toast.error(`Failed to update user: ${message}`);
+      toast.error(`Error al actualizar usuario: ${message}`);
     }
   };
   const handleDeleteUser = async (userId: string) => {
     if (!authToken) { toast.error("Token no encontrado."); return; }
 
-    if (!window.confirm("Are you sure you want to delete this user? This action cannot be undone.")) return;
+    if (!window.confirm("¿Está seguro de que desea eliminar este usuario? Esta acción no se puede deshacer.")) return;
 
     try {
       // Call DELETE /api/users/:id
       const response = await fetch(`${API_BASE_URL}/users/${userId}`, {
         method: 'DELETE',
         headers: {
-          'Authorization': `Bearer ${authToken}`,
+          'Authorization': `Bearer ${authToken}`, // Ensure token is passed
         },
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: 'Failed to parse error response' }));
-        throw new Error(errorData.error || `Failed to delete user (status: ${response.status})`);
+        throw new Error(errorData.error || `Error al eliminar usuario (estado: ${response.status})`);
       }
 
       if (response.status === 204) {
-        toast.success('User deleted successfully!');
+        toast.success('¡Usuario eliminado exitosamente!');
         fetchUsers(); // Refresh list
       } else {
         console.warn('Unexpected response status after user delete:', response.status);
@@ -476,7 +485,7 @@ export default function Settings() {
     } catch (error: unknown) {
       console.error('Error deleting user:', error);
       const message = error instanceof Error ? error.message : 'Unknown error';
-      toast.error(`Failed to delete user: ${message}`);
+      toast.error(`Error al eliminar usuario: ${message}`);
     }
   };
 
@@ -523,7 +532,7 @@ export default function Settings() {
                       value={newPlan.name || ''}
                       onChange={(e) => setNewPlan(prev => ({ ...prev, name: e.target.value }))}
                       placeholder="e.g., Basic Server"
-                    />
+                    />_
                   </div>
                   <div>
                     <label className="form-label">Descripción</label>
@@ -532,7 +541,7 @@ export default function Settings() {
                       className="form-input"
                       value={newPlan.description || ''}
                       onChange={(e) => setNewPlan(prev => ({ ...prev, description: e.target.value }))}
-                      placeholder="e.g., Perfect for small applications"
+                      placeholder="Ej: Perfecto para aplicaciones pequeñas"
                     />
                   </div>
                   <div>
@@ -640,7 +649,7 @@ export default function Settings() {
                     ))
                   ) : (
                     <div className="text-center py-6 text-slate-500 dark:text-slate-400">
-                      No hay planes definidos
+                      No hay planes preestablecidos definidos.
                     </div>
                   )}
                 </div>
@@ -673,7 +682,7 @@ export default function Settings() {
                       className="form-input"
                       value={newUser.username}
                       onChange={(e) => setNewUser(prev => ({ ...prev, username: e.target.value }))}
-                      placeholder="e.g., john.doe"
+                      placeholder="Ej: juan.perez"
                     />
                   </div>
                   <div>
@@ -683,7 +692,7 @@ export default function Settings() {
                       className="form-input"
                       value={newUser.email}
                       onChange={(e) => setNewUser(prev => ({ ...prev, email: e.target.value }))}
-                      placeholder="e.g., user@example.com"
+                      placeholder="Ej: usuario@ejemplo.com"
                     />
                   </div>
                   <div>
@@ -693,7 +702,7 @@ export default function Settings() {
                       className="form-input"
                       value={newUser.password}
                       onChange={(e) => setNewUser(prev => ({ ...prev, password: e.target.value }))}
-                      placeholder="Min. 8 characters"
+                      placeholder="Mín. 8 caracteres"
                     />
                   </div>
                   <div>
@@ -703,9 +712,9 @@ export default function Settings() {
                       value={newUser.role_name}
                       onChange={(e) => setNewUser(prev => ({ ...prev, role_name: e.target.value }))}
                     >
-                      <option value="user">User</option>
-                      <option value="viewer">Viewer</option>
-                      <option value="admin">Admin</option>
+                      <option value="user">Usuario</option>
+                      <option value="viewer">Observador</option>
+                      <option value="admin">Administrador</option>
                     </select>
                   </div>
                   <div className="flex items-end lg:col-span-2">
@@ -728,10 +737,10 @@ export default function Settings() {
                   <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-700">
                     <thead className="bg-slate-50 dark:bg-slate-800">
                       <tr>
-                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Username</th>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Usuario</th>
                         <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Email</th>
                         <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Role</th>
-                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Status</th>
+                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Estado</th>
                         <th scope="col" className="relative px-6 py-3">
                           <span className="sr-only">Actions</span>
                         </th>
@@ -751,24 +760,24 @@ export default function Settings() {
                             <td className="px-6 py-4 whitespace-nowrap text-sm">
                               <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
                             user.is_active ? 'bg-success-100 dark:bg-success-900/30 text-success-800 dark:text-success-300' : 'bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-300'
-                              }`}>
-                                {user.is_active ? 'Active' : 'Inactive'}
+                              }`}>_
+                                {user.is_active ? 'Activo' : 'Inactivo'}
                               </span>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
                             <button onClick={() => handleEditUser(user)} className="text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-200 inline-flex items-center">
                                 <Edit className="h-4 w-4 mr-1" />
                                 Editar
-                              </button>                              {/* Prevent deleting the current user - Use currentUser.id */}
+                              </button>                              {/* Prevent deleting the current user - Use currentUser.id */}_
                               {currentUser?.id !== user.id && (
-                                <button onClick={() => handleDeleteUser(user.id)} className="text-danger-600 hover:text-danger-900 dark:text-danger-400 dark:hover:text-danger-200">Delete</button>
+                                <button onClick={() => handleDeleteUser(user.id)} className="text-danger-600 hover:text-danger-900 dark:text-danger-400 dark:hover:text-danger-200">Eliminar</button>
                               )}
                             </td>
                           </tr>
                         ))
                       ) : (
                         <tr>
-                          <td colSpan={5} className="px-6 py-4 whitespace-nowrap text-sm text-slate-500 dark:text-slate-400 text-center">No users found.</td>
+                          <td colSpan={5} className="px-6 py-4 whitespace-nowrap text-sm text-slate-500 dark:text-slate-400 text-center">No se encontraron usuarios.</td>
                         </tr>
                       )}
                     </tbody>
@@ -803,7 +812,7 @@ export default function Settings() {
                       className="form-input"
                       value={newClient.name || ''}
                       onChange={(e) => setNewClient(prev => ({ ...prev, name: e.target.value }))}
-                      placeholder="e.g., Empresa XYZ C.A."
+                      placeholder="Ej: Empresa XYZ C.A."
                     />
                   </div>
                   <div>
@@ -813,7 +822,7 @@ export default function Settings() {
                       className="form-input"
                       value={newClient.rif || ''}
                       onChange={(e) => setNewClient(prev => ({ ...prev, rif: e.target.value }))}
-                      placeholder="e.g., J-12345678-9"
+                      placeholder="Ej: J-12345678-9"
                     />
                   </div>
                   {/* Add fields for contact_info and additional_info if needed */}
@@ -917,7 +926,7 @@ export default function Settings() {
               transition={{ duration: 0.2 }}
               className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-xl w-full max-w-md"
             >
-              <h3 className="text-xl font-semibold text-slate-900 dark:text-white mb-6">Editar Usuario: <span className="font-normal">{editingUser.username}</span></h3>
+              <h3 className="text-xl font-semibold text-slate-900 dark:text-white mb-6">Editar Usuario: <span className="font-normal">{editingUser.username}</span></h3>_
               
               <div className="space-y-4">
                 <div>
@@ -941,6 +950,17 @@ export default function Settings() {
                   />
                 </div>
                 <div>
+                  <label htmlFor="edit-password" className="form-label">Nueva Contraseña (opcional)</label>
+                  <input
+                    id="edit-password"
+                    type="password"
+                    className="form-input"
+                    placeholder="Dejar en blanco para no cambiar"
+                    value={editedUserData.password || ''}
+                    onChange={(e) => setEditedUserData(prev => ({ ...prev, password: e.target.value }))}
+                  />
+                </div>
+                <div>
                   <label htmlFor="edit-role" className="form-label">Role</label>
                   <select
                     id="edit-role"
@@ -948,9 +968,9 @@ export default function Settings() {
                     value={editedUserData.role_name} // Bind to role_name for consistency with backend
                     onChange={(e) => setEditedUserData(prev => ({ ...prev, role_name: e.target.value as 'admin' | 'user' | 'viewer' }))}
                   >
-                    <option value="user">User</option>
-                    <option value="viewer">Viewer</option>
-                    <option value="admin">Admin</option>
+                    <option value="user">Usuario</option>
+                    <option value="viewer">Observador</option>
+                    <option value="admin">Administrador</option>
                   </select>
                 </div>
                 <div className="flex items-center">
@@ -961,13 +981,13 @@ export default function Settings() {
                     checked={editedUserData.is_active}
                     onChange={(e) => setEditedUserData(prev => ({ ...prev, is_active: e.target.checked }))}
                   />
-                  <label htmlFor="edit-is_active" className="ml-2 text-sm text-slate-700 dark:text-slate-300">Active</label>
+                  <label htmlFor="edit-is_active" className="ml-2 text-sm text-slate-700 dark:text-slate-300">Activo</label>
                 </div>
               </div>
 
               <div className="flex justify-end space-x-3 mt-8">
-                <button type="button" className="btn btn-secondary" onClick={() => { setIsEditUserModalOpen(false); setEditingUser(null); }}>Cancel</button>
-                <button type="button" className="btn btn-primary" onClick={handleUpdateUser} disabled={!editedUserData.username || !editedUserData.email}>Save Changes</button>
+                <button type="button" className="btn btn-secondary" onClick={() => { setIsEditUserModalOpen(false); setEditingUser(null); }}>Cancelar</button>
+                <button type="button" className="btn btn-primary" onClick={handleUpdateUser} disabled={!editedUserData.username || !editedUserData.email}>Guardar Cambios</button>
               </div>
             </motion.div>
           </div>
@@ -982,7 +1002,7 @@ export default function Settings() {
               transition={{ duration: 0.2 }}
               className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-xl w-full max-w-md"
             >
-              <h3 className="text-xl font-semibold text-slate-900 dark:text-white mb-6">Editar Cliente: <span className="font-normal">{editingClient.name}</span></h3>
+              <h3 className="text-xl font-semibold text-slate-900 dark:text-white mb-6">Editar Cliente: <span className="font-normal">{editingClient.name}</span></h3>_
               
               <div className="space-y-4">
                 <div>
@@ -1009,8 +1029,8 @@ export default function Settings() {
               </div>
 
               <div className="flex justify-end space-x-3 mt-8">
-                <button type="button" className="btn btn-secondary" onClick={() => { setIsEditClientModalOpen(false); setEditingClient(null); }}>Cancel</button>
-                <button type="button" className="btn btn-primary" onClick={handleUpdateClient} disabled={!editedClientData.name || !editedClientData.rif}>Save Changes</button>
+                <button type="button" className="btn btn-secondary" onClick={() => { setIsEditClientModalOpen(false); setEditingClient(null); }}>Cancelar</button>
+                <button type="button" className="btn btn-primary" onClick={handleUpdateClient} disabled={!editedClientData.name || !editedClientData.rif}>Guardar Cambios</button>
               </div>
             </motion.div>
           </div>
