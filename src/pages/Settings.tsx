@@ -577,7 +577,8 @@ export default function Settings() {
 
             <div className="space-y-6">
               {/* Add New Plan Form */}
-              <div className="border-b border-slate-200 dark:border-slate-700 pb-6">
+              {(currentUser?.role === 'admin' || currentUser?.role === 'user') && (
+                <div className="border-b border-slate-200 dark:border-slate-700 pb-6">
                 <h3 className="text-sm font-medium text-slate-900 dark:text-white mb-4">Agregar Nuevo Plan</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
@@ -652,7 +653,8 @@ export default function Settings() {
                     </button>
                   </div>
                 </div>
-              </div>
+                </div>
+              )}
 
               {/* Existing Plans */}
               <div>
@@ -679,33 +681,35 @@ export default function Settings() {
                             <span>{plan.specs.disk}GB Almacenamiento</span>
                           </div>
                         </div>
-                        <div className="flex items-center space-x-2">
-                          {/* Toggle Active Status */}
-                          <div className="flex items-center">
-                            <input
-                              type="checkbox"
-                              id={`active-${plan.id}`}
-                              className="form-checkbox h-4 w-4 text-primary-600"
-                              checked={plan.is_active}
-                              onChange={(e) => handleTogglePlan(plan.id, e.target.checked)}
-                            />
-                            <label htmlFor={`active-${plan.id}`} className="ml-2 text-sm text-slate-700 dark:text-slate-300">
-                              Activo
-                            </label>
+                        {(currentUser?.role === 'admin' || currentUser?.role === 'user') && (
+                          <div className="flex items-center space-x-2">
+                            {/* Toggle Active Status */}
+                            <div className="flex items-center">
+                              <input
+                                type="checkbox"
+                                id={`active-${plan.id}`}
+                                className="form-checkbox h-4 w-4 text-primary-600"
+                                checked={plan.is_active}
+                                onChange={(e) => handleTogglePlan(plan.id, e.target.checked)}
+                              />
+                              <label htmlFor={`active-${plan.id}`} className="ml-2 text-sm text-slate-700 dark:text-slate-300">
+                                Activo
+                              </label>
+                            </div>
+                            {/* Edit Button */}
+                            <button
+                              className="p-1 text-slate-500 hover:text-primary-500 dark:text-slate-400 dark:hover:text-primary-400"
+                              onClick={() => handleEditPlan(plan)}
+                            ><Edit className="h-4 w-4" /></button>
+                            {/* Delete Button */}
+                            <button
+                              className="p-1 text-slate-500 hover:text-danger-500 dark:text-slate-400 dark:hover:text-danger-400"
+                              onClick={() => handleDeletePlan(plan.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
                           </div>
-                          {/* Edit Button */}
-                          <button
-                            className="p-1 text-slate-500 hover:text-primary-500 dark:text-slate-400 dark:hover:text-primary-400"
-                            onClick={() => handleEditPlan(plan)}
-                          ><Edit className="h-4 w-4" /></button>
-                          {/* Delete Button */}
-                          <button
-                            className="p-1 text-slate-500 hover:text-danger-500 dark:text-slate-400 dark:hover:text-danger-400"
-                            onClick={() => handleDeletePlan(plan.id)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
+                        )}
                       </div>
                     ))
                   ) : (
