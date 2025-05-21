@@ -68,7 +68,10 @@ export default function StatsPage() {
       setIsLoading(false);
       return;
     }
-
+    if (API_BASE_URL) {
+Console.log("existe la api base")
+    }
+    
     // Validar fechas
     if (!startDate || !endDate || new Date(startDate) > new Date(endDate)) {
       toast.error('Por favor selecciona un rango de fechas válido.');
