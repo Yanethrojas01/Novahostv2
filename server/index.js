@@ -535,13 +535,16 @@ app.post('/api/vms', authenticate, async (req, res) => {
         const createParams = {
           vmid: newVmId, node: targetNode, name: sanitizedName,
           cores: params.specs.cpu, memory: params.specs.memory,
-          description: params.description || '', tags: params.tags?.join(';') || '',
-          scsi0: `local-lvm:${params.specs.disk}`,
+          description: params.description || '', 
+          tags: params.tags?.join(';') || '',
+          // Usar el datastoreName (storage de Proxmox) proporcionado desde el frontend
+          // Fallback a 'local-lvm' si no se proporciona, aunque el frontend debería validarlo.
+          scsi0: `${params.datastoreName || 'local-lvm'}:${params.specs.disk}`, 
           ide2: `${params.templateId},media=cdrom`, boot: 'order=ide2;scsi0',
           net0: 'virtio,bridge=vmbr0', scsihw: 'virtio-scsi-pci', ostype: 'l26',
         };
         console.log(`Attempting to create Proxmox VM ${newVmId} from ISO on node ${targetNode} with params:`, createParams);
-        creationResult = await proxmox.nodes.$(targetNode).qemu.$post(createParams);
+        creationResult = await proxmox.nodes.$(targetNode).qemu.$post(createParams); // No .$create()
       } else {
         const templateVmIdToClone = params.templateId;
         const sanitizedName = params.name.replace(/\s+/g, '-');
@@ -550,6 +553,10 @@ app.post('/api/vms', authenticate, async (req, res) => {
           cores: params.specs.cpu, memory: params.specs.memory,
           description: params.description || '', tags: params.tags?.join(';') || '',
         };
+        // Si se especifica un datastoreName (storage de Proxmox), usarlo para el clon.
+        if (params.datastoreName) {
+          cloneParams.storage = params.datastoreName;
+        }
         console.log(`Attempting to clone Proxmox template VM ${templateVmIdToClone} to new VM ${newVmId} on node ${targetNode} with params:`, cloneParams);
         creationResult = await proxmox.nodes.$(targetNode).qemu.$(templateVmIdToClone).clone.$post(cloneParams);
       }
@@ -1496,14 +1503,39 @@ app.get('/api/hypervisors/:id/storage', authenticate, async (req, res) => {
     let formattedStorage = [];
 
     if (hypervisorInfo.type === 'proxmox') {
-      // ... (Proxmox storage logic - Mantenida como estaba)
       const proxmox = await getProxmoxClient(id);
-      const storageResources = await proxmox.storage.$get();
-      formattedStorage = storageResources.map(storage => ({
-        id: storage.storage, name: storage.storage, type: storage.type,
-        size: storage.total || 0, used: storage.used || 0, available: storage.avail || 0,
-        path: storage.path,
-      }));
+      const nodes = await proxmox.nodes.$get().catch(e => {
+        console.error(`Proxmox nodes fetch error for storage list on hypervisor ${id}: ${e.message}`);
+        return [];
+      });
+
+      const primaryNodeName = nodes.length > 0 ? nodes[0].node : null;
+
+      if (!primaryNodeName) {
+        console.warn(`Hypervisor ${id} (Proxmox) - No nodes found for storage details. Storage list will be basic.`);
+        // Fallback to basic storage list if no node is available
+        const basicStorageList = await proxmox.storage.$get().catch(() => []);
+        formattedStorage = basicStorageList.map(s => ({
+          id: s.storage, name: s.storage, type: s.type,
+          size: 0, used: 0, available: 0, // No detailed info
+          path: s.path, content: s.content,
+        }));
+      } else {
+        const storageListFromApi = await proxmox.storage.$get().catch(() => []);
+        formattedStorage = await Promise.all(storageListFromApi.map(async (s) => {
+          try {
+            const storageStatus = await proxmox.nodes.$(primaryNodeName).storage.$(s.storage).status.$get();
+            return {
+              id: s.storage, name: s.storage, type: s.type,
+              size: storageStatus.total || 0, used: storageStatus.used || 0, available: storageStatus.avail || 0,
+              path: s.path, content: s.content,
+            };
+          } catch (statusError) {
+            console.warn(`Error fetching status for storage ${s.storage} on node ${primaryNodeName} (for /storage endpoint): ${statusError.message}`);
+            return { id: s.storage, name: s.storage, type: s.type, size: 0, used: 0, available: 0, path: s.path, content: s.content, error: "Failed to get status" };
+          }
+        }));
+      }
     } else if (hypervisorInfo.type === 'vsphere') {
       console.log(`Fetching vSphere storage (datastores) for ${id} via PyVmomi microservice`);
       // TODO: PYVMOMI: Implement '/datastores' endpoint in app.py

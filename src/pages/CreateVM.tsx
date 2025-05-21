@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom'; // Import Link
 import { ArrowLeft, Server, Cpu, MemoryStick as Memory, CloudOff, Plus, RefreshCw } from 'lucide-react'; // Import CloudOff, Plus, RefreshCw
 import { motion } from 'framer-motion';
-import { VMCreateParams, VMTemplate, VMPlan } from '../types/vm'; // Import VMPlan
+import { VMCreateParams, VMTemplate, VMPlan, VMSpecs } from '../types/vm'; // Import VMPlan, VMSpecs
 import { Hypervisor, StorageResource } from '../types/hypervisor'; // Import StorageResource
 import { FinalClient } from '../types/client';
 import { useAuth } from '../hooks/useAuth'; // Import useAuth
@@ -10,6 +10,7 @@ import { useAuth } from '../hooks/useAuth'; // Import useAuth
 import { formatBytes } from '../utils/formatters'; // Import formatBytes
 import { toast } from 'react-hot-toast';
 
+import type { NodeResource } from '../types/hypervisor'; // Import NodeResource
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL; // Read from .env
 
 export default function CreateVM() {
@@ -24,8 +25,10 @@ export default function CreateVM() {
   const [availableHypervisors, setAvailableHypervisors] = useState<Hypervisor[]>([]);
   const [templates, setTemplates] = useState<VMTemplate[]>([]); // Use VMTemplate type
   const [availableClients, setAvailableClients] = useState<FinalClient[]>([]); // State for final clients
-  const [availableDatastores, setAvailableDatastores] = useState<StorageResource[]>([]); // State for datastores
+  const [availableStorages, setAvailableStorages] = useState<StorageResource[]>([]); // Renamed from availableDatastores for clarity
   const [availablePlans, setAvailablePlans] = useState<VMPlan[]>([]); // State for VM Plans
+  const [displayablePlans, setDisplayablePlans] = useState<VMPlan[]>([]); // Filtered plans
+  const [selectedNodeDetails, setSelectedNodeDetails] = useState<NodeResource | null>(null);
   const [configMode, setConfigMode] = useState<'plan' | 'custom'>('plan'); // 'plan' or 'custom'
 
   const [vmParams, setVmParams] = useState<VMCreateParams>({
@@ -118,10 +121,12 @@ export default function CreateVM() {
   useEffect(() => {
     setTemplates([]); // Clear previous templates
     setVmParams(prev => ({ ...prev, templateId: undefined, specs: { ...prev.specs, os: undefined } })); // Clear selected template and os
-    setAvailableDatastores([]); // Clear datastores when hypervisor changes
+    setAvailableStorages([]); // Clear storages when hypervisor changes
     setVmParams(prev => ({ ...prev, datastoreName: undefined })); // Clear selected datastore
+    setSelectedNodeDetails(null); // Clear selected node details
 
     if (vmParams.hypervisorId && authToken) {
+      const selectedHypervisor = availableHypervisors.find(h => h.id === vmParams.hypervisorId);
       const fetchTemplates = async () => {
         setIsFetchingTemplates(true); // This state is for templates
         try {
@@ -140,29 +145,76 @@ export default function CreateVM() {
       };
       fetchTemplates();
 
-      // If vSphere, also fetch datastores
-      const selectedHypervisor = availableHypervisors.find(h => h.id === vmParams.hypervisorId);
-      if (selectedHypervisor?.type === 'vsphere') {
-        const fetchDatastores = async () => {
-          setIsFetchingDatastores(true);
+      if (selectedHypervisor?.type === 'proxmox') {
+        // Fetch nodes for Proxmox
+        const fetchNodes = async () => {
           try {
-            const response = await fetch(`${API_BASE_URL}/hypervisors/${vmParams.hypervisorId}/storage`, { // Assuming endpoint is /storage
+            const response = await fetch(`${API_BASE_URL}/hypervisors/${vmParams.hypervisorId}/nodes`, {
               headers: { ...(authToken && { 'Authorization': `Bearer ${authToken}` }) },
             });
-            if (!response.ok) throw new Error('Failed to fetch datastores');
-            const data: StorageResource[] = await response.json();
-            setAvailableDatastores(data);
+            if (!response.ok) throw new Error('Failed to fetch Proxmox nodes');
+            const nodes: NodeResource[] = await response.json();
+            if (nodes.length > 0) {
+              // For simplicity, select the first node.
+              // TODO: Implement node selection if multiple nodes exist.
+              setSelectedNodeDetails(nodes[0]);
+            } else {
+              setSelectedNodeDetails(null);
+            }
           } catch (error) {
-            console.error('Error fetching datastores:', error);
-            toast.error('Could not load datastores for vSphere.');
+            console.error('Error fetching Proxmox nodes:', error);
+            toast.error('Could not load Proxmox node details.');
+            setSelectedNodeDetails(null);
+          }
+        };
+        fetchNodes();
+
+        // Fetch storages for Proxmox (that can hold 'images')
+        const fetchStorages = async () => {
+          setIsFetchingDatastores(true);
+          try {
+            const response = await fetch(`${API_BASE_URL}/hypervisors/${vmParams.hypervisorId}/storage`, {
+              headers: { ...(authToken && { 'Authorization': `Bearer ${authToken}` }) },
+            });
+            if (!response.ok) throw new Error('Failed to fetch Proxmox storages');
+            const storages: StorageResource[] = await response.json();
+            // Filter storages that can contain 'images' (Proxmox specific content type for VM disks)
+            // Backend should ideally provide this info or a way to filter.
+            // For now, assuming the /storage endpoint for Proxmox might return a content string.
+            setAvailableStorages(storages.filter(s => s.type !== 'iso' && s.type !== 'backup')); // Basic filter
+          } catch (error) {
+            console.error('Error fetching Proxmox storages:', error);
+            toast.error('Could not load Proxmox storages.');
+            setAvailableStorages([]);
           } finally {
             setIsFetchingDatastores(false);
           }
         };
-        fetchDatastores();
+        fetchStorages();
+      } else if (selectedHypervisor?.type === 'vsphere') {
+        // No specific node selection needed for vSphere in the same way for resource limits here
+        // Fetch datastores for vSphere to be used for plan filtering and ISO placement
+        const fetchVSphereDatastores = async () => {
+          setIsFetchingDatastores(true); // Use the existing loading state
+          try {
+            const response = await fetch(`${API_BASE_URL}/hypervisors/${vmParams.hypervisorId}/storage`, {
+              headers: { ...(authToken && { 'Authorization': `Bearer ${authToken}` }) },
+            });
+            if (!response.ok) throw new Error('Failed to fetch vSphere datastores');
+            const datastores: StorageResource[] = await response.json();
+            setAvailableStorages(datastores); // Populate availableStorages with vSphere datastores
+          } catch (error) {
+            console.error('Error fetching vSphere datastores:', error);
+            toast.error('Could not load vSphere datastores.');
+            setAvailableStorages([]);
+          } finally {
+            setIsFetchingDatastores(false);
+          }
+        };
+        fetchVSphereDatastores();
       }
     } else { // If hypervisorId is cleared or authToken is missing
-      setAvailableDatastores([]); // Clear datastores
+      setAvailableStorages([]); // Clear storages
     }
   }, [vmParams.hypervisorId, authToken, availableHypervisors]); // Add availableHypervisors
 
@@ -217,6 +269,38 @@ export default function CreateVM() {
     }
   };
 
+  // Filter displayable plans based on selected node/storage resources
+  useEffect(() => {
+    if (!selectedNodeDetails && availableHypervisors.find(h => h.id === vmParams.hypervisorId)?.type !== 'proxmox') {
+      setDisplayablePlans(availablePlans); // Show all plans if not Proxmox or no node details
+      return;
+    }
+
+    let filtered = availablePlans;
+
+    if (selectedNodeDetails) {
+      filtered = filtered.filter(plan =>
+        plan.specs.cpu <= (selectedNodeDetails.cpu?.cores || Infinity) &&
+        plan.specs.memory <= (selectedNodeDetails.memory?.total ? selectedNodeDetails.memory.total / (1024*1024) : Infinity) // Convert node memory to MB
+      );
+    }
+
+    const selectedStorage = availableStorages.find(s => s.name === vmParams.datastoreName);
+    if (selectedHypervisor?.type === 'proxmox' && selectedStorage) {
+      filtered = filtered.filter(plan =>
+        plan.specs.disk <= (selectedStorage.available / (1024 * 1024 * 1024)) // Convert storage available to GB
+      );
+    } else if (selectedHypervisor?.type === 'vsphere' && selectedStorage) { // Added check for selectedStorage
+      // Filter plans based on selected vSphere datastore capacity
+      filtered = filtered.filter(plan =>
+        plan.specs.disk <= (selectedStorage.available / (1024 * 1024 * 1024)) // Convert datastore available to GB
+      );
+    }
+
+    setDisplayablePlans(filtered);
+
+  }, [availablePlans, selectedNodeDetails, vmParams.datastoreName, availableStorages, vmParams.hypervisorId, availableHypervisors]);
+
   const handleCreate = async () => {
     setIsLoading(true);
     // const selectedHypervisor = availableHypervisors.find(h => h.id === vmParams.hypervisorId);
@@ -263,8 +347,10 @@ export default function CreateVM() {
     }
     if (currentStep === 2) {
       const isVSphereIso = availableHypervisors.find(h => h.id === vmParams.hypervisorId)?.type === 'vsphere' &&
-                           templates.find(t => t.id === vmParams.templateId)?.name?.toLowerCase().includes('.iso');
+                           templates.find(t => t.id === vmParams.templateId)?.name?.toLowerCase().includes('.iso'); // This was for vSphere ISO datastore
+      const isProxmox = availableHypervisors.find(h => h.id === vmParams.hypervisorId)?.type === 'proxmox';
       return !vmParams.templateId ||
+             (isProxmox && !vmParams.datastoreName) || // Require datastoreName (Proxmox storage) if Proxmox
              (configMode === 'plan' && !vmParams.planId) ||
              (isVSphereIso && !vmParams.datastoreName); // Require datastore for vSphere ISO
     }
@@ -272,6 +358,12 @@ export default function CreateVM() {
     // as resource inputs have defaults or are derived.
     return false;
   };
+
+  const selectedHypervisor = availableHypervisors.find(h => h.id === vmParams.hypervisorId);
+  const maxCpu = selectedNodeDetails?.cpu?.cores ?? 16; // Default max if no node selected
+  const maxMemoryMb = selectedNodeDetails?.memory?.total ? Math.floor(selectedNodeDetails.memory.total / (1024 * 1024)) : 32768; // Convert bytes to MB
+  const selectedStorageResource = availableStorages.find(s => s.name === vmParams.datastoreName);
+  const maxDiskGb = selectedStorageResource?.available ? Math.floor(selectedStorageResource.available / (1024 * 1024 * 1024)) : 500; // Convert bytes to GB
 
   // Content to display based on hypervisor availability
   let pageContent;
@@ -484,6 +576,23 @@ export default function CreateVM() {
               <h2 className="text-lg font-medium text-slate-900 dark:text-white mb-6">Configuración</h2>
 
               <div className="space-y-6">
+                {/* Storage/Datastore Selection - Unified and moved to the top of Step 2 */}
+                {(selectedHypervisor?.type === 'proxmox' || selectedHypervisor?.type === 'vsphere') &&
+                 (
+                  <div>
+                    <label htmlFor="datastoreName" className="form-label">
+                      {selectedHypervisor?.type === 'proxmox' 
+                        ? 'Storage de Destino (Proxmox)' 
+                        : 'Datastore de Destino (vSphere)'}
+                    </label>
+                    <select id="datastoreName" className="form-select" value={vmParams.datastoreName || ''} onChange={(e) => setVmParams(prev => ({ ...prev, datastoreName: e.target.value }))} disabled={isFetchingDatastores || availableStorages.length === 0} >
+                      <option value="">{isFetchingDatastores ? 'Cargando...' : (availableStorages.length === 0 ? 'No hay storages/datastores disponibles' : 'Selecciona uno')}</option>
+                      {availableStorages.map(ds => ( <option key={ds.id} value={ds.name}>{ds.name} (Libre: {formatBytes(ds.available)})</option> ))}
+                    </select>
+                    {availableStorages.length === 0 && !isFetchingDatastores && <p className="text-xs text-warning-600 mt-1">No se encontraron datastores o el hypervisor no está conectado.</p>}
+                  </div>
+                )}
+
                 {/* Configuration Mode Toggle */}
                 <div className="flex items-center space-x-4">
                   <label className="form-label mb-0">Tipo de Configuración:</label>
@@ -527,8 +636,8 @@ export default function CreateVM() {
                 {configMode === 'plan' && (
                   <div>
                     <label htmlFor="vm-plan" className="form-label">Seleccione un Plan VM</label>
-                    <select id="vm-plan" className="form-select" value={vmParams.planId || ''} onChange={(e) => handlePlanSelect(e.target.value)} disabled={isFetchingPlans || availablePlans.length === 0}>
-                      <option value="" disabled>{isFetchingPlans ? 'Loading planes...' : (availablePlans.length === 0 ? 'No planes activos' : 'Seleccione un plan')}</option>
+                    <select id="vm-plan" className="form-select" value={vmParams.planId || ''} onChange={(e) => handlePlanSelect(e.target.value)} disabled={isFetchingPlans || displayablePlans.length === 0}>
+                      <option value="" disabled>{isFetchingPlans ? 'Cargando planes...' : (displayablePlans.length === 0 ? (availablePlans.length > 0 ? 'No hay planes compatibles con los recursos' : 'No hay planes activos') : 'Seleccione un plan')}</option>
                       {availablePlans.map(plan => (
                         <option key={plan.id} value={plan.id}>{plan.name} ({plan.specs.cpu} CPU, {plan.specs.memory >= 1024 ? `${plan.specs.memory / 1024}GB` : `${plan.specs.memory}MB`} RAM, {plan.specs.disk}GB Disk)</option>
                       ))}
@@ -589,32 +698,32 @@ export default function CreateVM() {
                     isVSphere: availableHypervisors.find(h => h.id === vmParams.hypervisorId)?.type === 'vsphere',
                     isIsoTemplate: templates.find(t => t.id === vmParams.templateId)?.name?.toLowerCase().includes('.iso'),
                     vmParamsHypervisorId: vmParams.hypervisorId,
-                    vmParamsTemplateId: vmParams.templateId,
-                    availableDatastoresCount: availableDatastores.length,
+                    vmParamsTemplateId: vmParams.templateId, // This was for vSphere ISO datastore
+                    availableStoragesCount: availableStorages.length, // For Proxmox storages
                     isFetchingDatastores: isFetchingDatastores
                   });
                   return null; // Explicitly return null after logging
                 })()}
                 {/* --- FIN DEBUG DATASOTRE DROPDOWN --- */}
-                {/* Datastore Selection for vSphere ISO */}
-                {availableHypervisors.find(h => h.id === vmParams.hypervisorId)?.type === 'vsphere' &&
-                 templates.find(t => t.id === vmParams.templateId)?.name?.toLowerCase().includes('.iso') &&
+                {/* Storage Selection for Proxmox VM Disk or vSphere ISO */}
+                {(selectedHypervisor?.type === 'proxmox' ||
+                 (selectedHypervisor?.type === 'vsphere' && templates.find(t => t.id === vmParams.templateId)?.name?.toLowerCase().includes('.iso'))) &&
                  (
                   <div>
-                    <label htmlFor="datastoreName" className="form-label">Datastore de Destino (para Disco VM)</label>
+                    <label htmlFor="datastoreName" className="form-label">{selectedHypervisor?.type === 'proxmox' ? 'Storage de Destino (Proxmox)' : 'Datastore de Destino (vSphere ISO)'}</label>
                     <select
                       id="datastoreName"
                       className="form-select"
                       value={vmParams.datastoreName || ''}
                       onChange={(e) => setVmParams(prev => ({ ...prev, datastoreName: e.target.value }))}
-                      disabled={isFetchingDatastores || availableDatastores.length === 0}
+                      disabled={isFetchingDatastores || availableStorages.length === 0}
                     >
-                      <option value="">{isFetchingDatastores ? 'Cargando datastores...' : (availableDatastores.length === 0 ? 'No hay datastores' : 'Selecciona un datastore')}</option>
-                      {availableDatastores.map(ds => (
+                      <option value="">{isFetchingDatastores ? 'Cargando...' : (availableStorages.length === 0 ? 'No hay storages/datastores disponibles' : 'Selecciona uno')}</option>
+                      {availableStorages.map(ds => (
                         <option key={ds.id} value={ds.name}>{ds.name} (Libre: {formatBytes(ds.available)})</option>
                       ))}
                     </select>
-                    {availableDatastores.length === 0 && !isFetchingDatastores && <p className="text-xs text-warning-600 mt-1">No se encontraron datastores o el hypervisor no está conectado.</p>}
+                    {availableStorages.length === 0 && !isFetchingDatastores && <p className="text-xs text-warning-600 mt-1">No se encontraron datastores o el hypervisor no está conectado.</p>}
                   </div>
                 )}
 
@@ -626,8 +735,8 @@ export default function CreateVM() {
                     <input
                       type="range"
                       id="disk"
-                      min="10"
-                      max="500"
+                      min={selectedHypervisor?.type === 'proxmox' ? 1 : 10} // Proxmox allows smaller disks
+                      max={maxDiskGb}
                       step="10"
                       className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer"
                       value={vmParams.specs.disk}
@@ -644,8 +753,8 @@ export default function CreateVM() {
                     </span>
                   </div>
                   <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400 px-1 mt-1">
-                    <span>10 GB</span>
-                    <span>500 GB</span>
+                    <span>{selectedHypervisor?.type === 'proxmox' ? '1 GB' : '10 GB'}</span>
+                    <span>{maxDiskGb} GB</span>
                   </div>
                 </div>
                 )}
@@ -703,8 +812,8 @@ export default function CreateVM() {
                     <input
                       type="range"
                       id="cpu"
-                      min="1"
-                      max="16"
+                      min="1" // Min CPU cores
+                      max={maxCpu} // Max CPU cores from selected node or default
                       step="1"
                       className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer"
                       value={vmParams.specs.cpu}
@@ -719,7 +828,7 @@ export default function CreateVM() {
                   </div>
                   <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400 px-1 mt-1">
                     <span>1 core</span>
-                    <span>16 cores</span>
+                    <span>{maxCpu} cores</span>
                   </div>
                 </>)}
 
@@ -738,8 +847,8 @@ export default function CreateVM() {
                     <input
                       type="range"
                       id="memory"
-                      min="512"
-                      max="32768"
+                      min="512" // Min memory in MB
+                      max={maxMemoryMb} // Max memory in MB from selected node or default
                       step="512"
                       className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer"
                       value={vmParams.specs.memory}
@@ -754,7 +863,7 @@ export default function CreateVM() {
                   </div>
                   <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400 px-1 mt-1">
                     <span>512 MB</span>
-                    <span>32 GB</span>
+                    <span>{maxMemoryMb >= 1024 ? `${(maxMemoryMb / 1024).toFixed(0)} GB` : `${maxMemoryMb} MB`}</span>
                   </div>
                 </>)}
 
