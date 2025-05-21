@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Cloud, Server as ServersIconLucide, Clock, AlertCircle, Cpu, MemoryStick, Database, Layers, Calculator, HardDrive, Activity, Box, Power, WifiOff, CheckCircle, AlertTriangle, Users } from 'lucide-react'; // Added more icons
+import { ArrowLeft, Cloud, Server as ServersIconLucide, Clock, AlertCircle, Cpu, MemoryStick, Database, Layers, Calculator, HardDrive, Activity, Box, Power, WifiOff, CheckCircle, AlertTriangle, Users, ExternalLink } from 'lucide-react'; // Added ExternalLink
 import { Hypervisor, AggregatedStats } from '../types/hypervisor'; // Import AggregatedStats, removed HypervisorDetailsData
 import { toast } from 'react-hot-toast';
 // import { formatDistanceToNow } from 'date-fns'; // Removed unused import
@@ -142,6 +142,21 @@ export default function HypervisorDetails() {
     return <AlertCircle className="h-4 w-4 text-slate-500" />; // Default for unknown
   };
 
+  const getHypervisorManagementUrl = () => {
+    if (!hypervisor || !hypervisor.host) return null;
+
+    const hostOnly = hypervisor.host.split(':')[0]; // Remove port if present
+
+    if (hypervisor.type === 'proxmox') {
+      // Proxmox typically runs on port 8006 and uses HTTPS
+      return `https://${hostOnly}:8006`;
+    } else if (hypervisor.type === 'vsphere') {
+      // vSphere (vCenter/ESXi) typically uses /ui path and HTTPS
+      return `https://${hostOnly}/ui`;
+    }
+    return null;
+  };
+
   return (
     <div className="p-4 md:p-6">
       {/* Header Section */}
@@ -151,14 +166,23 @@ export default function HypervisorDetails() {
           Volver a Hypervisores
         </Link>
         <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            {hypervisor.type === 'proxmox' ? <ServersIconLucide className="h-8 w-8 text-orange-500" /> : <Cloud className="h-8 w-8 text-blue-500" />}
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{hypervisor.name || hypervisor.host}</h1>
-              <p className="text-slate-500 dark:text-slate-400">{hypervisor.host} ({hypervisor.type}{hypervisor.vsphere_subtype ? ` - ${hypervisor.vsphere_subtype}` : ''})</p>
+          <div className="flex-grow">
+            <div className="flex items-center space-x-3">
+              {hypervisor.type === 'proxmox' ? <ServersIconLucide className="h-8 w-8 text-orange-500" /> : <Cloud className="h-8 w-8 text-blue-500" />}
+              <div>
+                <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{hypervisor.name || hypervisor.host}</h1>
+                <p className="text-slate-500 dark:text-slate-400">{hypervisor.host} ({hypervisor.type}{hypervisor.vsphere_subtype ? ` - ${hypervisor.vsphere_subtype}` : ''})</p>
+              </div>
             </div>
           </div>
-          {renderStatusBadge(hypervisor.status)}
+          <div className="flex flex-col items-end space-y-1">
+            {renderStatusBadge(hypervisor.status)}
+            {hypervisor.status === 'connected' && getHypervisorManagementUrl() && (
+              <a href={getHypervisorManagementUrl()!} target="_blank" rel="noopener noreferrer" className="btn btn-xs btn-outline btn-primary mt-1">
+                Ir a {hypervisor.type === 'proxmox' ? 'Proxmox' : 'vSphere'} <ExternalLink className="h-3 w-3 ml-1.5" />
+              </a>
+            )}
+          </div>
         </div>
         {/* Optional: Add back sync time if needed */}
         <div className="mt-2 flex items-center space-x-4 text-sm text-slate-500 dark:text-slate-400">
