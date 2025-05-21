@@ -171,7 +171,7 @@ export default function Dashboard() {
         </p>
         {(user?.role === 'admin') && (
           <div className="mt-6">
-            <Link to="/admin/hypervisors" className="btn btn-primary">
+            <Link to="/hypervisors" className="btn btn-primary">
               <Plus className="h-4 w-4 mr-2" />
               Configurar Hypervisor
             </Link>
