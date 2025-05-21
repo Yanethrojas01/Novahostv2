@@ -63,11 +63,6 @@ export interface ProxmoxConnectionDetails {
   vmid: string | number;
   vmName?: string;
 }
-export type ConsoleDetailsData = {
-  type: 'proxmox' | 'vsphere';
-  connectionDetails: ProxmoxConnectionDetails | VSphereConnectionDetails;
-  vmName?: string;
-};
 
 export interface VSphereConnectionDetails {
   host: string;
@@ -76,6 +71,11 @@ export interface VSphereConnectionDetails {
   sslThumbprint: string;
   vmName?: string;
 }
+export type ConsoleDetailsData = {
+  type: 'proxmox' | 'vsphere';
+  connectionDetails: ProxmoxConnectionDetails | VSphereConnectionDetails;
+  vmName?: string;
+};
 
 interface VMConsoleViewProps {
   consoleDetails: ConsoleDetailsData;
@@ -102,7 +102,7 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
 
     if (type === 'proxmox') {
       const connectionDetails = rawConnectionDetails as ProxmoxConnectionDetails;
-      if (rfbCanvasRef.current && window.RFB) {
+      if (rfbCanvasRef.current && window.RFB) { // Check if window.RFB is available
         const { host, port, ticket, node, vmid } = connectionDetails;
         const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
         const rfbUrl = `${protocol}://${host}:${port}`;
@@ -110,8 +110,8 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
         console.log(`Proxmox VNC: Connecting to ${rfbUrl} for VM ${vmid} on node ${node}`);
 
         try {
-          rfbInstance.current = new window.RFB(rfbCanvasRef.current, rfbUrl, {
-            credentials: { password: ticket },
+          rfbInstance.current = new window.RFB(rfbCanvasRef.current, rfbUrl, { // Use window.RFB
+            credentials: { password: ticket }, // 'ticket' is the VNC password for Proxmox
           });
 
           rfbInstance.current.addEventListener('connect', () => {
@@ -138,7 +138,7 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
             if (onError) onError(`VNC security failure: ${event.detail.reason || 'Unknown reason'}`);
           });
 
-        } catch (e: unknown) {
+        } catch (e: unknown) { // Catch unknown for better type safety
           if (!isMounted) return;
           console.error('Proxmox VNC: RFB instantiation error', e);
           const message = e instanceof Error ? e.message : String(e);
@@ -197,7 +197,7 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
             useSSL: true,
             sslThumbprint: sslThumbprint,
           });
-        } catch (e: unknown) {
+        } catch (e: unknown) { // Catch unknown for better type safety
           if (!isMounted) return;
           const message = e instanceof Error ? e.message : String(e);
           console.error('vSphere WebMKS: WMKS instantiation or connection error', e);
@@ -218,7 +218,11 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
       isMounted = false;
       if (rfbInstance.current) {
         console.log('Cleaning up Proxmox VNC connection');
-        rfbInstance.current.disconnect();
+        try {
+          rfbInstance.current.disconnect();
+        } catch (cleanupError) {
+          console.warn('Error during RFB disconnect cleanup:', cleanupError);
+        }
         rfbInstance.current = null;
       }
       if (wmksInstance.current) {
