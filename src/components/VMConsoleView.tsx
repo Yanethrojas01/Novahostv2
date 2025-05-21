@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import RFB from '@novnc/novnc'; // Importar RFB desde el paquete npm
 
 // Types for WMKS
 type WMKSConnectionStateChangeData = {
@@ -29,25 +30,13 @@ type WMKSStatic = {
   };
 };
 
-// Types for noVNC (RFB) loaded from CDN
+// Type for noVNC event listeners.
+// The actual event objects are often CustomEvents with specific 'detail' payloads.
 type RFBEventListener = (e: CustomEvent<any>) => void;
 
-interface RFBInstance {
-  disconnect(): void;
-  addEventListener: (type: 'connect' | 'disconnect' | 'securityfailure' | string, listener: RFBEventListener) => void;
-}
-
-interface RFBStatic {
-  new (target: HTMLElement | null, url: string, options?: {
-    credentials?: { password?: string; username?: string; target?: string };
-    shared?: boolean;
-    repeaterID?: string;
-  }): RFBInstance;
-}
 declare global {
   interface Window {
     WMKS?: WMKSStatic; // VMware WebMKS library
-    RFB?: RFBStatic;    // noVNC RFB library from CDN
   }
 }
 
@@ -79,154 +68,30 @@ interface VMConsoleViewProps {
   onError?: (message: string) => void;
 }
 
-// Fixed script loading mechanism specifically for Vite + noVNC
-function loadNoVNCScript(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    // Comprobamos si ya existe el script o si RFB ya está definido
-    if (window.RFB) {
-      console.log("window.RFB already defined, no need to load script");
-      resolve();
-      return;
-    }
-    
-    if (document.getElementById("novnc-script")) {
-      console.log("noVNC script tag already exists");
-      setTimeout(() => {
-        if (window.RFB) {
-          resolve();
-        } else {
-          reject(new Error("Script exists but RFB not defined"));
-        }
-      }, 500);
-      return;
-    }
-
-    console.log("Loading noVNC UMD bundle from CDN...");
-    
-    // Creamos el script tag
-    const script = document.createElement("script");
-    script.id = "novnc-script";
-    script.type = "text/javascript";
-    
-    // Usamos la versión UMD que funciona mejor con Vite
-    script.src = "https://cdn.jsdelivr.net/npm/@novnc/novnc@1.3.0/dist/novnc.min.js";
-    
-    // Importante para CORS
-    script.crossOrigin = "anonymous";
-    
-    script.onload = () => {
-      console.log("noVNC script loaded successfully");
-      
-      // Verificamos que RFB esté definido
-      if (window.RFB) {
-        console.log("window.RFB is available");
-        resolve();
-      } else {
-        console.warn("noVNC script loaded but RFB not defined");
-        reject(new Error("RFB not defined after loading script"));
-      }
-    };
-    
-    script.onerror = (error) => {
-      console.error("Error loading noVNC script:", error);
-      script.remove();
-      reject(new Error("Failed to load noVNC script"));
-    };
-    
-    // Agregamos el script al <head>
-    document.head.appendChild(script);
-  });
-}
-
-// Intentar cargar desde varias fuentes
-async function loadNoVNCLibrary(): Promise<void> {
-  // Lista de CDNs para intentar en orden
-  const cdnSources = [
-    {
-      name: "jsDelivr 1.3.0 (UMD)",
-      url: "https://cdn.jsdelivr.net/npm/@novnc/novnc@1.3.0/dist/novnc.min.js"
-    },
-    {
-      name: "UNPKG 1.3.0 (UMD)",
-      url: "https://unpkg.com/@novnc/novnc@1.3.0/dist/novnc.min.js"
-    },
-    {
-      name: "jsDelivr 1.2.0 (UMD)",
-      url: "https://cdn.jsdelivr.net/npm/@novnc/novnc@1.2.0/dist/novnc.min.js"
-    }
-  ];
-
-  // Si RFB ya está definido, no necesitamos hacer nada
-  if (window.RFB) {
-    console.log("window.RFB already available");
-    return;
-  }
-
-  console.log("Attempting to load noVNC from multiple sources...");
-  
-  let lastError = null;
-  
-  for (const source of cdnSources) {
-    try {
-      console.log(`Trying ${source.name}...`);
-      
-      // Eliminar cualquier script de noVNC anterior que haya fallado
-      const existingScript = document.getElementById("novnc-script");
-      if (existingScript) {
-        existingScript.remove();
-      }
-      
-      // Crear y añadir el nuevo script
-      const script = document.createElement("script");
-      script.id = "novnc-script";
-      script.src = source.url;
-      script.crossOrigin = "anonymous";
-      
-      // Esperar a que se cargue el script
-      await new Promise<void>((resolve, reject) => {
-        script.onload = () => {
-          if (window.RFB) {
-            console.log(`Successfully loaded noVNC from ${source.name}`);
-            resolve();
-          } else {
-            reject(new Error(`Script loaded but RFB not defined from ${source.name}`));
-          }
-        };
-        script.onerror = () => reject(new Error(`Failed to load from ${source.name}`));
-        document.head.appendChild(script);
-      });
-      
-      // Si llegamos aquí, significa que la carga fue exitosa
-      return;
-      
-    } catch (error) {
-      console.warn(`Failed with ${source.name}:`, error);
-      lastError = error;
-      // Seguir con la siguiente fuente
-    }
-  }
-  
-  // Si llegamos aquí, todas las fuentes fallaron
-  throw new Error(`All noVNC sources failed: ${lastError?.message || 'Unknown error'}`);
-}
-
 const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, onError }) => {
   const rfbCanvasRef = useRef<HTMLCanvasElement>(null);
   const wmksContainerRef = useRef<HTMLDivElement>(null);
   const [connectionStatus, setConnectionStatus] = useState('Initializing...');
   const [error, setError] = useState<string | null>(null);
-  const [isLibraryLoading, setIsLibraryLoading] = useState(false);
 
-  const rfbInstance = useRef<RFBInstance | null>(null);
+  // rfbInstance.current will be an instance of the imported RFB class
+  const rfbInstance = useRef<InstanceType<typeof RFB> | null>(null);
   const wmksInstance = useRef<WMKSInstance | null>(null);
+
+  // Destructure consoleDetails for stable dependencies
+  const { type: consoleType, connectionDetails: consoleConnectionDetails, vmName: consoleVmNameProp } = consoleDetails;
+  // Generate a unique ID for the WMKS container if needed, once per component instance.
+  const [uniqueWmksId] = useState(() => `wmks-container-${Math.random().toString(36).substring(2, 9)}`);
+
+  // Create a stable key from connectionDetails to use as a dependency
+  const connectionDetailsKey = JSON.stringify(consoleConnectionDetails);
 
   useEffect(() => {
     let isMounted = true;
     setError(null);
     setConnectionStatus('Connecting...');
 
-    const { type, connectionDetails: rawConnectionDetails } = consoleDetails;
-    const vmName = rawConnectionDetails.vmName || consoleDetails.vmName || 'VM';
+    const vmName = consoleConnectionDetails.vmName || consoleVmNameProp || 'VM';
 
     async function initProxmoxRFB() {
       if (!rfbCanvasRef.current) {
@@ -235,47 +100,24 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
         if (onError) onError('RFB canvas element not found.');
         return;
       }
+      
+      const connectionDetails = consoleConnectionDetails as ProxmoxConnectionDetails;
+      const { host, port, ticket, node, vmid } = connectionDetails;
+      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      const rfbUrl = `${protocol}://${host}:${port}`;
+
+      console.log(`Proxmox VNC: Connecting to ${rfbUrl} for VM ${vmid} on node ${node}`);
+      setConnectionStatus('Connecting to VNC...');
 
       try {
-        // Prevent multiple simultaneous loading attempts
-        if (isLibraryLoading) {
-          console.log("Library loading already in progress");
-          return;
+        if (!RFB) { // RFB should be available from import
+          throw new Error("RFB module not available. Check import.");
         }
-        
-        setIsLibraryLoading(true);
-        setConnectionStatus('Loading VNC library...');
-        
-        // Try to load noVNC with multiple fallbacks
-        if (!window.RFB) {
-          try {
-            await loadNoVNCLibrary();
-            console.log("noVNC library loaded successfully");
-          } catch (error) {
-            console.error("Error loading noVNC library:", error);
-            throw new Error(`Failed to load noVNC library: ${error instanceof Error ? error.message : String(error)}`);
-          }
-        }
-
-        // Now that we know window.RFB is available, proceed with connection
-        const connectionDetails = rawConnectionDetails as ProxmoxConnectionDetails;
-        const { host, port, ticket, node, vmid } = connectionDetails;
-        const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        const rfbUrl = `${protocol}://${host}:${port}`;
-
-        console.log(`Proxmox VNC: Connecting to ${rfbUrl} for VM ${vmid} on node ${node}`);
-        setConnectionStatus('Connecting to VNC...'); // Update status after library load
-
-        try {
-          if (!window.RFB) {
-            throw new Error("RFB is still not defined after loading attempts");
-          }
-          
-          rfbInstance.current = new window.RFB(rfbCanvasRef.current, rfbUrl, {
+        rfbInstance.current = new RFB(rfbCanvasRef.current, rfbUrl, {
             credentials: { password: ticket },
-          });
+        });
 
-          rfbInstance.current.addEventListener('connect', () => {
+        rfbInstance.current.addEventListener('connect', () => {
             if (!isMounted) return;
             setConnectionStatus(`Connected to ${vmName} (Proxmox)`);
             console.log('Proxmox VNC: Connected');
@@ -299,40 +141,29 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
             if (onError) onError(`VNC security failure: ${event.detail.reason || 'Unknown reason'}`);
           });
 
-        } catch (e: unknown) {
-          if (!isMounted) return;
-          console.error('Proxmox VNC: RFB instantiation error', e);
-          const message = e instanceof Error ? e.message : String(e);
-          setError(`Failed to initialize VNC client: ${message}`);
-          if (onError) onError(`Failed to initialize VNC client: ${message}`);
-          setConnectionStatus('Error initializing VNC');
-        }
-
-      } catch (loadError: any) {
-        console.error('Proxmox VNC: Failed to ensure noVNC script is loaded:', loadError);
-        const message = loadError instanceof Error ? loadError.message : String(loadError);
-        setError(`Failed to load VNC library (noVNC): ${message}`);
-        setConnectionStatus('Error loading VNC library');
-        if (onError) onError(`Failed to load VNC library (noVNC): ${message}`);
-      } finally {
-        setIsLibraryLoading(false);
+      } catch (e: unknown) {
+        if (!isMounted) return;
+        console.error('Proxmox VNC: RFB instantiation or event setup error', e);
+        const message = e instanceof Error ? e.message : String(e);
+        setError(`Failed to initialize VNC client: ${message}`);
+        if (onError) onError(`Failed to initialize VNC client: ${message}`);
+        setConnectionStatus('Error initializing VNC');
       }
     }
 
-    if (type === 'proxmox') {
+    if (consoleType === 'proxmox') {
       initProxmoxRFB();
-    } else if (type === 'vsphere') {
-      const connectionDetails = rawConnectionDetails as VSphereConnectionDetails;
+    } else if (consoleType === 'vsphere') {
+      const connectionDetails = consoleConnectionDetails as VSphereConnectionDetails;
       if (wmksContainerRef.current && window.WMKS) {
         const { host, port, ticket, sslThumbprint } = connectionDetails;
         console.log(`vSphere WebMKS: Connecting to ${host}:${port} for VM ${vmName}`);
 
         try {
-          if (!wmksContainerRef.current.id) {
-            wmksContainerRef.current.id = 'wmks-container-' + Math.random().toString(36).substring(2, 15);
-          }
+          // Ensure the container has the unique ID before creating WMKS instance
+          if (wmksContainerRef.current) wmksContainerRef.current.id = uniqueWmksId;
 
-          wmksInstance.current = window.WMKS.createWMKS(wmksContainerRef.current.id, {})
+          wmksInstance.current = window.WMKS.createWMKS(uniqueWmksId, {})
             .register<WMKSConnectionStateChangeData>(
               window.WMKS.Events.CONNECTION_STATE_CHANGE,
               (event, data) => {
@@ -390,7 +221,9 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
         try {
           rfbInstance.current.disconnect();
         } catch (cleanupError) {
-          console.warn('Error during RFB disconnect cleanup:', cleanupError);
+          // These errors are often symptomatic of rapid useEffect re-runs or noVNC internal state issues.
+          // Logging them is important, but the primary fix is stabilizing the effect's execution.
+          console.warn('Error during RFB disconnect cleanup (may indicate noVNC internal state issue or rapid re-render):', cleanupError);
         }
         rfbInstance.current = null;
       }
@@ -400,7 +233,7 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
         wmksInstance.current = null;
       }
     };
-  }, [consoleDetails, onError, isLibraryLoading]);
+  }, [consoleType, connectionDetailsKey, consoleVmNameProp, onError]); // Use stable dependencies
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
@@ -418,7 +251,7 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
             <canvas ref={rfbCanvasRef} className="w-full h-full" />
           )}
           {consoleDetails.type === 'vsphere' && (
-            <div ref={wmksContainerRef} id="wmks-container" className="w-full h-full" />
+            <div ref={wmksContainerRef} id={uniqueWmksId} className="w-full h-full" />
           )}
         </div>
       </div>
