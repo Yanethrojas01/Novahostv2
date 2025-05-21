@@ -1786,33 +1786,61 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
       if (hypervisor.type === 'proxmox') {
         //console.log(`Hypervisor ${id} (Proxmox) is connected, fetching details...`);
         try {
-          const proxmox = await getProxmoxClient(hypervisor.id);
-          const [nodesData, storageDataRaw, templatesData, vmPlansData] = await Promise.all([ // Renombrado storageData a storageDataRaw
-            proxmox.nodes.$get().catch(e => { console.error(`Proxmox nodes fetch error for ${id}: ${e.message}`); return []; }),
-            proxmox.storage.$get().catch(e => { console.error(`Proxmox storage fetch error for ${id}: ${e.message}`); return []; }), // Este es storageDataRaw
+          const proxmox = await getProxmoxClient(hypervisor.id); // Ensure this gets a client with correct credentials
+          const nodesData = await proxmox.nodes.$get().catch(e => {
+            console.error(`Proxmox nodes fetch error for ${id}: ${e.message}`);
+            return [];
+          });
+          
+          if (!nodesData || nodesData.length === 0) {
+            console.warn(`Hypervisor ${id} (Proxmox) - No nodes found. Storage details will be incomplete.`);
+            hypervisor.nodes = [];
+            hypervisor.storage = [];
+          }
+
+          const primaryNodeName = nodesData.length > 0 ? nodesData[0].node : null;
+
+          // Fetch storage list, templates, and VM plans concurrently
+          const [actualStorageList, templatesData, vmPlansDataResult] = await Promise.all([
+            proxmox.storage.$get().catch(e => { // This fetches the list of storages
+              console.error(`Proxmox storage list fetch error for ${id}: ${e.message}`);
+              return [];
+            }),
             fetchProxmoxTemplates(proxmox).catch(e => { console.error(`Proxmox templates fetch error for ${id}: ${e.message}`); return []; }),
             pool.query('SELECT id, name, specs FROM vm_plans WHERE is_active = true').catch(e => { console.error(`DB vm_plans fetch error: ${e.message}`); return { rows: [] }; })
           ]);
 
-          // Log para depurar storageDataRaw
-          console.log(`Hypervisor ${id} (Proxmox) - Raw Storage Data from API:`, JSON.stringify(storageDataRaw, null, 2));
+          console.log(`Hypervisor ${id} (Proxmox) - Raw Storage List from API:`, JSON.stringify(actualStorageList, null, 2));
+
+          // Mapear y enriquecer los datos de almacenamiento con detalles de estado por nodo
+          hypervisor.storage = [];
+          if (primaryNodeName && Array.isArray(actualStorageList)) {
+            hypervisor.storage = await Promise.all(actualStorageList.map(async (s) => {
+              try {
+                // s.storage should be the ID of the storage
+                const storageStatus = await proxmox.nodes.$(primaryNodeName).storage.$(s.storage).status.$get();
+                return {
+                  id: s.storage, name: s.storage, type: s.type,
+                  size: storageStatus.total || 0, used: storageStatus.used || 0, available: storageStatus.avail || 0,
+                  path: s.path, // path comes from the general storage list
+                  content: s.content, // content also comes from the general list
+                };
+              } catch (statusError) {
+                console.warn(`Error fetching status for storage ${s.storage} on node ${primaryNodeName}: ${statusError.message}`);
+                return { id: s.storage, name: s.storage, type: s.type, size: 0, used: 0, available: 0, path: s.path, content: s.content, error: "Failed to get status" };
+              }
+            }));
+          }
 
           // Calcular el espacio total disponible en disco para VMs en Proxmox (en GB)
           let totalAvailableDiskSpaceForVmsGB_Proxmox = 0;
-          if (storageDataRaw) { // Usar storageDataRaw aquí
-            storageDataRaw.forEach(s => { // Usar storageDataRaw aquí
-              if (s.content && s.content.includes('images') && s.avail) {
-                totalAvailableDiskSpaceForVmsGB_Proxmox += (s.avail / (1024 * 1024 * 1024)); // Convertir bytes a GB
-              }
-            });
-            console.log(`Hypervisor ${id} (Proxmox) - Total available disk space for VMs (GB): ${totalAvailableDiskSpaceForVmsGB_Proxmox.toFixed(2)}`);
-          }
-          
-          hypervisor.storage = storageDataRaw.map(s => ({ // Usar storageDataRaw aquí
-            id: s.storage, name: s.storage, type: s.type,
-            size: s.total || 0, used: s.used || 0, available: s.avail || 0,
-            path: s.path,
-          }));
+          hypervisor.storage.forEach(s => {
+            // Asegurarse que 's.content' exista y sea un string antes de llamar a 'includes'
+            if (s.content && typeof s.content === 'string' && s.content.includes('images') && s.available) {
+              totalAvailableDiskSpaceForVmsGB_Proxmox += (s.available / (1024 * 1024 * 1024)); // Convertir bytes a GB
+            }
+          });
+          console.log(`Hypervisor ${id} (Proxmox) - Total available disk space for VMs (GB): ${totalAvailableDiskSpaceForVmsGB_Proxmox.toFixed(2)}`);
 
           hypervisor.templates = templatesData; // Already formatted by fetchProxmoxTemplates
 
@@ -1820,14 +1848,17 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
           hypervisor.nodes = await Promise.all(nodesData.map(async (node) => {
             try {
               const nodeStatus = await proxmox.nodes.$(node.node).status.$get();
-              const totalLogicalCpus = (nodeStatus.cpuinfo?.cores || 0) * (nodeStatus.cpuinfo?.sockets || 1);
+              const totalLogicalCpus = (nodeStatus.cpuinfo?.cores || 1) * (nodeStatus.cpuinfo?.sockets || 1); // Ensure cores/sockets are at least 1 to avoid 0
               
               // Plan capacity estimation for this node
-              const planCapacityEstimates = vmPlansData.rows.map(plan => {
+              // Ensure vmPlansDataResult and vmPlansDataResult.rows are valid
+              const planRows = vmPlansDataResult && Array.isArray(vmPlansDataResult.rows) ? vmPlansDataResult.rows : [];
+              const planCapacityEstimates = planRows.map(plan => {
                 const planSpecs = typeof plan.specs === 'string' ? JSON.parse(plan.specs) : plan.specs;
                 let estimatedCount = 0;
-                // Asegurar que planSpecs.disk sea un número positivo si se va a usar
-                if (planSpecs && planSpecs.cpu > 0 && planSpecs.memory > 0 && nodeStatus.memory?.free > 0 && totalLogicalCpus > 0) {
+                
+                // Check if nodeStatus.memory is defined before accessing its properties
+                if (planSpecs && planSpecs.cpu > 0 && planSpecs.memory > 0 && nodeStatus.memory && nodeStatus.memory.free > 0 && totalLogicalCpus > 0) {
                   const cpuAvailableForEstimation = totalLogicalCpus * (1 - (nodeStatus.cpu || 0)); // Available CPU capacity (fraction * cores)
                   const memoryAvailableForEstimationMB = (nodeStatus.memory.free / (1024 * 1024)); // Available memory in MB
 
@@ -1835,7 +1866,7 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
                   const vmsByMemory = Math.floor(memoryAvailableForEstimationMB / planSpecs.memory);
 
                   let vmsByDisk = Infinity;
-                  if (planSpecs.disk && planSpecs.disk > 0) { // Si el plan define un disco
+                  if (planSpecs.disk && planSpecs.disk > 0) {
                     if (totalAvailableDiskSpaceForVmsGB_Proxmox > 0) {
                       vmsByDisk = Math.floor(totalAvailableDiskSpaceForVmsGB_Proxmox / planSpecs.disk);
                     } else {
@@ -1854,12 +1885,12 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
 
               return {
                 id: node.node, name: node.node, status: node.status === 'online' ? 'online' : 'offline',
-                cpu: { cores: totalLogicalCpus, usage: nodeStatus.cpu || 0 }, // usage is 0-1 fraction
-                memory: {
+                cpu: { cores: totalLogicalCpus, usage: nodeStatus.cpu || 0 },
+                memory: nodeStatus.memory ? { // Check if nodeStatus.memory is defined
                   total: nodeStatus.memory?.total || 0,
                   used: nodeStatus.memory?.used || 0,
                   free: nodeStatus.memory?.free || 0,
-                },
+                } : undefined, // Set to undefined if nodeStatus.memory is not available
                 rootfs: nodeStatus.rootfs ? {
                   total: nodeStatus.rootfs.total || 0,
                   used: nodeStatus.rootfs.used || 0,
@@ -1869,7 +1900,7 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
               };
             } catch (nodeDetailError) {
               console.error(`Error fetching details for Proxmox node ${node.node}: ${nodeDetailError.message}`);
-              return { id: node.node, name: node.node, status: 'unknown', cpu: undefined, memory: undefined };
+              return { id: node.node, name: node.node, status: 'unknown', cpu: undefined, memory: undefined, planCapacityEstimates: [] };
             }
           }));
 
@@ -1880,11 +1911,11 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
           let usedMemoryBytes = 0;
 
           hypervisor.nodes.forEach(node => {
-            if (node.cpu) {
+            if (node.cpu && node.cpu.cores) { // Ensure node.cpu and node.cpu.cores exist
               totalCores += node.cpu.cores;
               totalCpuUsageSum += (node.cpu.usage * node.cpu.cores);
             }
-            if (node.memory) {
+            if (node.memory && node.memory.total) { // Ensure node.memory and node.memory.total exist
               totalMemoryBytes += node.memory.total;
               usedMemoryBytes += node.memory.used;
             }
@@ -1914,7 +1945,7 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
 
           // Fetch Nodes, Storage, Templates, ISOs, and VM Plans in parallel
           const [pyvmomiNodes, pyvmomiStorage, vmTemplatesPy, isoFilesPy, vmPlansData] = await Promise.all([
-            callPyvmomiService('GET', '/hosts', hypervisor).catch(e => { console.error(`PyVmomi /hosts error: ${e.message}`); return []; }),
+            callPyvmomiService('GET', '/hosts', hypervisor).catch(e => { console.error(`PyVmomi /hosts error: ${e.message}`); return []; }), // vmPlansData was incorrectly named here
             callPyvmomiService('GET', '/datastores', hypervisor).catch(e => { console.error(`PyVmomi /datastores error: ${e.message}`); return []; }),
             fetchVSphereVMTemplates(hypervisor).catch(e => { console.error(`PyVmomi /templates error: ${e.message}`); return []; }),
             fetchVSphereIsoFiles(hypervisor).catch(e => { console.error(`PyVmomi /isos error: ${e.message}`); return []; }),
@@ -1935,7 +1966,8 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
 
           if (Array.isArray(pyvmomiNodes)) {
             hypervisor.nodes = pyvmomiNodes.map(host => {
-              const planCapacityEstimates = vmPlansData.rows.map(plan => {
+              const planRows = vmPlansData && Array.isArray(vmPlansData.rows) ? vmPlansData.rows : [];
+              const planCapacityEstimates = planRows.map(plan => {
                 const planSpecs = typeof plan.specs === 'string' ? JSON.parse(plan.specs) : plan.specs;
                 let estimatedCount = 0;
 
@@ -1945,7 +1977,7 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
                 const hostMemoryUsedBytes = host.memory_used_bytes || 0;
                 const hostMemoryFreeBytes = hostMemoryTotalBytes - hostMemoryUsedBytes;
                 
-                // Asegurar que planSpecs.disk sea un número positivo si se va a usar
+                
                 if (planSpecs && planSpecs.cpu > 0 && planSpecs.memory > 0 && hostMemoryFreeBytes > 0 && hostCpuCores > 0) {
                   const cpuAvailableForEstimation = hostCpuCores * (1 - hostCpuUsageFraction);
                   const memoryAvailableForEstimationMB = hostMemoryFreeBytes / (1024 * 1024);
@@ -1954,7 +1986,7 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
                   const vmsByMemory = Math.floor(memoryAvailableForEstimationMB / planSpecs.memory);
 
                   let vmsByDisk = Infinity;
-                  if (planSpecs.disk && planSpecs.disk > 0) { // Si el plan define un disco
+                  if (planSpecs.disk && planSpecs.disk > 0) {
                     if (totalAvailableDiskSpaceForVmsGB_vSphere > 0) {
                       vmsByDisk = Math.floor(totalAvailableDiskSpaceForVmsGB_vSphere / planSpecs.disk);
                     } else {
@@ -1977,8 +2009,12 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
                 status: (host.connection_state === 'connected' && host.power_state === 'poweredOn')
                           ? (host.overall_status === 'green' ? 'online' : (host.overall_status === 'yellow' || host.overall_status === 'red' ? 'warning' : 'unknown'))
                           : 'offline',
-                cpu: { cores: host.cpu_cores || 0, usage: (host.cpu_usage_percent || 0) / 100 },
-                memory: { total: host.memory_total_bytes || 0, used: host.memory_used_bytes || 0, free: (host.memory_total_bytes || 0) - (host.memory_used_bytes || 0) },
+                cpu: { cores: host.cpu_cores || 1, usage: (host.cpu_usage_percent || 0) / 100 }, // Ensure cores is at least 1
+                memory: { 
+                    total: host.memory_total_bytes || 0, 
+                    used: host.memory_used_bytes || 0, 
+                    free: (host.memory_total_bytes || 0) - (host.memory_used_bytes || 0) 
+                },
                 vmCount: host.vm_count,
                 powerState: host.power_state,
                 connectionState: host.connection_state,
@@ -2010,11 +2046,11 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
             let usedMemoryBytes = 0;
 
             hypervisor.nodes.forEach(node => {
-              if (node.cpu) {
+              if (node.cpu && node.cpu.cores) { // Ensure node.cpu and node.cpu.cores exist
                 totalCores += node.cpu.cores;
                 totalCpuUsageSum += (node.cpu.usage * node.cpu.cores); // Weighted sum for accurate averaging
               }
-              if (node.memory) {
+              if (node.memory && node.memory.total) { // Ensure node.memory and node.memory.total exist
                 totalMemoryBytes += node.memory.total;
                 usedMemoryBytes += node.memory.used;
               }
