@@ -166,7 +166,7 @@ export default function VirtualMachineCard({ vm, onAction }: VirtualMachineCardP
             to={`/vm/${vm.id}`}
             className="flex items-center text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
           >
-            Details <ChevronRight className="h-4 w-4 ml-1" />
+            Detalles <ChevronRight className="h-4 w-4 ml-1" />
           </Link>
         </div>
       </div>
