@@ -15,7 +15,7 @@ export default function HypervisorDetails() {
   const [hypervisor, setHypervisor] = useState<Hypervisor | null>(null); // <-- Use Hypervisor type
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const { token: authToken } = useAuth(); // Get token from context
+  const { user, token: authToken } = useAuth(); // Get user and token from context
 
   useEffect(() => {
     const fetchHypervisorDetails = async () => {
@@ -177,7 +177,7 @@ export default function HypervisorDetails() {
           </div>
           <div className="flex flex-col items-end space-y-1">
             {renderStatusBadge(hypervisor.status)}
-            {hypervisor.status === 'connected' && getHypervisorManagementUrl() && (
+            {hypervisor.status === 'connected' && getHypervisorManagementUrl() && (user?.role === 'admin' || user?.role === 'user') && (
               <a href={getHypervisorManagementUrl()!} target="_blank" rel="noopener noreferrer" className="btn btn-xs btn-outline btn-primary mt-1">
                 Ir a {hypervisor.type === 'proxmox' ? 'Proxmox' : 'vSphere'} <ExternalLink className="h-3 w-3 ml-1.5" />
               </a>
