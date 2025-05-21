@@ -61,6 +61,14 @@ export default function StatsPage() {
       setIsLoading(false); return;
     }
 
+    // Verificar si API_BASE_URL está definida
+    if (!API_BASE_URL) {
+      toast.error("La URL base de la API no está configurada. Por favor, contacte al administrador.");
+      setError("La URL base de la API no está configurada.");
+      setIsLoading(false);
+      return;
+    }
+
     // Validar fechas
     if (!startDate || !endDate || new Date(startDate) > new Date(endDate)) {
       toast.error('Por favor selecciona un rango de fechas válido.');
