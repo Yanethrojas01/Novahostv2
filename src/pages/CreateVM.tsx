@@ -13,6 +13,12 @@ import { toast } from 'react-hot-toast';
 import type { NodeResource } from '../types/hypervisor'; // Import NodeResource
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL; // Read from .env
 
+interface DisplayableVMPlan extends VMPlan {
+  isCompatible: boolean;
+  incompatibilityReason?: string;
+}
+
+
 export default function CreateVM() {
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(1);
@@ -26,8 +32,8 @@ export default function CreateVM() {
   const [templates, setTemplates] = useState<VMTemplate[]>([]); // Use VMTemplate type
   const [availableClients, setAvailableClients] = useState<FinalClient[]>([]); // State for final clients
   const [availableStorages, setAvailableStorages] = useState<StorageResource[]>([]); // Renamed from availableDatastores for clarity
-  const [availablePlans, setAvailablePlans] = useState<VMPlan[]>([]); // State for VM Plans
-  const [displayablePlans, setDisplayablePlans] = useState<VMPlan[]>([]); // Filtered plans
+  const [availablePlans, setAvailablePlans] = useState<VMPlan[]>([]); 
+  const [displayablePlans, setDisplayablePlans] = useState<DisplayableVMPlan[]>([]); // Now uses DisplayableVMPlan
   const [selectedNodeDetails, setSelectedNodeDetails] = useState<NodeResource | null>(null);
   const [configMode, setConfigMode] = useState<'plan' | 'custom'>('plan'); // 'plan' or 'custom'
 
@@ -116,7 +122,8 @@ export default function CreateVM() {
     };
     if (authToken) fetchClients();
   }, [authToken]);
-
+  
+  const selectedHypervisor = availableHypervisors.find(h => h.id === vmParams.hypervisorId);
   // Fetch templates when hypervisor changes
   useEffect(() => {
     setTemplates([]); // Clear previous templates
@@ -126,7 +133,7 @@ export default function CreateVM() {
     setSelectedNodeDetails(null); // Clear selected node details
 
     if (vmParams.hypervisorId && authToken) {
-      const selectedHypervisor = availableHypervisors.find(h => h.id === vmParams.hypervisorId);
+      // const selectedHypervisor = availableHypervisors.find(h => h.id === vmParams.hypervisorId); // Moved up
       const fetchTemplates = async () => {
         setIsFetchingTemplates(true); // This state is for templates
         try {
@@ -251,19 +258,26 @@ export default function CreateVM() {
 
   // Handle Plan Selection
   const handlePlanSelect = (planId: string) => {
-    const selectedPlan = availablePlans.find(p => p.id === planId);
-    if (selectedPlan) {
+    const selectedAugmentedPlan = displayablePlans.find(p => p.id === planId);
+    if (selectedAugmentedPlan && selectedAugmentedPlan.isCompatible) {
       setVmParams(prev => ({
         ...prev,
-        planId: selectedPlan.id,
+        planId: selectedAugmentedPlan.id,
         specs: {
           ...prev.specs,
-          cpu: selectedPlan.specs.cpu,
-          memory: selectedPlan.specs.memory,
-          disk: selectedPlan.specs.disk,
+          cpu: selectedAugmentedPlan.specs.cpu,
+          memory: selectedAugmentedPlan.specs.memory,
+          disk: selectedAugmentedPlan.specs.disk,
           // os: prev.specs.os, // Keep OS from template if already selected
         }
       }));
+    } else if (selectedAugmentedPlan && !selectedAugmentedPlan.isCompatible) {
+      toast.error(`El plan '${selectedAugmentedPlan.name}' no es compatible: ${selectedAugmentedPlan.incompatibilityReason}`);
+      // Do not change the selection if user clicks a disabled (incompatible) option.
+      // The select's value won't update if the option is disabled.
+      // If it somehow does, ensure planId is cleared or remains unchanged.
+      // setVmParams(prev => ({ ...prev, planId: undefined })); // Or keep current vmParams.planId
+      // For safety, ensure the UI reflects the actual state if planId was somehow set to an incompatible one.
     } else {
       setVmParams(prev => ({ ...prev, planId: undefined }));
     }
@@ -271,35 +285,62 @@ export default function CreateVM() {
 
   // Filter displayable plans based on selected node/storage resources
   useEffect(() => {
-    if (!selectedNodeDetails && availableHypervisors.find(h => h.id === vmParams.hypervisorId)?.type !== 'proxmox') {
-      setDisplayablePlans(availablePlans); // Show all plans if not Proxmox or no node details
-      return;
+    const augmentedPlans = availablePlans.map(plan => {
+      let isCompatible = true;
+      const reasons: string[] = [];
+
+      // Check CPU and Memory against selected Proxmox node
+      if (selectedHypervisor?.type === 'proxmox' && selectedNodeDetails) {
+        if (plan.specs.cpu > (selectedNodeDetails.cpu?.cores || 0)) {
+          isCompatible = false;
+          reasons.push("CPU excede límite del nodo");
+        }
+        if (plan.specs.memory > (selectedNodeDetails.memory?.total ? selectedNodeDetails.memory.total / (1024*1024) : 0)) {
+          isCompatible = false;
+          reasons.push("Memoria excede límite del nodo");
+        }
+      }
+      // For vSphere, CPU/Memory limits are often cluster-wide or based on the template's host.
+      // If you have per-host limits for vSphere from `selectedNodeDetails`, you can add similar checks here.
+      // For now, vSphere plan compatibility for CPU/Memory is assumed true unless specific node details are used.
+
+      // Check Disk against selected storage/datastore
+      const selectedStorage = availableStorages.find(s => s.name === vmParams.datastoreName);
+      if (selectedStorage) { // This check applies if a storage/datastore is selected
+        if (plan.specs.disk > (selectedStorage.available / (1024 * 1024 * 1024))) {
+          isCompatible = false;
+          reasons.push("Disco excede capacidad del storage/datastore");
+        }
+      } else if (selectedHypervisor?.type === 'proxmox' || selectedHypervisor?.type === 'vsphere') {
+        // If storage/datastore is required but not yet selected, mark plans needing disk as potentially incompatible
+        // Or, assume compatible for now and let the form validation catch it.
+        // For a better UX, if datastoreName is required and not set, all plans could be marked as "requiere selección de storage".
+        // For simplicity here, we'll let the main form validation handle missing datastoreName.
+        // If you want to be stricter:
+        // if (plan.specs.disk > 0) {
+        //   isCompatible = false;
+        //   reasons.push("Seleccione un storage/datastore");
+        // }
+      }
+
+      return {
+        ...plan,
+        isCompatible,
+        incompatibilityReason: reasons.join(', ') || undefined
+      };
+    });
+
+    setDisplayablePlans(augmentedPlans);
+
+    // Deselect plan if current plan is no longer compatible or available
+    if (vmParams.planId) {
+      const currentSelectedPlanInList = augmentedPlans.find(p => p.id === vmParams.planId);
+      if (!currentSelectedPlanInList || !currentSelectedPlanInList.isCompatible) {
+        setVmParams(prev => ({ ...prev, planId: undefined }));
+      }
     }
 
-    let filtered = availablePlans;
-
-    if (selectedNodeDetails) {
-      filtered = filtered.filter(plan =>
-        plan.specs.cpu <= (selectedNodeDetails.cpu?.cores || Infinity) &&
-        plan.specs.memory <= (selectedNodeDetails.memory?.total ? selectedNodeDetails.memory.total / (1024*1024) : Infinity) // Convert node memory to MB
-      );
-    }
-
-    const selectedStorage = availableStorages.find(s => s.name === vmParams.datastoreName);
-    if (selectedHypervisor?.type === 'proxmox' && selectedStorage) {
-      filtered = filtered.filter(plan =>
-        plan.specs.disk <= (selectedStorage.available / (1024 * 1024 * 1024)) // Convert storage available to GB
-      );
-    } else if (selectedHypervisor?.type === 'vsphere' && selectedStorage) { // Added check for selectedStorage
-      // Filter plans based on selected vSphere datastore capacity
-      filtered = filtered.filter(plan =>
-        plan.specs.disk <= (selectedStorage.available / (1024 * 1024 * 1024)) // Convert datastore available to GB
-      );
-    }
-
-    setDisplayablePlans(filtered);
-
-  }, [availablePlans, selectedNodeDetails, vmParams.datastoreName, availableStorages, vmParams.hypervisorId, availableHypervisors]);
+  }, [availablePlans, selectedNodeDetails, vmParams.datastoreName, availableStorages, vmParams.hypervisorId, availableHypervisors, selectedHypervisor, vmParams.planId]);
 
   const handleCreate = async () => {
     setIsLoading(true);
@@ -346,20 +387,24 @@ export default function CreateVM() {
       return !vmParams.name || !vmParams.hypervisorId;
     }
     if (currentStep === 2) {
-      const isVSphereIso = availableHypervisors.find(h => h.id === vmParams.hypervisorId)?.type === 'vsphere' &&
-                           templates.find(t => t.id === vmParams.templateId)?.name?.toLowerCase().includes('.iso'); // This was for vSphere ISO datastore
+      // const isVSphereIso = availableHypervisors.find(h => h.id === vmParams.hypervisorId)?.type === 'vsphere' &&
+      //                      templates.find(t => t.id === vmParams.templateId)?.name?.toLowerCase().includes('.iso');
       const isProxmox = availableHypervisors.find(h => h.id === vmParams.hypervisorId)?.type === 'proxmox';
+      const isVSphere = availableHypervisors.find(h => h.id === vmParams.hypervisorId)?.type === 'vsphere';
+      
+      // For both Proxmox and vSphere, datastoreName (storage/datastore) is now required in Step 2
+      const datastoreMissing = (isProxmox || isVSphere) && !vmParams.datastoreName;
+
       return !vmParams.templateId ||
-             (isProxmox && !vmParams.datastoreName) || // Require datastoreName (Proxmox storage) if Proxmox
-             (configMode === 'plan' && !vmParams.planId) ||
-             (isVSphereIso && !vmParams.datastoreName); // Require datastore for vSphere ISO
+             datastoreMissing ||
+             (configMode === 'plan' && !vmParams.planId);
     }
     // No specific validation for step 3 that would disable "Next" (which is "Create VM")
     // as resource inputs have defaults or are derived.
     return false;
   };
 
-  const selectedHypervisor = availableHypervisors.find(h => h.id === vmParams.hypervisorId);
+  // const selectedHypervisor = availableHypervisors.find(h => h.id === vmParams.hypervisorId); // Moved up
   const maxCpu = selectedNodeDetails?.cpu?.cores ?? 16; // Default max if no node selected
   const maxMemoryMb = selectedNodeDetails?.memory?.total ? Math.floor(selectedNodeDetails.memory.total / (1024 * 1024)) : 32768; // Convert bytes to MB
   const selectedStorageResource = availableStorages.find(s => s.name === vmParams.datastoreName);
@@ -508,8 +553,8 @@ export default function CreateVM() {
                 {/* Final Client Select */}
                 <div>
                   <label htmlFor="finalClient" className="form-label">Cliente Final (Opcional)</label>
-                  <select id="finalClient" className="form-select" value={vmParams.finalClientId || ''} onChange={(e) => setVmParams(prev => ({ ...prev, finalClientId: e.target.value || undefined }))} disabled={isFetchingClients || availableClients.length === 0}>
-                    <option value="">{isFetchingClients ? 'Cargando clientes...' : (availableClients.length === 0 ? 'No hay clientes' : 'Selecciona un cliente')}</option>
+                  <select id="finalClient" className="form-select" value={vmParams.finalClientId || ''} onChange={(e) => setVmParams(prev => ({ ...prev, finalClientId: e.target.value || undefined }))} disabled={isFetchingClients}>
+                    <option value="">{isFetchingClients ? 'Cargando clientes...' : (availableClients.length === 0 ? 'No hay clientes. Registre uno en Configuración.' : 'Selecciona un cliente')}</option>
                     {availableClients.map(client => (
                       <option key={client.id} value={client.id}>{client.name} ({client.rif})</option>
                     ))}
@@ -605,8 +650,10 @@ export default function CreateVM() {
                       checked={configMode === 'plan'}
                       onChange={() => {
                         setConfigMode('plan');
-                        if (availablePlans.length > 0) {
-                          handlePlanSelect(availablePlans[0].id);
+                        // Auto-select first compatible plan if available
+                        const firstCompatiblePlan = displayablePlans.find(p => p.isCompatible);
+                        if (firstCompatiblePlan) {
+                          handlePlanSelect(firstCompatiblePlan.id);
                         } else {
                            setVmParams(prev => ({ ...prev, planId: undefined }));
                         }
@@ -636,10 +683,24 @@ export default function CreateVM() {
                 {configMode === 'plan' && (
                   <div>
                     <label htmlFor="vm-plan" className="form-label">Seleccione un Plan VM</label>
-                    <select id="vm-plan" className="form-select" value={vmParams.planId || ''} onChange={(e) => handlePlanSelect(e.target.value)} disabled={isFetchingPlans || displayablePlans.length === 0}>
-                      <option value="" disabled>{isFetchingPlans ? 'Cargando planes...' : (displayablePlans.length === 0 ? (availablePlans.length > 0 ? 'No hay planes compatibles con los recursos' : 'No hay planes activos') : 'Seleccione un plan')}</option>
-                      {availablePlans.map(plan => (
-                        <option key={plan.id} value={plan.id}>{plan.name} ({plan.specs.cpu} CPU, {plan.specs.memory >= 1024 ? `${plan.specs.memory / 1024}GB` : `${plan.specs.memory}MB`} RAM, {plan.specs.disk}GB Disk)</option>
+                    <select 
+                      id="vm-plan" 
+                      className="form-select" 
+                      value={vmParams.planId || ''} 
+                      onChange={(e) => handlePlanSelect(e.target.value)} 
+                      disabled={isFetchingPlans || availablePlans.length === 0} // Disable select if no plans at all or fetching
+                    >
+                      <option value="" disabled>
+                        {isFetchingPlans ? 'Cargando planes...' :
+                         availablePlans.length === 0 ? 'No hay planes activos' :
+                         displayablePlans.every(p => !p.isCompatible) && availablePlans.length > 0 ? 'No hay planes compatibles con los recursos/storage seleccionado' :
+                         'Seleccione un plan'}
+                      </option>
+                      {displayablePlans.map(plan => (
+                        <option key={plan.id} value={plan.id} disabled={!plan.isCompatible} className={!plan.isCompatible ? 'text-slate-400 dark:text-slate-500 italic' : ''}>
+                          {plan.name} ({plan.specs.cpu} CPU, {plan.specs.memory >= 1024 ? `${plan.specs.memory / 1024}GB` : `${plan.specs.memory}MB`} RAM, {plan.specs.disk}GB Disk)
+                          {!plan.isCompatible && plan.incompatibilityReason && ` (Incompatible: ${plan.incompatibilityReason})`}
+                        </option>
                       ))}
                     </select>
                   </div>
@@ -691,41 +752,6 @@ export default function CreateVM() {
                     )}
                   </div>
                 </div>
-
-                {/* --- INICIO DEBUG DATASOTRE DROPDOWN --- */}
-                {(() => {
-                  console.log('DEBUG: Datastore Dropdown Conditions:', {
-                    isVSphere: availableHypervisors.find(h => h.id === vmParams.hypervisorId)?.type === 'vsphere',
-                    isIsoTemplate: templates.find(t => t.id === vmParams.templateId)?.name?.toLowerCase().includes('.iso'),
-                    vmParamsHypervisorId: vmParams.hypervisorId,
-                    vmParamsTemplateId: vmParams.templateId, // This was for vSphere ISO datastore
-                    availableStoragesCount: availableStorages.length, // For Proxmox storages
-                    isFetchingDatastores: isFetchingDatastores
-                  });
-                  return null; // Explicitly return null after logging
-                })()}
-                {/* --- FIN DEBUG DATASOTRE DROPDOWN --- */}
-                {/* Storage Selection for Proxmox VM Disk or vSphere ISO */}
-                {(selectedHypervisor?.type === 'proxmox' ||
-                 (selectedHypervisor?.type === 'vsphere' && templates.find(t => t.id === vmParams.templateId)?.name?.toLowerCase().includes('.iso'))) &&
-                 (
-                  <div>
-                    <label htmlFor="datastoreName" className="form-label">{selectedHypervisor?.type === 'proxmox' ? 'Storage de Destino (Proxmox)' : 'Datastore de Destino (vSphere ISO)'}</label>
-                    <select
-                      id="datastoreName"
-                      className="form-select"
-                      value={vmParams.datastoreName || ''}
-                      onChange={(e) => setVmParams(prev => ({ ...prev, datastoreName: e.target.value }))}
-                      disabled={isFetchingDatastores || availableStorages.length === 0}
-                    >
-                      <option value="">{isFetchingDatastores ? 'Cargando...' : (availableStorages.length === 0 ? 'No hay storages/datastores disponibles' : 'Selecciona uno')}</option>
-                      {availableStorages.map(ds => (
-                        <option key={ds.id} value={ds.name}>{ds.name} (Libre: {formatBytes(ds.available)})</option>
-                      ))}
-                    </select>
-                    {availableStorages.length === 0 && !isFetchingDatastores && <p className="text-xs text-warning-600 mt-1">No se encontraron datastores o el hypervisor no está conectado.</p>}
-                  </div>
-                )}
 
                 {/* Disk Size Slider (only if configMode is 'custom') */}
                 {configMode === 'custom' && (
@@ -799,7 +825,7 @@ export default function CreateVM() {
                           ...prev,
                           specs: {
                             ...prev.specs,
-                            cpu: Math.min(16, prev.specs.cpu + 1)
+                            cpu: Math.min(maxCpu, prev.specs.cpu + 1) // Use maxCpu
                           }
                         }))}
                       >
@@ -891,7 +917,7 @@ export default function CreateVM() {
                     </div>
                     <div>
                       <dt className="text-slate-500 dark:text-slate-400">Configuración</dt>
-                      <dd className="text-slate-900 dark:text-white mt-0.5">{configMode === 'plan' ? (availablePlans.find(p => p.id === vmParams.planId)?.name || 'Plan Selecccionado') : 'Especificaciones a Medida'}</dd>
+                      <dd className="text-slate-900 dark:text-white mt-0.5">{configMode === 'plan' ? (displayablePlans.find(p => p.id === vmParams.planId)?.name || 'Plan Selecccionado') : 'Especificaciones a Medida'}</dd>
                     </div>
                     <div>
                       <dt className="text-slate-500 dark:text-slate-400">Sistema Operativo / Plantilla</dt>
