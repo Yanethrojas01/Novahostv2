@@ -15,7 +15,7 @@ export default defineConfig({
   },
   optimizeDeps: {
     exclude: ['lucide-react'],
-    // Ya que noVNC se carga desde CDN, no necesita estar en 'include'
+   
     include: [/* Si tienes otros non-noVNC items, mantenlos aquí */],
     esbuildOptions: {
       target: 'esnext', 

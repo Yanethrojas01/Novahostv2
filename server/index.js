@@ -1784,31 +1784,31 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
 
     if (hypervisor.status === 'connected') {
       if (hypervisor.type === 'proxmox') {
-        // ... (Proxmox details fetching - Mantenida como estaba)
         //console.log(`Hypervisor ${id} (Proxmox) is connected, fetching details...`);
-        // --- Fetch Proxmox Details ---
         try {
           const proxmox = await getProxmoxClient(hypervisor.id);
-          const [nodesData, storageData, templatesData, vmPlansData] = await Promise.all([
+          const [nodesData, storageDataRaw, templatesData, vmPlansData] = await Promise.all([ // Renombrado storageData a storageDataRaw
             proxmox.nodes.$get().catch(e => { console.error(`Proxmox nodes fetch error for ${id}: ${e.message}`); return []; }),
-            proxmox.storage.$get().catch(e => { console.error(`Proxmox storage fetch error for ${id}: ${e.message}`); return []; }),
+            proxmox.storage.$get().catch(e => { console.error(`Proxmox storage fetch error for ${id}: ${e.message}`); return []; }), // Este es storageDataRaw
             fetchProxmoxTemplates(proxmox).catch(e => { console.error(`Proxmox templates fetch error for ${id}: ${e.message}`); return []; }),
             pool.query('SELECT id, name, specs FROM vm_plans WHERE is_active = true').catch(e => { console.error(`DB vm_plans fetch error: ${e.message}`); return { rows: [] }; })
           ]);
 
+          // Log para depurar storageDataRaw
+          console.log(`Hypervisor ${id} (Proxmox) - Raw Storage Data from API:`, JSON.stringify(storageDataRaw, null, 2));
+
           // Calcular el espacio total disponible en disco para VMs en Proxmox (en GB)
           let totalAvailableDiskSpaceForVmsGB_Proxmox = 0;
-          if (storageData) {
-            storageData.forEach(s => {
+          if (storageDataRaw) { // Usar storageDataRaw aquí
+            storageDataRaw.forEach(s => { // Usar storageDataRaw aquí
               if (s.content && s.content.includes('images') && s.avail) {
                 totalAvailableDiskSpaceForVmsGB_Proxmox += (s.avail / (1024 * 1024 * 1024)); // Convertir bytes a GB
               }
             });
             console.log(`Hypervisor ${id} (Proxmox) - Total available disk space for VMs (GB): ${totalAvailableDiskSpaceForVmsGB_Proxmox.toFixed(2)}`);
           }
-
-
-          hypervisor.storage = storageData.map(s => ({
+          
+          hypervisor.storage = storageDataRaw.map(s => ({ // Usar storageDataRaw aquí
             id: s.storage, name: s.storage, type: s.type,
             size: s.total || 0, used: s.used || 0, available: s.avail || 0,
             path: s.path,

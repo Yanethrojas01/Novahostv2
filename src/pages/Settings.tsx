@@ -676,7 +676,7 @@ export default function Settings() {
                 <h3 className="text-sm font-medium text-slate-900 dark:text-white mb-4">Agregar Nuevo Usuario</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   <div>
-                    <label className="form-label">Username</label>
+                    <label className="form-label">Nombre de Usuario</label>
                     <input
                       type="text"
                       className="form-input"
@@ -696,7 +696,7 @@ export default function Settings() {
                     />
                   </div>
                   <div>
-                    <label className="form-label">Password</label>
+                    <label className="form-label">Contraseña</label>
                     <input
                       type="password"
                       className="form-input"
@@ -706,7 +706,7 @@ export default function Settings() {
                     />
                   </div>
                   <div>
-                    <label className="form-label">Role</label>
+                    <label className="form-label">Rol</label>
                     <select
                       className="form-select"
                       value={newUser.role_name}
