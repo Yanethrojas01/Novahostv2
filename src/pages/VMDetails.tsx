@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, Link } from "react-router-dom"; // Importar Link
 import {
   Server,
   Cpu,
@@ -16,6 +16,7 @@ import {
   Ticket,
   Users,
   TerminalSquare,
+  ArrowLeft, // Importar ArrowLeft
 } from "lucide-react"; // Added Ticket
 import type { VM, VMMetrics } from "../types/vm"; // Use the correct VM type and import VMMetrics
 import { formatBytes } from "../utils/formatters"; // Helper function to format bytes (create this file if needed)
@@ -173,6 +174,13 @@ export default function VMDetails() {
 
   return (
     <div className="container mx-auto px-4 py-8">
+      {/* Botón Volver */}
+      <div className="mb-4">
+        <Link to="/" className="inline-flex items-center text-sm text-primary-600 dark:text-primary-400 hover:underline">
+          <ArrowLeft className="h-4 w-4 mr-1" />
+          Volver al Dashboard
+        </Link>
+      </div>
       <div className="bg-white dark:bg-slate-800 rounded-lg shadow-lg overflow-hidden">
         {/* Header */}
         <div className="bg-gradient-to-r from-blue-600 to-blue-800 px-6 py-4">
