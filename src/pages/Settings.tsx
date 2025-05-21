@@ -4,7 +4,7 @@ import { Database, Server, Plus, Trash2, Users, UserPlus, Briefcase, Search, Che
 // import { supabase } from '../lib/supabase'; // No longer needed
 import { useAuth } from '../hooks/useAuth'; // Import useAuth to get token
 import { toast } from 'react-hot-toast'; // Import toast for feedback
-import type { User } from '../types/auth'; // Import User type
+import type { User } from '../types/auth'; 
 import type { VMPlan } from '../types/vm';
 import type { FinalClient } from '../types/client'; // Import FinalClient type
 
@@ -66,12 +66,19 @@ export default function Settings() {
  const [editedUserData, setEditedUserData] = useState<{
    username: string;
    email: string;
-   role_name: 'admin' | 'user' | 'viewer'; // Matches backend expectation and User type 'role'
+   role_name: 'admin' | 'user' | 'viewer'; 
    is_active: boolean;
    password?: string; // For changing user password
  }>({
    username: '', email: '', role_name: 'user', is_active: true, password: '',
  });
+
+  // State for VM Plan Editing Modal
+  const [isEditPlanModalOpen, setIsEditPlanModalOpen] = useState(false);
+  const [editingPlan, setEditingPlan] = useState<VMPlan | null>(null);
+  const [editedPlanData, setEditedPlanData] = useState<Partial<VMPlan>>({
+    name: '', description: '', specs: { cpu: 1, memory: 1024, disk: 20 }
+  });
 
   useEffect(() => {
     fetchPlans();
@@ -248,6 +255,55 @@ export default function Settings() {
     } catch (error) {
       console.error('Error updating plan:', error);
       toast.error('Error al actualizar el estado del plan.');
+    }
+  };
+
+  const handleEditPlan = (planToEdit: VMPlan) => {
+    setEditingPlan(planToEdit);
+    setEditedPlanData({
+        name: planToEdit.name,
+        description: planToEdit.description,
+        specs: { ...planToEdit.specs }, // Deep copy specs
+        // is_active is handled by the toggle, not in this edit form
+    });
+    setIsEditPlanModalOpen(true);
+  };
+
+  const handleUpdatePlan = async () => {
+    if (!editingPlan || !authToken) {
+        toast.error("Ningún plan seleccionado para editar o falta el token.");
+        return;
+    }
+    if (!editedPlanData.name || !editedPlanData.description || !editedPlanData.specs) {
+        toast.error("Nombre, descripción y especificaciones son obligatorios.");
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/vm-plans/${editingPlan.id}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${authToken}`,
+            },
+            body: JSON.stringify({ // Send only the editable fields
+                name: editedPlanData.name,
+                description: editedPlanData.description,
+                specs: editedPlanData.specs,
+            }),
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ error: 'Error al analizar la respuesta de error' }));
+            throw new Error(errorData.error || `Error al actualizar el plan (estado: ${response.status})`);
+        }
+        await fetchPlans(); // Refetch all plans to get the latest state
+        toast.success('¡Plan actualizado exitosamente!');
+        setIsEditPlanModalOpen(false);
+        setEditingPlan(null);
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Ocurrió un error desconocido';
+        toast.error(`Error al actualizar el plan: ${message}`);
     }
   };
 
@@ -637,6 +693,11 @@ export default function Settings() {
                               Activo
                             </label>
                           </div>
+                          {/* Edit Button */}
+                          <button
+                            className="p-1 text-slate-500 hover:text-primary-500 dark:text-slate-400 dark:hover:text-primary-400"
+                            onClick={() => handleEditPlan(plan)}
+                          ><Edit className="h-4 w-4" /></button>
                           {/* Delete Button */}
                           <button
                             className="p-1 text-slate-500 hover:text-danger-500 dark:text-slate-400 dark:hover:text-danger-400"
@@ -1031,6 +1092,71 @@ export default function Settings() {
               <div className="flex justify-end space-x-3 mt-8">
                 <button type="button" className="btn btn-secondary" onClick={() => { setIsEditClientModalOpen(false); setEditingClient(null); }}>Cancelar</button>
                 <button type="button" className="btn btn-primary" onClick={handleUpdateClient} disabled={!editedClientData.name || !editedClientData.rif}>Guardar Cambios</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Edit Plan Modal */}
+        {isEditPlanModalOpen && editingPlan && (
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50 transition-opacity duration-300 ease-in-out">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: -20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: -20 }}
+              transition={{ duration: 0.2 }}
+              className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-xl w-full max-w-lg" // Increased max-width
+            >
+              <h3 className="text-xl font-semibold text-slate-900 dark:text-white mb-6">Editar Plan: <span className="font-normal">{editingPlan.name}</span></h3>
+              
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="edit-plan-name" className="form-label">Nombre del Plan</label>
+                  <input
+                    id="edit-plan-name" type="text" className="form-input"
+                    value={editedPlanData.name || ''}
+                    onChange={(e) => setEditedPlanData(prev => ({ ...prev, name: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="edit-plan-description" className="form-label">Descripción</label>
+                  <textarea
+                    id="edit-plan-description" rows={2} className="form-input"
+                    value={editedPlanData.description || ''}
+                    onChange={(e) => setEditedPlanData(prev => ({ ...prev, description: e.target.value }))}
+                  />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <label htmlFor="edit-plan-cpu" className="form-label">CPU Cores</label>
+                    <input
+                      id="edit-plan-cpu" type="number" className="form-input" min="1"
+                      value={editedPlanData.specs?.cpu || 1}
+                      onChange={(e) => setEditedPlanData(prev => ({ ...prev, specs: { ...prev.specs!, cpu: parseInt(e.target.value) || 1 } }))}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="edit-plan-memory" className="form-label">Memoria (MB)</label>
+                    <input
+                      id="edit-plan-memory" type="number" className="form-input" min="512" step="512"
+                      value={editedPlanData.specs?.memory || 1024}
+                      onChange={(e) => setEditedPlanData(prev => ({ ...prev, specs: { ...prev.specs!, memory: parseInt(e.target.value) || 512 } }))}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="edit-plan-disk" className="form-label">Disco (GB)</label>
+                    <input
+                      id="edit-plan-disk" type="number" className="form-input" min="10"
+                      value={editedPlanData.specs?.disk || 20}
+                      onChange={(e) => setEditedPlanData(prev => ({ ...prev, specs: { ...prev.specs!, disk: parseInt(e.target.value) || 10 } }))}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-3 mt-8">
+                <button type="button" className="btn btn-secondary" onClick={() => { setIsEditPlanModalOpen(false); setEditingPlan(null); }}>Cancelar</button>
+                <button type="button" className="btn btn-primary" onClick={handleUpdatePlan} disabled={!editedPlanData.name || !editedPlanData.description}>Guardar Cambios</button>
               </div>
             </motion.div>
           </div>

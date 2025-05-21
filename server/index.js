@@ -2384,13 +2384,53 @@ app.post('/api/vm-plans', authenticate, requireAdmin, async (req, res) => {
 });
 app.put('/api/vm-plans/:id', authenticate, requireAdmin, async (req, res) => {
   const { id } = req.params;
-  const { is_active } = req.body;
-  if (typeof is_active !== 'boolean') return res.status(400).json({ error: 'isActive (boolean) is required.' });
+  const { name, description, specs, is_active } = req.body;
+
+  // Validación: al menos un campo actualizable debe estar presente
+  if (name === undefined && description === undefined && specs === undefined && is_active === undefined) {
+    return res.status(400).json({ error: 'No se proporcionaron campos para actualizar.' });
+  }
+  // Validación más específica si es necesario (ej., estructura de specs)
+  if (specs && (specs.cpu === undefined || specs.memory === undefined || specs.disk === undefined)) {
+    return res.status(400).json({ error: 'Estructura de especificaciones inválida. Se requieren CPU, memoria y disco dentro de las especificaciones.' });
+  }
+  if (is_active !== undefined && typeof is_active !== 'boolean') {
+    return res.status(400).json({ error: 'is_active debe ser un valor booleano.' });
+  }
+
   try {
-    const result = await pool.query('UPDATE vm_plans SET is_active = $1, updated_at = now() WHERE id = $2 RETURNING *', [is_active, id]);
+    const currentPlanResult = await pool.query('SELECT * FROM vm_plans WHERE id = $1', [id]);
+    if (currentPlanResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Plan de VM no encontrado' });
+    }
+
+    // Construir la consulta de actualización dinámicamente
+    const updateFields = [];
+    const values = [];
+    let valueIndex = 1;
+
+    if (name !== undefined) { updateFields.push(`name = $${valueIndex++}`); values.push(name); }
+    if (description !== undefined) { updateFields.push(`description = $${valueIndex++}`); values.push(description); }
+    if (specs !== undefined) { updateFields.push(`specs = $${valueIndex++}`); values.push(JSON.stringify(specs)); }
+    if (is_active !== undefined) { updateFields.push(`is_active = $${valueIndex++}`); values.push(is_active); }
+
+    if (updateFields.length === 0) {
+      return res.status(400).json({ error: 'No se proporcionaron campos válidos para actualizar.' });
+    }
+
+    updateFields.push(`updated_at = now()`);
+    values.push(id); // Para la cláusula WHERE
+
+    const queryText = `UPDATE vm_plans SET ${updateFields.join(', ')} WHERE id = $${valueIndex} RETURNING *`;
+    
+    const result = await pool.query(queryText, values);
+
     if (result.rows.length > 0) res.json(result.rows[0]);
-    else res.status(404).json({ error: 'VM Plan not found' });
-  } catch (err) { res.status(500).json({ error: 'Failed to update VM plan' }); }
+    else res.status(404).json({ error: 'Plan de VM no encontrado (inesperado durante la actualización).' });
+  } catch (err) {
+    console.error(`Error al actualizar el plan de VM ${id}:`, err);
+    res.status(500).json({ error: 'Error al actualizar el plan de VM' });
+  }
 });
 
 app.delete('/api/vm-plans/:id', authenticate, requireAdmin, async (req, res) => {
