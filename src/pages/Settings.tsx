@@ -768,7 +768,7 @@ export default function Settings() {
                             <button onClick={() => handleEditUser(user)} className="text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-200 inline-flex items-center">
                                 <Edit className="h-4 w-4 mr-1" />
                                 Editar
-                              </button>                              {/* Prevent deleting the current user - Use currentUser.id */}_
+                              </button>                              {/* Prevent deleting the current user - Use currentUser.id */}
                               {currentUser?.id !== user.id && (
                                 <button onClick={() => handleDeleteUser(user.id)} className="text-danger-600 hover:text-danger-900 dark:text-danger-400 dark:hover:text-danger-200">Eliminar</button>
                               )}
