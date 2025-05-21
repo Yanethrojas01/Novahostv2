@@ -834,6 +834,8 @@ app.post('/api/vms/:id/console', authenticate, async (req, res) => {
           tokenID: `${hypervisor.username}!${hypervisor.token_name}`,
           tokenSecret: hypervisor.api_token, timeout: 10000, rejectUnauthorized: false
         };
+        console.log("elclean",cleanHost)
+console.log("proxmoxConfig",proxmoxConfig)
         proxmoxClientInstance = proxmoxApi(proxmoxConfig);
         try {
           const vmResources = await proxmoxClientInstance.cluster.resources.$get({ type: 'vm' });
