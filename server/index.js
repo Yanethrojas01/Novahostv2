@@ -1780,7 +1780,7 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
             name, type,
             type === 'proxmox' ? `${cleanHost}:${(new URL(host.includes('://') ? host : `https://${host}`)).port || 8006}` : cleanHost, // Store Proxmox with port
             username,
-            (type === 'vsphere' ? password : (apiToken || null)),
+            (apiToken || null), // Store apiToken for proxmox, null for vsphere
             (type === 'proxmox' ? (tokenName || null) : null),
             determinedVsphereSubtype,
             status, last_sync
@@ -1788,8 +1788,12 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
     );
     const responseData = dbResult.rows[0];
     // delete responseData.api_token; // api_token is not returned by RETURNING
-    // delete responseData.token_name; // token_name is not returned by RETURNING
-    res.status(201).json(responseData);
+
+    // If it's vSphere, we also need to store the password
+    if (type === 'vsphere') {
+      await pool.query('UPDATE hypervisors SET password = $1 WHERE id = $2', [password, responseData.id]);
+    }
+     res.status(201).json(responseData);
 
   } catch (error) {
     console.error('Error creating hypervisor:', error);
@@ -2208,7 +2212,7 @@ app.put('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) => 
       const testHypervisorData = { // Usar datos finales para la prueba
         id: currentHypervisor.id,
         type: currentHypervisor.type,
-        host: finalHost,
+          host: finalHost,
         username: finalUsername,
         api_token: new_password || new_api_token, // Para vSphere, api_token es la contraseña
         token_name: new_token_name || null, // Solo para Proxmox
@@ -2234,10 +2238,12 @@ app.put('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) => 
           finalApiToken = new_api_token || (new_password ? new_password : finalApiToken); // Guardar nueva contraseña/token
           finalTokenName = new_token_name || (new_password ? null : finalTokenName); // Guardar nuevo nombre de token o limpiar si se usa contraseña
         } else if (currentHypervisor.type === 'vsphere') {
-          // Para vSphere, new_password se pasa como api_token a callPyvmomiService
-          await callPyvmomiService('POST', '/connect', { ...testHypervisorData, api_token: new_password }, {});
-          finalApiToken = new_password; // Guardar nueva contraseña
+           // Para vSphere, new_password se pasa como api_token a callPyvmomiService
+           await callPyvmomiService('POST', '/connect', { ...testHypervisorData, api_token: new_password }, {});
+          // Update the password in the database as well
+          await pool.query('UPDATE hypervisors SET password = $1 WHERE id = $2', [new_password, currentHypervisor.id]);
         }
+
         status = 'connected';
         last_sync = new Date();
         console.log(`New credentials for hypervisor ${id} verified successfully.`);
