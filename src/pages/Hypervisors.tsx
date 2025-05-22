@@ -7,7 +7,7 @@ import { Hypervisor, HypervisorCredentials } from '../types/hypervisor';
 import { useAuth } from '../hooks/useAuth'; // Import useAuth
 
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;; // Adjust if your server runs elsewhere
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL; // Adjust if your server runs elsewhere
 export default function Hypervisors() {
   const [hypervisors, setHypervisors] = useState<Hypervisor[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -17,10 +17,9 @@ export default function Hypervisors() {
     type: 'proxmox',
     host: '',
     username: '',
-    password: '', // Para vSphere
-    proxmoxPassword: '', // Para Proxmox
-    apiToken: '', // Asegurarse de que apiToken también se inicialice
-    tokenName: '', // Initialize tokenName
+    password: '', // Contraseña genérica para vSphere o Proxmox
+    apiToken: '', 
+    tokenName: '', 
   });
 
   const { user, token: authToken } = useAuth(); // Get current user and token
@@ -29,29 +28,25 @@ export default function Hypervisors() {
   const fetchHypervisors = async () => {
     setIsLoading(true);
     try {
-      // //const token = localStorage.getItem('authToken'); // Ya no se usa directamente
       const response = await fetch(`${API_BASE_URL}/hypervisors`, {
         headers: {
-          // Include auth header if needed by your backend middleware
-          ...(authToken && { 'Authorization': `Bearer ${authToken}` }), // Usar token del contexto
+          ...(authToken && { 'Authorization': `Bearer ${authToken}` }), 
         },
       });
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       const data: Hypervisor[] = await response.json();
-      // Convert date strings to Date objects if necessary
-      // Also ensure vsphere_subtype is handled (it should be included in ...h)
       const formattedData = data.map(h => ({
         ...h,
         last_sync: h.last_sync ? new Date(h.last_sync).toISOString() : null,
-        created_at: h.created_at ? new Date(h.created_at).toISOString() : undefined, // Convert createdAt
-        updated_at: h.updated_at ? new Date(h.updated_at).toISOString() : undefined, // Convert updatedAt
+        created_at: h.created_at ? new Date(h.created_at).toISOString() : undefined, 
+        updated_at: h.updated_at ? new Date(h.updated_at).toISOString() : undefined, 
       }));
       setHypervisors(formattedData);
     } catch (error) {
       console.error('Error fetching hypervisors:', error);
-      toast.error('Error al cargar los hipervisores.'); // User feedback
+      toast.error('Error al cargar los hipervisores.'); 
     } finally {
       setIsLoading(false);
     }
@@ -59,14 +54,14 @@ export default function Hypervisors() {
 
   useEffect(() => {
     fetchHypervisors();
-  }, [authToken]); // Añadir authToken como dependencia si la carga inicial depende de él
+  }, [authToken]); 
 
   const handleDelete = async (id: string) => {
     try {
       const response = await fetch(`${API_BASE_URL}/hypervisors/${id}`, {
         method: 'DELETE',
         headers: {
-          ...(authToken && { 'Authorization': `Bearer ${authToken}` }), // Usar token del contexto
+          ...(authToken && { 'Authorization': `Bearer ${authToken}` }), 
         },
       });
 
@@ -75,7 +70,6 @@ export default function Hypervisors() {
       }
 
       toast.success('Hipervisor eliminado correctamente.');
-      // Re-fetch the list to ensure consistency
       fetchHypervisors();
 
     } catch (error) {
@@ -85,9 +79,7 @@ export default function Hypervisors() {
   };
 
   const handleAddNew = async () => {
-    // Validation logic for enabling the button
-    const isVSpherePasswordAuthValid = newHypervisor.type === 'vsphere' && !!newHypervisor.password && newHypervisor.password.length > 0;
-    const isProxmoxPasswordAuthValid = newHypervisor.type === 'proxmox' && !!newHypervisor.proxmoxPassword && newHypervisor.proxmoxPassword.length > 0;
+    const isPasswordProvided = !!newHypervisor.password && newHypervisor.password.length > 0;
     const isProxmoxTokenAuthValid =
       newHypervisor.type === 'proxmox' &&
       !!newHypervisor.apiToken && newHypervisor.apiToken.length > 0 &&
@@ -95,76 +87,59 @@ export default function Hypervisors() {
     
     let isFormValid = false;
     if (newHypervisor.type === 'vsphere') {
-      isFormValid = newHypervisor.host && newHypervisor.username && isVSpherePasswordAuthValid;
+      isFormValid = newHypervisor.host && newHypervisor.username && isPasswordProvided;
     } else if (newHypervisor.type === 'proxmox') {
-      // Para Proxmox, se requiere host y usuario.
-      // Opcionalmente, puede tener contraseña, token, o ambos.
-      // La prueba de conexión en el backend determinará si las credenciales son válidas.
-      // Para el frontend, solo validamos que los campos obligatorios estén.
       isFormValid = newHypervisor.host && newHypervisor.username;
-      if (!isProxmoxPasswordAuthValid && !isProxmoxTokenAuthValid) {
-        // Si es Proxmox y no se proporciona ni contraseña ni token, no es válido para la conexión.
-        // Aunque el backend podría permitir guardarlo sin credenciales activas.
-        // Para "Conectar y Guardar", al menos un método de auth es deseable.
-        // toast.error('Para Proxmox, proporcione contraseña o Token API para la conexión inicial.');
-        // isFormValid = false; // Descomentar si se quiere forzar al menos un método de auth
-      }
+      // Opcional: Forzar al menos un método de autenticación para Proxmox
+      // if (!isPasswordProvided && !isProxmoxTokenAuthValid) {
+      //   toast.error('Para Proxmox, proporcione Contraseña o Token API para la conexión inicial.');
+      //   isFormValid = false; 
+      // }
     }
 
-
     if (isFormValid) {
-      // El payload ahora incluye todos los campos; el backend decidirá cómo usarlos/guardarlos.
-      // Para vSphere, newHypervisor.password se usa.
-      // Para Proxmox, newHypervisor.proxmoxPassword y/o (apiToken + tokenName) se usan.
       const payload: HypervisorCredentials = { ...newHypervisor };
-
-      console.log('Payload to send:', payload); // Debugging line
-      setIsLoading(true); // Indicate activity
+      console.log('Payload to send:', payload); 
+      setIsLoading(true); 
       try {
         const response = await fetch(`${API_BASE_URL}/hypervisors`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(authToken && { 'Authorization': `Bearer ${authToken}` }), // Usar token del contexto
+            ...(authToken && { 'Authorization': `Bearer ${authToken}` }), 
           },
-          body: JSON.stringify(payload), // Send potentially modified payload
+          body: JSON.stringify(payload), 
         });
-        console.log('Response status:', response); // Debugging line
+        console.log('Response status:', response); 
 
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({ error: 'Failed to parse error response', details: 'Server returned non-JSON error or network issue.' }));
-          // Usar errorData.details si existe, sino errorData.error
           const errorMessageFromServer = errorData.details || errorData.error || `HTTP error! status: ${response.status}`;
           throw new Error(errorMessageFromServer);
         }
 
         toast.success('Hipervisor añadido correctamente.');
 
-        // Reset form and close
         setNewHypervisor({
-          type: 'proxmox', // Default back to proxmox or keep current type?
+          type: 'proxmox', 
           host: '',
           username: '',
           password: '',
-          proxmoxPassword: '',
-          apiToken: '', // Reset token field too
-          tokenName: '', // Reset token name field
+          apiToken: '', 
+          tokenName: '', 
         });
         setIsAddingNew(false);
-
-        // Refresh the list
         fetchHypervisors();
 
-      } catch (error: unknown) { // Changed 'any' to 'unknown'
+      } catch (error: unknown) { 
         console.error('Error adding hypervisor:', error);
-        // Type check before accessing properties
         let errorMessage = 'Error al añadir el hipervisor.';
         if (error instanceof Error) {
           errorMessage = `Error al añadir el hipervisor: ${error.message}`;
         }
         toast.error(errorMessage);
       } finally {
-        setIsLoading(false); // Stop loading indicator
+        setIsLoading(false); 
       }
     } else {
       if (newHypervisor.type === 'vsphere') {
@@ -179,15 +154,12 @@ export default function Hypervisors() {
     fetchHypervisors();
   };
 
-  // Determine if the connect button should be enabled
   const isConnectButtonEnabled =
     newHypervisor.host && newHypervisor.username &&
     ( (newHypervisor.type === 'vsphere' && !!newHypervisor.password) ||
-      // Para Proxmox, habilitar si hay host y usuario. La validez de la auth se verifica en backend.
       (newHypervisor.type === 'proxmox') 
     );
 
-  // Callback function for HypervisorCard to update state
   const handleConnectionChange = (updatedHypervisor: Hypervisor) => {
     setHypervisors(prevHypervisors =>
       prevHypervisors.map(h =>
@@ -229,7 +201,7 @@ export default function Hypervisors() {
           <button
             onClick={handleRefresh}
             className="btn btn-secondary"
-            disabled={isLoading} // Disable while loading
+            disabled={isLoading} 
           >
             <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
             Actualizar
@@ -264,9 +236,7 @@ export default function Hypervisors() {
                 onChange={(e) => setNewHypervisor(prev => ({
                   ...prev,
                   type: e.target.value as 'proxmox' | 'vsphere',
-                  // Reset auth fields when type changes for clarity
                   password: '',
-                  proxmoxPassword: '',
                   apiToken: '',
                   tokenName: ''
                 }))}
@@ -300,18 +270,16 @@ export default function Hypervisors() {
 
             {newHypervisor.type === 'proxmox' && (
               <>
-                {/* Contraseña específica para Proxmox */}
                 <div>
-                  <label className="form-label">Contraseña Proxmox</label>
+                  <label className="form-label">Contraseña</label>
                   <input
                     type="password"
                     className="form-input"
                     placeholder="(Para login/consola)"
-                    value={newHypervisor.proxmoxPassword}
-                    onChange={(e) => setNewHypervisor(prev => ({ ...prev, proxmoxPassword: e.target.value }))}
+                    value={newHypervisor.password} 
+                    onChange={(e) => setNewHypervisor(prev => ({ ...prev, password: e.target.value }))}
                   />
                 </div>
-                {/* Token API para Proxmox */}
                 <div className="sm:col-span-2 my-1 text-sm text-slate-500 dark:text-slate-400">
                   Y/O Token API (para operaciones generales):
                 </div>
@@ -339,7 +307,7 @@ export default function Hypervisors() {
             )}
             {newHypervisor.type === 'vsphere' && (
               <div>
-                <label className="form-label">Contraseña vSphere</label>
+                <label className="form-label">Contraseña</label>
                 <input
                   type="password"
                   className="form-input"
@@ -356,105 +324,9 @@ export default function Hypervisors() {
               className="btn btn-secondary"
               onClick={() => {
                 setIsAddingNew(false);
-                // Reset form on cancel
-                setNewHypervisor({ type: 'proxmox', host: '', username: '', password: '', proxmoxPassword: '', apiToken: '', tokenName: '' });
-              }}
-              disabled={isLoading} // Disable while add is in progress
-            >
-              Cancelar
-            </button>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={handleAddNew}
-              disabled={!isConnectButtonEnabled || isLoading}
-            >
-              {isLoading ? 'Conectando...' : 'Conectar y Guardar'}
-            </button>
-          </div>
-        </motion.div>
-      )}
-
-      {isLoading && hypervisors.length === 0 ? ( // Show skeleton only on initial load
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {[...Array(3)].map((_, i) => (
-            <div key={i} className="card">
-              <div className="p-4 animate-pulse">
-                <div className="flex justify-between mb-4">
-                  <div className="h-10 bg-slate-200 dark:bg-slate-700 rounded w-1/2"></div>
-                  <div className="h-6 bg-slate-200 dark:bg-slate-700 rounded w-1/4"></div>
-                </div>
-                <div className="space-y-3">
-                  <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-full"></div>
-                  <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-full"></div>
-                  <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-3/4"></div>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : filteredHypervisors.length > 0 ? (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.1 }}
-          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
-        >
-          {filteredHypervisors.map(hypervisor => (
-            <HypervisorCard
-              key={hypervisor.id}
-              hypervisor={hypervisor}
-              onConnectionChange={handleConnectionChange} // Pass the callback function
-              onDelete={handleDelete}
-            />
-          ))}
-        </motion.div>
-      ) : (
-        <div className="text-center py-10">
-          <div className="mx-auto h-12 w-12 text-slate-400">
-            {/* Use a different icon or keep Search */}
-            <Search className="h-full w-full" />
-          </div>
-          <h3 className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">No se encontraron hipervisores</h3>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            {searchTerm ? 'Intenta ajustar tu búsqueda.' : 'Empieza añadiendo una conexión de hipervisor.'}
-          </p>
-          {!searchTerm && (user?.role === 'admin' || user?.role === 'user') && (
-            // Only show button if not searching and user has correct role
-            <>
-              <div className="mt-6">
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={() => setIsAddingNew(true)}
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Añadir Hipervisor
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-                  />
-                </div>
-              </>
-            )}
-          </div>
-
-          <div className="mt-6 flex justify-end space-x-3">
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => {
-                setIsAddingNew(false);
-                // Reset form on cancel
                 setNewHypervisor({ type: 'proxmox', host: '', username: '', password: '', apiToken: '', tokenName: '' });
               }}
-              disabled={isLoading} // Disable while add is in progress
+              disabled={isLoading} 
             >
               Cancelar
             </button>
@@ -470,7 +342,7 @@ export default function Hypervisors() {
         </motion.div>
       )}
 
-      {isLoading && hypervisors.length === 0 ? ( // Show skeleton only on initial load
+      {isLoading && hypervisors.length === 0 ? ( 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {[...Array(3)].map((_, i) => (
             <div key={i} className="card">
@@ -499,7 +371,7 @@ export default function Hypervisors() {
             <HypervisorCard
               key={hypervisor.id}
               hypervisor={hypervisor}
-              onConnectionChange={handleConnectionChange} // Pass the callback function
+              onConnectionChange={handleConnectionChange} 
               onDelete={handleDelete}
             />
           ))}
@@ -507,7 +379,6 @@ export default function Hypervisors() {
       ) : (
         <div className="text-center py-10">
           <div className="mx-auto h-12 w-12 text-slate-400">
-            {/* Use a different icon or keep Search */}
             <Search className="h-full w-full" />
           </div>
           <h3 className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">No se encontraron hipervisores</h3>
@@ -515,7 +386,6 @@ export default function Hypervisors() {
             {searchTerm ? 'Intenta ajustar tu búsqueda.' : 'Empieza añadiendo una conexión de hipervisor.'}
           </p>
           {!searchTerm && (user?.role === 'admin' || user?.role === 'user') && (
-            // Only show button if not searching and user has correct role
             <>
               <div className="mt-6">
                 <button

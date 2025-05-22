@@ -844,8 +844,8 @@ app.post('/api/vms/:id/console', authenticate, async (req, res) => {
     // Step 1: Find the VM's Hypervisor and basic info
     // Similar logic to /action or /details route to find the VM
     const { rows: connectedHypervisors } = await pool.query(
-      `SELECT id, type, host, username, api_token, token_name, name as hypervisor_name 
-       FROM hypervisors WHERE status = 'connected'`
+      `SELECT id, type, host, username, api_token, token_name, proxmox_password, name as hypervisor_name 
+       FROM hypervisors WHERE status = 'connected'` // Added proxmox_password
     );
 
     let vmFoundOnHypervisor = false;
@@ -855,19 +855,27 @@ app.post('/api/vms/:id/console', authenticate, async (req, res) => {
         const [dbHost, dbPortStr] = hypervisor.host.split(':');
         const port = dbPortStr ? parseInt(dbPortStr, 10) : 8006;
         const cleanHost = dbHost; // This is the Proxmox API host
-        const proxmoxConfig = {
+        
+        // Configurar proxmoxClientInstance para la llamada a vncproxy (puede usar token API)
+        const proxmoxConfigForVncProxy = {
           host: cleanHost, port: port, username: hypervisor.username,
-          tokenID: `${hypervisor.username}!${hypervisor.token_name}`,
-          tokenSecret: hypervisor.api_token, timeout: 10000, rejectUnauthorized: false
+          timeout: 10000, rejectUnauthorized: false
         };
+        if (hypervisor.token_name && hypervisor.api_token) {
+          proxmoxConfigForVncProxy.tokenID = `${hypervisor.username}!${hypervisor.token_name}`;
+          proxmoxConfigForVncProxy.tokenSecret = hypervisor.api_token;
+        } else if (hypervisor.proxmox_password) {
+          // Aunque vncproxy podría funcionar con contraseña, el login para PVEAuthCookie es más robusto
+          // proxmoxClientInstance se usará si el login para cookie falla o no es necesario.
+        }
+        // console.log("proxmoxConfigForVncProxy",proxmoxConfigForVncProxy) // Debug
+        proxmoxClientInstance = proxmoxApi(proxmoxConfigForVncProxy);
 
-console.log("proxmoxConfig",proxmoxConfig)
-        proxmoxClientInstance = proxmoxApi(proxmoxConfig);
         try {
           const vmResources = await proxmoxClientInstance.cluster.resources.$get({ type: 'vm' });
           const foundVm = vmResources.find(vm => vm.vmid.toString() === vmExternalId);
           if (foundVm) {
-            targetHypervisor = hypervisor;
+            targetHypervisor = hypervisor; // Guardar el objeto completo del hipervisor
             targetNode = foundVm.node;
             vmNameForConsole = foundVm.name || vmExternalId;
             vmFoundOnHypervisor = true;
@@ -878,17 +886,13 @@ console.log("proxmoxConfig",proxmoxConfig)
           console.warn(`Console: Could not check Proxmox hypervisor ${hypervisor.id} for VM ${vmExternalId}:`, findError.message);
         }
       } else if (hypervisor.type === 'vsphere') {
-        // For vSphere, we assume vmExternalId is the UUID. The PyVmomi service will confirm.
-        // We need to fetch the VM name if possible for a better console title.
-        // A quick DB lookup:
         const { rows: [dbVm] } = await pool.query('SELECT name FROM virtual_machines WHERE hypervisor_vm_id = $1 AND hypervisor_id = $2', [vmExternalId, hypervisor.id]);
         if (dbVm) {
             vmNameForConsole = dbVm.name;
         }
-        // Basic UUID check to ensure it's likely a vSphere VM before trying
         if (vmExternalId.length === 36 && vmExternalId.includes('-')) {
           targetHypervisor = hypervisor;
-          vmFoundOnHypervisor = true; // Assume we'll try with this hypervisor
+          vmFoundOnHypervisor = true;
           console.log(`Console: Assuming VM ${vmExternalId} is vSphere on hypervisor ${hypervisor.id}. Name: ${vmNameForConsole}`);
           break;
         }
@@ -901,89 +905,84 @@ console.log("proxmoxConfig",proxmoxConfig)
 
     // Step 2: Get console details based on hypervisor type
     if (targetHypervisor.type === 'proxmox') {
-      console.log(`Console: Requesting VNC proxy for Proxmox VM ${vmExternalId} on node ${targetNode}`);
-      
-      const proxmoxApiHostForVnc = targetHypervisor.host.split(':')[0]; // Host de la API de Proxmox
+      const proxmoxApiHostForVnc = targetHypervisor.host.split(':')[0];
       const proxmoxApiPort = targetHypervisor.host.split(':')[1] || '8006';
       const baseProxmoxUrl = `https://${proxmoxApiHostForVnc}:${proxmoxApiPort}`;
 
       let pveAuthCookie = null;
       let csrfPreventionToken = null;
 
-      // --- Realizar login con usuario/contraseña para obtener PVEAuthCookie y CSRF Token ---
-      // ASUNCIÓN: targetHypervisor.api_token contiene la CONTRASEÑA del usuario targetHypervisor.username
-      // Y targetHypervisor.username es el nombre de usuario completo (ej. 'user@pam' o 'user@realm').
-      // ¡ESTO ES CRUCIAL! Si api_token es un secreto de token API, este login fallará.
-      // Necesitarías un campo de contraseña dedicado en la tabla hypervisors.
       const proxmoxUsernameForLogin = targetHypervisor.username;
-      const proxmoxPasswordForLogin = targetHypervisor.api_token; // ASUNCIÓN PELIGROSA
+      const proxmoxPasswordFromDB = targetHypervisor.proxmox_password; // Contraseña de Proxmox desde la BD
 
-      if (!proxmoxPasswordForLogin) {
-        throw new Error('Proxmox password not available for login to obtain session cookie.');
+      if (!proxmoxPasswordFromDB) { 
+        console.warn("Console: Proxmox password not found in hypervisor config. Cannot perform login to get PVEAuthCookie. WebSocket proxy will likely fail if cookie is required.");
+      } else {
+        const loginUrl = `${baseProxmoxUrl}/api2/json/access/ticket`;
+        console.log(`Console: Attempting login to Proxmox at ${loginUrl} for user ${proxmoxUsernameForLogin} to get session cookie.`);
+        try {
+          const loginResponse = await fetch(loginUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: new URLSearchParams({
+              username: proxmoxUsernameForLogin,
+              password: proxmoxPasswordFromDB, 
+            }).toString(),
+            agent: new https.Agent({ rejectUnauthorized: false })
+          });
+
+          if (!loginResponse.ok) {
+            const errorText = await loginResponse.text();
+            console.error(`Console: Proxmox login failed: ${loginResponse.status} ${loginResponse.statusText}`, errorText);
+          } else {
+            const loginData = await loginResponse.json();
+            csrfPreventionToken = loginData.data.CSRFPreventionToken;
+            const setCookieHeader = loginResponse.headers.get('set-cookie');
+            if (setCookieHeader) {
+              const authCookieString = setCookieHeader.split(',').map(c => c.trim()).find(cookie => cookie.startsWith('PVEAuthCookie='));
+              if (authCookieString) {
+                pveAuthCookie = authCookieString.split(';')[0].trim();
+                console.log(`Console: PVEAuthCookie obtained from login: ${pveAuthCookie}`);
+              }
+            }
+            if (!pveAuthCookie || !csrfPreventionToken) {
+               console.warn("Console: PVEAuthCookie or CSRFPreventionToken not fully obtained after Proxmox login attempt.");
+            }
+          }
+        } catch (loginError) {
+          console.error("Console: Error during Proxmox login for session cookie:", loginError);
+        }
       }
 
-      const loginUrl = `${baseProxmoxUrl}/api2/json/access/ticket`;
-      console.log(`Console: Attempting login to Proxmox at ${loginUrl} for user ${proxmoxUsernameForLogin} to get session cookie.`);
-      try {
-        const loginResponse = await fetch(loginUrl, {
+      let vncProxyResponseData;
+      if (pveAuthCookie && csrfPreventionToken) {
+        const vncProxyUrl = `${baseProxmoxUrl}/api2/json/nodes/${targetNode}/qemu/${vmExternalId}/vncproxy`;
+        console.log(`Console: Calling vncproxy via fetch with session: POST ${vncProxyUrl}`);
+        const vncProxyFetchOptions = {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
+            'Content-Type': 'application/json',
+            'Cookie': pveAuthCookie, 
+            'CSRFPreventionToken': csrfPreventionToken 
           },
-          body: new URLSearchParams({
-            username: proxmoxUsernameForLogin,
-            password: proxmoxPasswordForLogin,
-          }).toString(),
-          agent: new https.Agent({ rejectUnauthorized: false }) // Coincide con tu config
-        });
-
-        if (!loginResponse.ok) {
-          const errorText = await loginResponse.text();
-          console.error(`Console: Proxmox login failed: ${loginResponse.status} ${loginResponse.statusText}`, errorText);
-          throw new Error(`Proxmox login failed: ${loginResponse.statusText}`);
+          body: JSON.stringify({}),
+          agent: new https.Agent({ rejectUnauthorized: false })
+        };
+        const vncProxyFetchResponse = await fetch(vncProxyUrl, vncProxyFetchOptions);
+        if (!vncProxyFetchResponse.ok) {
+          const errorText = await vncProxyFetchResponse.text();
+          console.error(`Console: vncproxy fetch call (with session) failed: ${vncProxyFetchResponse.status} ${vncProxyFetchResponse.statusText}`, errorText);
+          throw new Error(`Failed to call vncproxy (with session): ${vncProxyFetchResponse.statusText}`);
         }
-
-        const loginData = await loginResponse.json();
-        csrfPreventionToken = loginData.data.CSRFPreventionToken;
-        const setCookieHeader = loginResponse.headers.get('set-cookie');
-        if (setCookieHeader) {
-          const authCookieString = setCookieHeader.split(',').find(cookie => cookie.trim().startsWith('PVEAuthCookie='));
-          if (authCookieString) {
-            pveAuthCookie = authCookieString.split(';')[0].trim();
-            console.log(`Console: PVEAuthCookie obtained from login: ${pveAuthCookie}`);
-          }
-        }
-        if (!pveAuthCookie || !csrfPreventionToken) {
-          throw new Error("PVEAuthCookie or CSRFPreventionToken not obtained after Proxmox login.");
-        }
-      } catch (loginError) {
-        console.error("Console: Error during Proxmox login for session cookie:", loginError);
-        throw new Error(`Failed to login to Proxmox to establish session: ${loginError.message}`);
+        const vncProxyJsonResponse = await vncProxyFetchResponse.json();
+        vncProxyResponseData = vncProxyJsonResponse.data;
+      } else {
+        console.log(`Console: Calling vncproxy via proxmox-api library (using API Token or password if configured in client)`);
+        // proxmoxClientInstance ya está configurado arriba, podría usar token o pass si está en config
+        vncProxyResponseData = await proxmoxClientInstance.nodes.$(targetNode).qemu.$(vmExternalId).vncproxy.$post({});
       }
-
-      // --- Ahora llamar a vncproxy usando la cookie y el token CSRF obtenidos ---
-      // Podemos seguir usando proxmoxClientInstance (autenticado con API Token) si vncproxy no requiere la cookie
-      // O usar fetch con la cookie y CSRF token. Para consistencia y asegurar que se usa la sesión:
-      const vncProxyUrl = `${baseProxmoxUrl}/api2/json/nodes/${targetNode}/qemu/${vmExternalId}/vncproxy`;
-      console.log(`Console: Calling vncproxy via fetch with session: POST ${vncProxyUrl}`);
-      const vncProxyFetchOptions = {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Cookie': pveAuthCookie, // Usar la cookie de sesión
-          'CSRFPreventionToken': csrfPreventionToken // Usar el token CSRF
-        },
-        body: JSON.stringify({}),
-        agent: new https.Agent({ rejectUnauthorized: false })
-      };
-      const vncProxyFetchResponse = await fetch(vncProxyUrl, vncProxyFetchOptions);
-      if (!vncProxyFetchResponse.ok) {
-        const errorText = await vncProxyFetchResponse.text();
-        console.error(`Console: vncproxy fetch call (with session) failed: ${vncProxyFetchResponse.status} ${vncProxyFetchResponse.statusText}`, errorText);
-        throw new Error(`Failed to call vncproxy (with session): ${vncProxyFetchResponse.statusText}`);
-      }
-      const vncProxyJsonResponse = await vncProxyFetchResponse.json();
-      const vncProxyResponseData = vncProxyJsonResponse.data;
  
       console.log(`Proxmox vncproxy response (port, ticket): port=${vncProxyResponseData.port}, ticket=${vncProxyResponseData.ticket ? 'present' : 'missing'}. Using API host IP: ${proxmoxApiHostForVnc} for node ${targetNode}`);
  
@@ -992,19 +991,16 @@ console.log("proxmoxConfig",proxmoxConfig)
         throw new Error('Proxmox vncproxy response was incomplete (missing port or ticket).');
       }
  
-
       res.json({
         type: 'proxmox',
         connectionDetails: {
-          // El frontend ya no se conectará directamente al nodo Proxmox.
-          // El host de la API de Proxmox (proxmoxApiHostForVnc) y el puerto 8006 se usarán en el backend para el proxy WebSocket.
-          proxmoxApiHost: proxmoxApiHostForVnc, // Host de la API de Proxmox para el proxy ws
+          proxmoxApiHost: proxmoxApiHostForVnc,
           port: vncProxyResponseData.port,
-          ticket: vncProxyResponseData.ticket, // This is the password for VNC
+          ticket: vncProxyResponseData.ticket,
           vmid: vmExternalId,
           node: targetNode,
           vmName: vmNameForConsole,
-          pveAuthCookie: pveAuthCookie, // <<< DEVOLVER LA COOKIE AL FRONTEND
+          pveAuthCookie: pveAuthCookie, // DEVOLVER LA COOKIE AL FRONTEND (será null si no se pudo obtener)
         }
       });
     } else if (targetHypervisor.type === 'vsphere') {
@@ -1012,16 +1008,15 @@ console.log("proxmoxConfig",proxmoxConfig)
       const mksTicketDetails = await callPyvmomiService('POST', `/vm/${vmExternalId}/console`, targetHypervisor, { vm_name: vmNameForConsole });
       res.json({
         type: 'vsphere',
-        connectionDetails: { ...mksTicketDetails, vmName: vmNameForConsole } // PyVmomi response should include ticket, host, port, sslThumbprint
+        connectionDetails: { ...mksTicketDetails, vmName: vmNameForConsole } 
       });
     }
   } catch (error) {
     console.error(`Error getting console for VM ${vmExternalId}:`, error);
-    const errorDetails = getProxmoxError(error); // Adapt if error is from PyVmomi
+    const errorDetails = getProxmoxError(error); 
     res.status(errorDetails.code || 500).json({ error: 'Failed to get console access.', details: errorDetails.message });
   }
 });
-
 // --- WebSocket Proxy para Proxmox VNC ---
 ews.app.ws('/api/proxmox-console-ws', (ws, req) => {
   const { node, vmid, port: vncPort, vncticket, proxmoxApiHost, pveAuthCookie } = req.query; // Leer pveAuthCookie
@@ -1848,6 +1843,7 @@ app.get('/api/hypervisors', authenticate, async (req, res) => {
 
 // POST /api/hypervisors - Create new hypervisor
 app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
+  // 'password' del req.body será la contraseña de vSphere o la contraseña de Proxmox
   const { host, username, password, apiToken, tokenName, type, vsphere_subtype: clientVsphereSubtype } = req.body; 
 
   const validationErrors = [];
@@ -1895,9 +1891,9 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
           console.log(`Proxmox Add: Testing connection with API Token: ${tokenName}`);
           proxmoxConfig.tokenID = `${username}!${tokenName.trim()}`;
           proxmoxConfig.tokenSecret = apiToken;
-      } else if (proxmoxPassword) {
+      } else if (password) { // Si no hay token API, 'password' del body es la contraseña de Proxmox
           console.log(`Proxmox Add: Testing connection with Proxmox Password for user ${username}`);
-          proxmoxConfig.password = proxmoxPassword;
+          proxmoxConfig.password = password; // Usar el campo 'password' del body
       } else {
         // No se proporcionaron credenciales válidas para la prueba de conexión Proxmox
         // La conexión fallará y se guardará con estado 'error'
@@ -1941,11 +1937,11 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
             name, type,
             type === 'proxmox' ? `${cleanHost}:${(new URL(host.includes('://') ? host : `https://${host}`)).port || 8006}` : cleanHost, // Store Proxmox with port
             username, // username
-            (type === 'vsphere' ? password : apiToken), // api_token (secreto del token Proxmox o contraseña vSphere)
-            (type === 'proxmox' ? tokenName : null),    // token_name (solo Proxmox)
-            determinedVsphereSubtype,
-            status, last_sync,
-            (type === 'proxmox' ? proxmoxPassword : null) // proxmox_password
+            (type === 'vsphere' ? password : apiToken), // api_token (columna) guarda el secreto del token Proxmox o la contraseña vSphere
+            (type === 'proxmox' ? tokenName : null),    // token_name (columna) solo para Proxmox
+            determinedVsphereSubtype, // vsphere_subtype
+            status, last_sync, // status, last_sync
+            (type === 'proxmox' ? password : null) // proxmox_password (columna) guarda la contraseña de Proxmox del campo 'password' del body
         ]
     );
     const responseData = dbResult.rows[0];
@@ -2351,18 +2347,16 @@ app.put('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) => 
   const {
     name, host, username,
     // Para credenciales, el frontend podría enviar:
-    // - password (para vSphere o nueva contraseña Proxmox)
-    // - proxmoxPassword (específicamente para Proxmox, si se distingue en el frontend)
-    // - apiToken (nuevo secreto del token Proxmox)
-    // - tokenName (nuevo nombre del token Proxmox)
-    // Usaremos nombres más genéricos en el backend para las nuevas credenciales
-    new_password, // Podría ser la contraseña de vSphere o la nueva contraseña de Proxmox
-    new_proxmox_password, // Específicamente para la nueva contraseña de Proxmox
-    new_api_token,    // Nuevo secreto del token API de Proxmox
-    new_token_name    // Nuevo nombre del token API de Proxmox
+    // - new_password (para vSphere o nueva contraseña Proxmox)
+    // - new_proxmox_password (ya no se usa, se usa new_password para Proxmox)
+    // - new_api_token (nuevo secreto del token Proxmox)
+    // - new_token_name (nuevo nombre del token Proxmox)
+    new_password, 
+    new_api_token,    
+    new_token_name    
   } = req.body;
 
-  if (!name && !host && !username && !new_password && !new_proxmox_password && !new_api_token && !new_token_name) {
+  if (!name && !host && !username && !new_password && !new_api_token && !new_token_name) {
     return res.status(400).json({ error: 'No fields provided for update.' });
   }
 
@@ -2394,23 +2388,21 @@ app.put('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) => 
     let last_sync = currentHypervisor.current_last_sync;
 
     // Si se proporcionan nuevas credenciales, probarlas
-    // El frontend debe enviar new_password para vSphere,
-    // y para Proxmox: new_proxmox_password y/o (new_api_token + new_token_name)
     const hasNewVSpherePassword = currentHypervisor.type === 'vsphere' && new_password;
-    const hasNewProxmoxPassword = currentHypervisor.type === 'proxmox' && new_proxmox_password;
+    const hasNewProxmoxPassword = currentHypervisor.type === 'proxmox' && new_password; // 'new_password' es la nueva contraseña de Proxmox
     const hasNewProxmoxApiToken = currentHypervisor.type === 'proxmox' && new_api_token && new_token_name;
 
     if (hasNewVSpherePassword || hasNewProxmoxPassword || hasNewProxmoxApiToken) {
       console.log(`Attempting to verify new credentials for hypervisor ${id} of type ${currentHypervisor.type}`);
       
-      const testHypervisorData = { // Usar datos finales para la prueba de conexión
+      const testHypervisorData = { 
         host: finalHost,
         username: finalUsername,
       };
 
       try {
         if (currentHypervisor.type === 'proxmox') {
-          const [dbHost, dbPortStr] = finalHost.split(':'); // Usar finalHost
+          const [dbHost, dbPortStr] = finalHost.split(':'); 
           const port = dbPortStr ? parseInt(dbPortStr, 10) : 8006;
           const cleanHost = dbHost;
           const proxmoxConfig = {
@@ -2425,10 +2417,8 @@ app.put('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) => 
             proxmoxConfig.tokenSecret = new_api_token;
           } else if (hasNewProxmoxPassword) {
             console.log(`Proxmox Update: Testing with new Proxmox Password for user ${finalUsername}`);
-            proxmoxConfig.password = new_proxmox_password;
+            proxmoxConfig.password = new_password; // Usar new_password para Proxmox
           } else {
-            // No hay nuevas credenciales Proxmox para probar, usar las existentes si es necesario para otras actualizaciones
-            // Esto no debería ocurrir si el if anterior es true, pero es un salvaguarda.
              console.log(`Proxmox Update: No new Proxmox credentials provided for test, using existing if needed.`);
              if (currentHypervisor.current_token_name && currentHypervisor.current_api_token) {
                 proxmoxConfig.tokenID = `${finalUsername}!${currentHypervisor.current_token_name}`;
@@ -2438,28 +2428,23 @@ app.put('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) => 
              }
           }
           const proxmox = proxmoxApi(proxmoxConfig);
-          await proxmox.version.$get(); // Prueba de conexión
+          await proxmox.version.$get(); 
 
           // Si la prueba es exitosa, actualizar las credenciales que se guardarán
           if (hasNewProxmoxApiToken) {
-            finalApiToken = new_api_token;
+            finalApiToken = new_api_token; // Este es el secreto del token
             finalTokenName = new_token_name.trim();
           }
           if (hasNewProxmoxPassword) {
-            finalProxmoxPassword = new_proxmox_password;
+            finalProxmoxPassword = new_password; // Guardar new_password como la contraseña de Proxmox
           }
-          // Si se actualiza el token, se podría considerar limpiar la contraseña de Proxmox y viceversa,
-          // o permitir que ambos coexistan. Actualmente, ambos pueden coexistir.
 
         } else if (currentHypervisor.type === 'vsphere') {
-          if (hasNewVSpherePassword) { // Solo probar si se proporciona una nueva contraseña para vSphere
+          if (hasNewVSpherePassword) { 
             console.log(`vSphere Update: Testing with new Password for user ${finalUsername}`);
-            // Para vSphere, la contraseña se almacena en 'api_token' en la BD
-            // El microservicio espera 'api_token' como la contraseña
             await callPyvmomiService('POST', '/connect', { host: finalHost, username: finalUsername, api_token: new_password }, {});
             finalApiToken = new_password; // Actualizar el campo que almacena la contraseña de vSphere
           } else {
-            // No se proporcionó nueva contraseña para vSphere, no es necesario probar la conexión de nuevo si solo cambian otros campos.
              console.log(`vSphere Update: No new password provided, connection test skipped.`);
           }
         }
@@ -2468,12 +2453,6 @@ app.put('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) => 
         console.log(`New credentials for hypervisor ${id} verified successfully. Status set to connected.`);
       } catch (connectionError) {
         console.error(`Failed to verify new credentials for hypervisor ${id}:`, connectionError.message);
-        // No cambiar el estado a 'error' aquí si la conexión falla con nuevas credenciales,
-        // simplemente no actualizar las credenciales y mantener el estado anterior.
-        // El usuario debe poder cambiar el host/nombre sin que las credenciales se invaliden si no las cambia.
-        // Sin embargo, si el objetivo es *forzar* la validez de las nuevas credenciales, entonces sí se debería retornar error.
-        // Por ahora, si la prueba falla, no actualizamos las credenciales y mantenemos el estado.
-        // Opcional: retornar un error específico al cliente.
         return res.status(400).json({ error: 'Failed to connect with new credentials.', details: connectionError.message });
       }
     }
@@ -2485,17 +2464,16 @@ app.put('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) => 
                api_token = $4, token_name = $5, proxmox_password = $6, 
                status = $7, last_sync = $8, updated_at = now() 
            WHERE id = $9 
-           RETURNING id, name, type, host, username, status, last_sync, vsphere_subtype, created_at, updated_at, proxmox_password, token_name`, // Devolver más campos
+           RETURNING id, name, type, host, username, status, last_sync, vsphere_subtype, created_at, updated_at, proxmox_password, token_name`,
           [finalName, finalHost, finalUsername, 
-           (currentHypervisor.type === 'vsphere' ? finalApiToken : (hasNewProxmoxApiToken ? new_api_token : finalApiToken)), // api_token para vSphere pass o Proxmox token secret
-           (currentHypervisor.type === 'proxmox' ? (hasNewProxmoxApiToken ? new_token_name.trim() : finalTokenName) : null), // token_name para Proxmox
-           (currentHypervisor.type === 'proxmox' ? (hasNewProxmoxPassword ? new_proxmox_password : finalProxmoxPassword) : null), // proxmox_password
+           (currentHypervisor.type === 'vsphere' ? finalApiToken : (hasNewProxmoxApiToken ? new_api_token : finalApiToken)), 
+           (currentHypervisor.type === 'proxmox' ? (hasNewProxmoxApiToken ? new_token_name.trim() : finalTokenName) : null),    
+           (currentHypervisor.type === 'proxmox' ? (hasNewProxmoxPassword ? new_password : finalProxmoxPassword) : null), 
            status, last_sync, id]
       );
 
       if (result.rows.length > 0) {
         const updatedData = result.rows[0];
-        // Asegurarse de no devolver el secreto del token o contraseñas
         delete updatedData.api_token; 
         delete updatedData.proxmox_password;
         res.json(updatedData);
@@ -2507,7 +2485,6 @@ app.put('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) => 
       res.status(500).json({ error: 'Failed to update hypervisor' });
   }
 });
-
 
 // DELETE /api/hypervisors/:id - Delete a hypervisor
 app.delete('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) => {
