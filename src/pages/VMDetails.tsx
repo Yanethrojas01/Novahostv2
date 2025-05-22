@@ -156,6 +156,16 @@ export default function VMConsoleView({ consoleDetails, onClose, onError }: VMCo
     };
   }, [consoleDetails, onError]); // Dependencies for useEffect
 
+  // Add a guard clause to ensure consoleDetails and its nested properties are available
+  if (!consoleDetails || !consoleDetails.connectionDetails) {
+    // You can return null or a loading indicator
+    return (
+      <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-[100]">
+        <div className="bg-slate-800 p-6 rounded-lg text-white">Cargando detalles de la consola...</div>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-[100]">
       <motion.div
