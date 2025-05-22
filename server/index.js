@@ -836,7 +836,7 @@ app.post('/api/vms/:id/console', authenticate, async (req, res) => {
     // Step 1: Find the VM's Hypervisor and basic info
     // Similar logic to /action or /details route to find the VM
     const { rows: connectedHypervisors } = await pool.query(
-      `SELECT id, type, host, username, api_token, token_name, name as hypervisor_name 
+      `SELECT id, type, host, username, api_token, password, token_name, name as hypervisor_name 
        FROM hypervisors WHERE status = 'connected'`
     );
 
