@@ -491,7 +491,7 @@ app.post('/api/vms', authenticate, async (req, res) => {
 
   try {
     const { rows: [hypervisor] } = await pool.query(
-      `SELECT id, type, host, username, api_token, token_name, status, name as hypervisor_name, vsphere_subtype
+      `SELECT id, type, host, username, password, api_token, token_name, status, name as hypervisor_name, vsphere_subtype
        FROM hypervisors WHERE id = $1`,
       [params.hypervisorId]
     );
@@ -682,7 +682,7 @@ app.post('/api/vms/:id/action', authenticate, async (req, res) => {
     // For simplicity, we'll iterate through connected hypervisors and try to find the VM.
     // A more robust way is to query `virtual_machines` table by `hypervisor_vm_id` to directly get its hypervisor.
     const { rows: connectedHypervisors } = await pool.query(
-      `SELECT id, type, host, username, api_token, token_name, name as hypervisor_name, vsphere_subtype
+      `SELECT id, type, host, username, password, api_token, token_name, name as hypervisor_name, vsphere_subtype
        FROM hypervisors WHERE status = 'connected'`
     );
 
@@ -962,7 +962,7 @@ app.get('/api/vms', authenticate, async (req, res) => {
 
   try {
     const { rows: connectedHypervisors } = await pool.query(
-      `SELECT id, type, host, username, api_token, token_name, name as hypervisor_name, vsphere_subtype
+      `SELECT id, type, host, username, password, api_token, token_name, name as hypervisor_name, vsphere_subtype
        FROM hypervisors WHERE status = 'connected'`
     );
     console.log(`Found ${connectedHypervisors.length} connected hypervisors.`);
@@ -1078,7 +1078,7 @@ app.get('/api/vms/:id', authenticate, async (req, res) => {
 
     // --- Step 2: Find the VM on a connected hypervisor and get live data ---
     const { rows: connectedHypervisors } = await pool.query(
-      `SELECT id, type, host, username, api_token, token_name, name as hypervisor_name, vsphere_subtype, status
+      `SELECT id, type, host, username, password, api_token, token_name, name as hypervisor_name, vsphere_subtype, status
        FROM hypervisors WHERE status = 'connected'`
     );
 
@@ -1304,7 +1304,7 @@ app.get('/api/vms/:id/metrics', authenticate, async (req, res) => {
   try {
     // --- Step 1: Find the VM's Hypervisor (Iterate or DB lookup) ---
     const { rows: connectedHypervisors } = await pool.query(
-      `SELECT id, type, host, username, api_token, token_name, name as hypervisor_name, vsphere_subtype
+      `SELECT id, type, host, username, password, api_token, token_name, name as hypervisor_name, vsphere_subtype
        FROM hypervisors WHERE status = 'connected'`
     );
     let vmFoundOnHypervisor = false;
