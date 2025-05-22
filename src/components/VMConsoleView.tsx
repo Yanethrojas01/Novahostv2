@@ -104,7 +104,7 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
       const connectionDetails = consoleConnectionDetails as ProxmoxConnectionDetails;
       const { host, port, ticket, node, vmid } = connectionDetails;
       const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      const rfbUrl = `${protocol}://${host}:${port}`;
+      const rfbUrl = `${protocol}://${host}:8006/api2/json/nodes/${node}/qemu/${vmid}/vncwebsocket?port=${port}&vncticket=${encodeURIComponent(ticket)}`;
 
       console.log(`Proxmox VNC: Connecting to ${rfbUrl} for VM ${vmid} on node ${node}`);
       setConnectionStatus('Connecting to VNC...');
