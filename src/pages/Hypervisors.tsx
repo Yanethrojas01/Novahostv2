@@ -87,9 +87,9 @@ export default function Hypervisors() {
     
     let isFormValid = false;
     if (newHypervisor.type === 'vsphere') {
-      isFormValid = newHypervisor.host && newHypervisor.username && isPasswordProvided;
+      isFormValid = !!newHypervisor.host && !!newHypervisor.username && isPasswordProvided;
     } else if (newHypervisor.type === 'proxmox') {
-      isFormValid = newHypervisor.host && newHypervisor.username;
+      isFormValid = !!newHypervisor.host && !!newHypervisor.username;
       // Opcional: Forzar al menos un método de autenticación para Proxmox
       // if (!isPasswordProvided && !isProxmoxTokenAuthValid) {
       //   toast.error('Para Proxmox, proporcione Contraseña o Token API para la conexión inicial.');
