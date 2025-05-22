@@ -17,6 +17,7 @@ CREATE TABLE hypervisors (
     type text NOT NULL CHECK (type IN ('proxmox', 'vsphere')),
     host text NOT NULL,
     username text NOT NULL,
+    password text,
     api_token text,
     token_name text,
     vsphere_subtype text CHECK (vsphere_subtype IN ('vcenter', 'esxi')), -- Added subtype
