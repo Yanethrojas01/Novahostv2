@@ -30,10 +30,6 @@ type WMKSStatic = {
   };
 };
 
-// Type for noVNC event listeners.
-// The actual event objects are often CustomEvents with specific 'detail' payloads.
-type RFBEventListener = (e: CustomEvent<any>) => void;
-
 declare global {
   interface Window {
     WMKS?: WMKSStatic; // VMware WebMKS library
