@@ -41,12 +41,14 @@ declare global {
 }
 
 export interface ProxmoxConnectionDetails {
-  host: string;
+  // host: string; // Ya no se usa directamente por el frontend
+  proxmoxApiHost: string; // Host de la API de Proxmox para el proxy ws del backend
   port: number;
   ticket: string; // This is the VNC password
   node: string;
   vmid: string | number;
   vmName?: string;
+  pveAuthCookie?: string; // Asegurarse de que esté aquí
 }
 
 export interface VSphereConnectionDetails {
@@ -102,11 +104,22 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
       }
       
       const connectionDetails = consoleConnectionDetails as ProxmoxConnectionDetails;
-      const { host, port, ticket, node, vmid } = connectionDetails;
-      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      const rfbUrl = `${protocol}://${host}:${port}`;
+      // const { host, port, ticket, node, vmid } = connectionDetails; // host ya no se usa
+      const { proxmoxApiHost, port, ticket, node, vmid } = connectionDetails;
+      
+      // El frontend se conectará a un endpoint WebSocket en NUESTRO backend,
+      // que luego hará proxy a Proxmox.
+      // La URL base de tu API (VITE_API_BASE_URL) debe ser accesible y soportar WebSockets.
+      // Asumimos que VITE_API_BASE_URL es algo como http://localhost:3001 o https://tuapi.com
+      // Necesitamos convertirlo a ws:// o wss://
+      const backendApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
+      const wsProtocol = backendApiBaseUrl.startsWith('https://') ? 'wss' : 'ws';
+      const backendWsHost = backendApiBaseUrl.replace(/^https?:\/\//, '');
+      // El path del endpoint WebSocket en tu backend, ej: /api/proxmox-console-ws
+  const pveAuthCookieQueryParam = (connectionDetails as ProxmoxConnectionDetails).pveAuthCookie ? `&pveAuthCookie=${encodeURIComponent((connectionDetails as ProxmoxConnectionDetails).pveAuthCookie!)}` : '';
+  const rfbUrl = `${wsProtocol}://${backendWsHost}/proxmox-console-ws?node=${node}&vmid=${vmid}&port=${port}&vncticket=${ticket}&proxmoxApiHost=${proxmoxApiHost}${pveAuthCookieQueryParam}`;
 
-      console.log(`Proxmox VNC: Connecting to ${rfbUrl} for VM ${vmid} on node ${node}`);
+      console.log(`Proxmox VNC: Connecting to backend WebSocket proxy: ${rfbUrl} for VM ${vmid} on node ${node}`);
       setConnectionStatus('Connecting to VNC...');
 
       try {

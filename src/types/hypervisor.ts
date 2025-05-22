@@ -1,4 +1,3 @@
-
 // Import detail types if they are defined elsewhere, otherwise define inline
 import { VMTemplate, VMSpecs } from './vm'; // Assuming VMTemplate is defined in './vm', added VMSpecs
 
@@ -16,6 +15,7 @@ export interface Hypervisor {
   created_at?: string; // Added from DB (string from JSON)
   vsphere_subtype?: 'vcenter' | 'esxi'; // Added subtype
   updated_at?: string; // Added from DB (string from JSON)
+  proxmox_password?: string | null; // Para almacenar la contraseña de Proxmox (debería estar encriptada en BD)
   // Optional details fetched for the details page
   nodes?: NodeResource[];
   storage?: StorageResource[];
@@ -30,7 +30,7 @@ export interface HypervisorCredentials {
   host: string;
   port?: number;
   username: string;
-  password?: string; // Make password optional if using token
+  password?: string; // Contraseña genérica (para vSphere o Proxmox)
   apiToken?: string;
   tokenName?: string; // Added for Proxmox API Token ID (user@realm!tokenName)
 }

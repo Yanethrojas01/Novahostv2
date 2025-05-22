@@ -127,9 +127,15 @@ export default function VMDetails() {
       setConsoleDetails(data);
       setShowConsoleView(true); // Show the console view modal
       console.log("Console Details:", data);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error fetching console details:", error);
-      toast.error(`Failed to open console: ${error.message}`);
+      let message = "Unknown error";
+      if (error instanceof Error) {
+        message = error.message;
+      } else if (typeof error === "object" && error !== null && "message" in error) {
+        message = String((error as { message: unknown }).message);
+      }
+      toast.error(`Failed to open console: ${message}`);
       setConsoleDetails(null);
       setShowConsoleView(false);
     } finally {
