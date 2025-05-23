@@ -1033,8 +1033,17 @@ app.post('/api/vms/:id/console', authenticate, async (req, res) => {
 ews.app.ws('/api/proxmox-console-ws', (ws, req) => {
   const { node, vmid, port: vncPort, vncticket, proxmoxApiHost, pveAuthCookie, csrfPreventionToken } = req.query;
 
-  if (!node || !vmid || !vncPort || !vncticket || !proxmoxApiHost || !pveAuthCookie || !csrfPreventionToken) {
-    console.error('Proxy WS: Faltan parámetros en query para la consola Proxmox (incluyendo pveAuthCookie y csrfPreventionToken):', req.query);
+  const missingParams = [];
+  if (!node) missingParams.push('node');
+  if (!vmid) missingParams.push('vmid');
+  if (!vncPort) missingParams.push('port');
+  if (!vncticket) missingParams.push('vncticket');
+  if (!proxmoxApiHost) missingParams.push('proxmoxApiHost');
+  if (!pveAuthCookie || pveAuthCookie === "undefined" || pveAuthCookie.trim() === "") missingParams.push('pveAuthCookie');
+  if (!csrfPreventionToken || csrfPreventionToken === "undefined" || csrfPreventionToken.trim() === "") missingParams.push('csrfPreventionToken');
+
+  if (missingParams.length > 0) {
+    console.error(`Proxy WS: Faltan parámetros en query para la consola Proxmox: ${missingParams.join(', ')}. Query:`, req.query);
     ws.close(1008, 'Faltan parámetros requeridos, incluyendo pveAuthCookie y csrfPreventionToken');
     return;
   }
@@ -1047,7 +1056,7 @@ ews.app.ws('/api/proxmox-console-ws', (ws, req) => {
   console.log(`Proxy WS: Intentando conectar a Proxmox target: ${proxmoxTargetUrl}`);
 
   const cookieParts = [];
-  if (pveAuthCookie && pveAuthCookie !== "undefined") {
+  if (pveAuthCookie && pveAuthCookie !== "undefined" && pveAuthCookie.trim() !== "") { // Check trim for pveAuthCookie as well
     cookieParts.push(`PVEAuthCookie=${pveAuthCookie}`); // Usar directamente desde req.query
   }
 
