@@ -49,6 +49,7 @@ export interface ProxmoxConnectionDetails {
   vmid: string | number;
   vmName?: string;
   pveAuthCookie?: string; // Asegurarse de que esté aquí
+  csrfPreventionToken?: string; // Añadir CSRF token
 }
 
 export interface VSphereConnectionDetails {
@@ -117,8 +118,12 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
       const backendWsHost = backendApiBaseUrl.replace(/^https?:\/\//, '');
       // El path del endpoint WebSocket en tu backend, ej: /api/proxmox-console-ws
   const pveAuthCookieQueryParam = (connectionDetails as ProxmoxConnectionDetails).pveAuthCookie ? `&pveAuthCookie=${encodeURIComponent((connectionDetails as ProxmoxConnectionDetails).pveAuthCookie!)}` : '';
-  const rfbUrl = `${wsProtocol}://${backendWsHost}/proxmox-console-ws?node=${node}&vmid=${vmid}&port=${port}&vncticket=${ticket}&proxmoxApiHost=${proxmoxApiHost}${pveAuthCookieQueryParam}`;
-
+  const csrfTokenQueryParam = (connectionDetails as ProxmoxConnectionDetails).csrfPreventionToken ? `&csrfPreventionToken=${encodeURIComponent((connectionDetails as ProxmoxConnectionDetails).csrfPreventionToken!)}` : '';
+  
+  const rfbUrl = `${wsProtocol}://${backendWsHost}/proxmox-console-ws?node=${node}&vmid=${vmid}&port=${port}&vncticket=${encodeURIComponent(ticket)}&proxmoxApiHost=${proxmoxApiHost}${pveAuthCookieQueryParam}${csrfTokenQueryParam}`;
+  // Note: vncticket is also URI encoded now, as it can contain special characters.
+  // proxmoxApiHost is assumed to be a simple hostname or IP, if it can contain special chars, it should also be encoded.
+  
       console.log(`Proxmox VNC: Connecting to backend WebSocket proxy: ${rfbUrl} for VM ${vmid} on node ${node}`);
       setConnectionStatus('Connecting to VNC...');
 

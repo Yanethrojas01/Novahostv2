@@ -79,28 +79,21 @@ export default function Hypervisors() {
   };
 
   const handleAddNew = async () => {
-    const isPasswordProvided = !!newHypervisor.password && newHypervisor.password.length > 0;
-    const isProxmoxTokenAuthValid =
-      newHypervisor.type === 'proxmox' &&
-      !!newHypervisor.apiToken && newHypervisor.apiToken.length > 0 &&
-      !!newHypervisor.tokenName && newHypervisor.tokenName.length > 0;
-    
+    // Validation logic for enabling the button
     let isFormValid = false;
-    if (newHypervisor.type === 'vsphere') {
-      isFormValid = !!newHypervisor.host && !!newHypervisor.username && isPasswordProvided;
-    } else if (newHypervisor.type === 'proxmox') {
-      isFormValid = !!newHypervisor.host && !!newHypervisor.username;
-      // Opcional: Forzar al menos un método de autenticación para Proxmox
-      // if (!isPasswordProvided && !isProxmoxTokenAuthValid) {
-      //   toast.error('Para Proxmox, proporcione Contraseña o Token API para la conexión inicial.');
-      //   isFormValid = false; 
-      // }
+    if (newHypervisor.type === 'proxmox') {
+      isFormValid = !!newHypervisor.host && !!newHypervisor.username &&
+                    (!!newHypervisor.password || (!!newHypervisor.apiToken && !!newHypervisor.tokenName));
+    } else if (newHypervisor.type === 'vsphere') {
+      isFormValid = !!newHypervisor.host && !!newHypervisor.username && !!newHypervisor.password;
     }
 
     if (isFormValid) {
-      const payload: HypervisorCredentials = { ...newHypervisor };
-      console.log('Payload to send:', payload); 
-      setIsLoading(true); 
+      // Clear password if using token auth for security (optional, backend should prioritize token anyway)
+      // const payload = isTokenAuthValid ? { ...newHypervisor, password: '' } : newHypervisor; // Removed: send all fields as entered
+      const payload = newHypervisor;
+      console.log('Payload to send:', payload); // Debugging line
+      setIsLoading(true); // Indicate activity
       try {
         const response = await fetch(`${API_BASE_URL}/hypervisors`, {
           method: 'POST',
@@ -142,24 +135,25 @@ export default function Hypervisors() {
         setIsLoading(false); 
       }
     } else {
-      if (newHypervisor.type === 'vsphere') {
-        toast.error('Para vSphere, por favor complete Host, Usuario y Contraseña.');
-      } else { // Proxmox
-        toast.error('Para Proxmox, por favor complete Host y Usuario. Contraseña y/o Token API son opcionales pero recomendados para funcionalidad completa.');
+      let errorMessage = 'Por favor, rellena todos los campos requeridos.';
+      if (newHypervisor.type === 'proxmox') {
+        errorMessage = 'Para Proxmox, rellena Host, Usuario y (Contraseña O (Token API + Nombre del Token)).';
+      } else if (newHypervisor.type === 'vsphere') {
+        errorMessage = 'Para vSphere, rellena Host, Usuario y Contraseña.';
       }
+      toast.error(errorMessage);
     }
   };
 
   const handleRefresh = () => {
     fetchHypervisors();
   };
+  // Determine if the connect button should be enabled
+  const isProxmoxAuthReady = newHypervisor.type === 'proxmox' && (!!newHypervisor.password || (!!newHypervisor.apiToken && !!newHypervisor.tokenName));
+  const isVSphereAuthReady = newHypervisor.type === 'vsphere' && !!newHypervisor.password;
+  const isConnectButtonEnabled = !!newHypervisor.host && !!newHypervisor.username && (isProxmoxAuthReady || isVSphereAuthReady);
 
-  const isConnectButtonEnabled =
-    newHypervisor.host && newHypervisor.username &&
-    ( (newHypervisor.type === 'vsphere' && !!newHypervisor.password) ||
-      (newHypervisor.type === 'proxmox') 
-    );
-
+  // Callback function for HypervisorCard to update state
   const handleConnectionChange = (updatedHypervisor: Hypervisor) => {
     setHypervisors(prevHypervisors =>
       prevHypervisors.map(h =>
@@ -268,21 +262,22 @@ export default function Hypervisors() {
               />
             </div>
 
+            {/* Password Field - Common but with different implications */}
+            <div>
+              <label className="form-label">Contraseña</label>
+              <input
+                type="password"
+                className="form-input"
+                value={newHypervisor.password || ''} // Ensure it's a controlled component
+                onChange={(e) => setNewHypervisor(prev => ({ ...prev, password: e.target.value }))}
+              />
+              {newHypervisor.type === 'proxmox' && (
+                <small className="text-xs text-slate-500 dark:text-slate-400"> (Opcional para Proxmox si usa Token API)</small>
+              )}
+            </div>
+
             {newHypervisor.type === 'proxmox' && (
               <>
-                <div>
-                  <label className="form-label">Contraseña</label>
-                  <input
-                    type="password"
-                    className="form-input"
-                    placeholder="(Para login/consola)"
-                    value={newHypervisor.password} 
-                    onChange={(e) => setNewHypervisor(prev => ({ ...prev, password: e.target.value }))}
-                  />
-                </div>
-                <div className="sm:col-span-2 my-1 text-sm text-slate-500 dark:text-slate-400">
-                  Y/O Token API (para operaciones generales):
-                </div>
                 <div className="sm:col-span-1">
                   <label className="form-label">Nombre del Token </label>
                   <input
