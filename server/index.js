@@ -822,7 +822,6 @@ app.post('/api/vms/:id/action', authenticate, async (req, res) => {
   }
 });
 
-
 // Helper function to extract IP addresses from Proxmox QEMU agent response
 function extractIpAddressesFromAgent(agentInterfaces) {
   const ips = [];
@@ -1277,6 +1276,173 @@ app.get('/api/vms/:id/metrics', authenticate, async (req, res) => {
 });
 
 
+// POST /api/vms/:vmExternalId/console - Get console information for a VM
+app.post('/api/vms/:vmExternalId/console', authenticate, async (req, res) => {
+  const { vmExternalId } = req.params;
+  // const { hypervisorId } = req.body; // Optional: client can specify hypervisor
+
+  console.log(`--- POST /api/vms/${vmExternalId}/console ---`);
+
+  let targetHypervisor = null;
+  let targetNode = null; // For Proxmox
+
+  try {
+    // Step 1: Find the VM's Hypervisor by querying the virtual_machines table first
+    const { rows: [vmWithHypervisorDetails] } = await pool.query(
+      `SELECT
+         vm.hypervisor_vm_id,
+         h.id as hypervisor_id, h.type as hypervisor_type, h.host as hypervisor_host,
+         h.username as hypervisor_username, h.password as hypervisor_password,
+         h.api_token as hypervisor_api_token, h.token_name as hypervisor_token_name,
+         h.status as hypervisor_status, h.vsphere_subtype
+       FROM virtual_machines vm
+       JOIN hypervisors h ON vm.hypervisor_id = h.id
+       WHERE vm.hypervisor_vm_id = $1`,
+      [vmExternalId]
+    );
+
+    if (vmWithHypervisorDetails) {
+      if (vmWithHypervisorDetails.hypervisor_status !== 'connected') {
+        return res.status(409).json({ error: `Hypervisor for VM ${vmExternalId} is not connected.` });
+      }
+      targetHypervisor = { // Reconstruct hypervisor object for API client usage
+        id: vmWithHypervisorDetails.hypervisor_id,
+        type: vmWithHypervisorDetails.hypervisor_type,
+        host: vmWithHypervisorDetails.hypervisor_host,
+        username: vmWithHypervisorDetails.hypervisor_username,
+        password: vmWithHypervisorDetails.hypervisor_password, // Asegúrate que esta columna exista en tu tabla hypervisors
+        api_token: vmWithHypervisorDetails.hypervisor_api_token,
+        token_name: vmWithHypervisorDetails.hypervisor_token_name,
+        vsphere_subtype: vmWithHypervisorDetails.vsphere_subtype,
+      };
+
+      if (targetHypervisor.type === 'proxmox') {
+        const proxClient = await getProxmoxClient(targetHypervisor.id);
+        const vmResources = await proxClient.cluster.resources.$get({ type: 'vm' });
+        const foundVmResource = vmResources.find(vmR => vmR.vmid.toString() === vmExternalId);
+        if (!foundVmResource) {
+          return res.status(404).json({ error: `Proxmox VM ${vmExternalId} found in DB but not live on hypervisor ${targetHypervisor.id}.` });
+        }
+        targetNode = foundVmResource.node;
+      }
+    } else {
+      // VM not in DB, try to find it on connected hypervisors by iterating
+      console.log(`Console: VM ${vmExternalId} not in DB, iterating connected hypervisors.`);
+      const { rows: connectedHypervisors } = await pool.query(
+        `SELECT id, type, host, username, password, api_token, token_name, status, vsphere_subtype
+         FROM hypervisors WHERE status = 'connected'`
+      );
+
+      for (const hypervisor of connectedHypervisors) {
+        if (hypervisor.type === 'proxmox') {
+          const proxClient = await getProxmoxClient(hypervisor.id);
+          try {
+            const vmResources = await proxClient.cluster.resources.$get({ type: 'vm' });
+            const foundVm = vmResources.find(vmR => vmR.vmid.toString() === vmExternalId);
+            if (foundVm) {
+              targetHypervisor = hypervisor;
+              targetNode = foundVm.node;
+              console.log(`Console: Found Proxmox VM ${vmExternalId} on node ${targetNode} of hypervisor ${hypervisor.id} via iteration.`);
+              break;
+            }
+          } catch (findError) {
+            console.warn(`Console: Error checking Proxmox hypervisor ${hypervisor.id} for VM ${vmExternalId}:`, findError.message);
+          }
+        } else if (hypervisor.type === 'vsphere') {
+          if (vmExternalId.length === 36 && vmExternalId.includes('-')) { // Basic UUID check
+            try {
+              // Attempt a lightweight check, e.g., get VM status, to confirm existence
+              // This assumes a /vm/:uuid/status endpoint in PyVmomi service
+              // For console, we might directly try to get console info if status check is too much
+              // For now, let's assume if it's a UUID and a vSphere hypervisor, we'll try with it.
+              // A more robust check would be to call a specific "check_vm_exists" endpoint in PyVmomi.
+              // For simplicity in this context, we'll assume it might exist.
+              // A better check would be to call a lightweight PyVmomi endpoint like /vm/:uuid/status
+              await callPyvmomiService('GET', `/vm/${vmExternalId}/status`, hypervisor); // Assuming this endpoint exists
+              targetHypervisor = hypervisor;
+              console.log(`Console: Found vSphere VM ${vmExternalId} on hypervisor ${hypervisor.id} via iteration and status check.`);
+              break;
+            } catch (vsphereFindError) {
+              // Log silently or with warn: console.warn(`Console: VM ${vmExternalId} not confirmed on vSphere ${hypervisor.id} during iteration: ${vsphereFindError.message}`);
+              // If status check fails (e.g. 404), it means VM is not on this vSphere hypervisor.
+            }
+          }
+        }
+      }
+    }
+
+    if (!targetHypervisor) {
+      return res.status(404).json({ error: `VM ${vmExternalId} not found or its hypervisor is not connected.` });
+    }
+
+    // Step 2: Get console details based on hypervisor type
+    if (targetHypervisor.type === 'proxmox') {
+      if (!targetNode) {
+        // This case should ideally be caught earlier if VM was found in DB
+        // but if iterating, we might need to re-fetch node if not already set.
+        const proxClient = await getProxmoxClient(targetHypervisor.id);
+        const vmResources = await proxClient.cluster.resources.$get({ type: 'vm' });
+        const foundVmResource = vmResources.find(vmR => vmR.vmid.toString() === vmExternalId);
+        if (!foundVmResource) {
+             return res.status(404).json({ error: `Proxmox VM ${vmExternalId} could not be located on a node for console.` });
+        }
+        targetNode = foundVmResource.node; // Ensure targetNode is set
+        // return res.status(500).json({ error: 'Proxmox node not identified for VM console.' });
+      }
+      const proxmox = await getProxmoxClient(targetHypervisor.id);
+      // For Proxmox, the vncproxy POST body is usually empty or can contain specific options.
+      // Sending an empty object {} is common.
+      const vncProxyData = await proxmox.nodes.$(targetNode).qemu.$(vmExternalId).vncproxy.$post({});
+      const { port: vncWebSocketPort, ticket: vncTicket } = vncProxyData;
+
+      // Construct the WSS URL. Proxmox vncproxy uses a different port than the API port (8006).
+      // The `vncWebSocketPort` is the correct one for the WSS connection.
+      // The host for WSS should be the same host as the Proxmox API, without the API port.
+      let wssHost = targetHypervisor.host.split(':')[0]; // Get hostname/IP part
+      if (targetHypervisor.host.includes('://')) {
+         wssHost = new URL(targetHypervisor.host).hostname;
+      }
+
+      // The path for Proxmox WSS VNC is typically just '/' or '/api2/json/vncwebsocket'
+      // The ticket is passed as a query parameter `vncticket` or `ticket`.
+      // Proxmox's own web UI uses a path like `/api2/json/nodes/${node}/qemu/${vmid}/vncwebsocket`
+      // but the `vncproxy` call often sets up a direct WebSocket proxy on a new port.
+      // The URL format `wss://${hypervisor.host}:${port}/api2/json/vncproxy?ticket=${ticket}` was from the original request.
+      // Let's use the simpler one that noVNC clients typically expect with `vncproxy`'s response:
+      const consoleUrl = `wss://${wssHost}:${vncWebSocketPort}/?vncticket=${encodeURIComponent(vncTicket)}`;
+      // Alternative if the above doesn't work with your noVNC client:
+      // const consoleUrl = `wss://${wssHost}:${vncWebSocketPort}/api2/json/nodes/${targetNode}/qemu/${vmExternalId}/vncwebsocket?port=${vncWebSocketPort}&vncticket=${encodeURIComponent(vncTicket)}`;
+      // However, the `vncproxy` call itself usually provides all necessary info for the simpler URL.
+
+      console.log(`Console: Proxmox VNC URL for ${vmExternalId}: ${consoleUrl}`);
+      res.json({ url: consoleUrl, type: 'vnc' });
+
+    } else if (targetHypervisor.type === 'vsphere') {
+      console.log(`Console: Requesting vSphere console for ${vmExternalId} via PyVmomi (Hypervisor ID: ${targetHypervisor.id})`);
+      // Ensure targetHypervisor has all necessary fields for callPyvmomiService (host, username, password)
+      // The body for the PyVmomi /console endpoint might be empty or contain specific options.
+      const pyvmomiConsoleInfo = await callPyvmomiService('POST', `/vm/${vmExternalId}/console`, targetHypervisor, {});
+      console.log(`Console: vSphere console info for ${vmExternalId}:`, pyvmomiConsoleInfo);
+      // Assuming pyvmomiConsoleInfo is { url: "...", type: "webmks", ticket: "..." }
+      res.json({ url: pyvmomiConsoleInfo.url, type: pyvmomiConsoleInfo.type, ticket: pyvmomiConsoleInfo.ticket });
+
+    } else {
+      res.status(400).json({ error: `Console not supported for hypervisor type: ${targetHypervisor.type}` });
+    }
+  } catch (error) {
+    console.error(`Error getting console for VM ${vmExternalId}:`, error);
+    const errorDetails = (targetHypervisor?.type === 'proxmox') ? getProxmoxError(error) : {
+        code: error.status || 500, message: error.message || 'Failed to get VM console.'
+    };
+    res.status(errorDetails.code || 500).json({
+      error: `Failed to get console for VM ${vmExternalId}.`,
+      details: errorDetails.message,
+      suggestion: errorDetails.suggestion
+    });
+  }
+});
+
+
 // Helper function to get authenticated proxmox client (kept for Proxmox logic)
 async function getProxmoxClient(hypervisorId) {
   const { rows: [hypervisor] } = await pool.query(
@@ -1456,6 +1622,8 @@ app.get('/api/hypervisors/:id/storage', authenticate, async (req, res) => {
     res.status(500).json({ error: 'Failed to retrieve storage', details: error.message });
   }
 });
+
+
 
 // Helper function to fetch VM Templates from vSphere (now via PyVmomi)
 async function fetchVSphereVMTemplates(hypervisor) { // Pass full hypervisor object
@@ -2455,7 +2623,7 @@ app.get('/api/stats/vm-creation-count', authenticate, async (req, res) => {
 
     // 2. Fetch VMs from Connected Hypervisors
     const { rows: connectedHypervisors } = await pool.query(
-      `SELECT id, type, host, username, api_token, token_name, name as hypervisor_name 
+      `SELECT id, type, host, username, password, api_token, token_name, name as hypervisor_name 
        FROM hypervisors WHERE status = 'connected'`
     );
 

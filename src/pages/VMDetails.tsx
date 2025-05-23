@@ -14,35 +14,33 @@ import {
   NetworkIcon,
   Tag,
   Ticket,
+  Monitor as MonitorIcon, // Renamed to avoid conflict if VMConsole uses Monitor
   Users,
-  
   ArrowLeft, // Importar ArrowLeft
-} from "lucide-react"; // Added Ticket
+} from "lucide-react"; // Added Ticket and MonitorIcon
 import type { VM, VMMetrics } from "../types/vm"; // Use the correct VM type and import VMMetrics
 import { formatBytes } from "../utils/formatters"; // Helper function to format bytes (create this file if needed)
 import { toast } from "react-hot-toast";
 import { useAuth } from "../hooks/useAuth";
+import VMConsole from '../components/VMConsole'; // Import the VMConsole component
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL; // Read from .env
 
 export default function VMDetails() {
-  const { id } = useParams();
+  const { id } = useParams(); // This 'id' is the hypervisor_vm_id
   const [vm, setVM] = useState<VM | null>(null); // Use VM type
   const [loading, setLoading] = useState(true);
   const [metrics, setMetrics] = useState<VMMetrics | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const { token: authToken } = useAuth(); // Get token from context
-  
-
 
   useEffect(() => {
     const fetchVM = async () => {
       setLoading(true);
       try {
-        //const token = localStorage.getItem('authToken'); // Recuperar token
         const response = await fetch(`${API_BASE_URL}/vms/${id}`, {
           headers: {
-            ...(authToken && { Authorization: `Bearer ${authToken}` }), // Usar token real
+            ...(authToken && { Authorization: `Bearer ${authToken}` }),
           },
         });
         if (!response.ok) {
@@ -72,14 +70,12 @@ export default function VMDetails() {
     const fetchMetrics = async () => {
       setMetricsLoading(true);
       try {
-        //const token = localStorage.getItem('authToken');
         const response = await fetch(`${API_BASE_URL}/vms/${id}/metrics`, {
           headers: {
             ...(authToken && { Authorization: `Bearer ${authToken}` }),
           },
         });
         if (!response.ok) {
-          // Don't toast every time, maybe just log or show a subtle indicator
           console.error(`Metrics fetch failed: ${response.status}`);
           setMetrics(null); // Clear metrics on error
         } else {
@@ -99,8 +95,6 @@ export default function VMDetails() {
 
     return () => clearInterval(intervalId); // Cleanup interval on unmount or when VM/status changes
   }, [id, vm, vm?.status, authToken]); // Re-run if VM data or status changes
-
- 
 
   if (loading) {
     return (
@@ -128,12 +122,10 @@ export default function VMDetails() {
     const d = Math.floor(seconds / (3600 * 24));
     const h = Math.floor((seconds % (3600 * 24)) / 3600);
     const m = Math.floor((seconds % 3600) / 60);
-    // const s = Math.floor(seconds % 60);
     let str = "";
     if (d > 0) str += `${d}d `;
-    if (h > 0 || d > 0) str += `${h}h `; // Show hours if days > 0
-    if (m > 0 || h > 0 || d > 0) str += `${m}m`; // Show minutes if hours > 0
-    // if (s > 0) str += `${s}s`;
+    if (h > 0 || d > 0) str += `${h}h `;
+    if (m > 0 || h > 0 || d > 0) str += `${m}m`;
     return str.trim() || "0s";
   };
 
@@ -162,14 +154,13 @@ export default function VMDetails() {
                     ? "bg-success-100 text-success-800 dark:bg-success-900 dark:text-success-200"
                     : vm.status === "stopped"
                     ? "bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200"
-                    : "bg-warning-100 text-warning-800 dark:bg-warning-900 dark:text-warning-200" // Example for other statuses
+                    : "bg-warning-100 text-warning-800 dark:bg-warning-900 dark:text-warning-200"
                 }`}
               >
                 <Power className="w-4 h-4 mr-1" />
                 {vm.status.charAt(0).toUpperCase() + vm.status.slice(1)}
               </span>
-           
-            </div> 
+            </div>
           </div>
         </div>
 
@@ -231,7 +222,6 @@ export default function VMDetails() {
               Información Adicional
             </h3>
             <div className="space-y-3">
-              {/* Hypervisor Type */}
               {vm.hypervisorType && (
                 <div className="flex items-start space-x-2">
                   <ServerCog className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" />
@@ -245,7 +235,6 @@ export default function VMDetails() {
                   </div>
                 </div>
               )}
-              {/* Node */}
               {vm.nodeName && (
                 <div className="flex items-start space-x-2">
                   <NetworkIcon className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" />
@@ -259,11 +248,8 @@ export default function VMDetails() {
                   </div>
                 </div>
               )}
-              {/* Description */}
               {vm.description && (
                 <div className="flex items-start space-x-2">
-                  {/* Optional: Add an icon for description if desired */}
-                  {/* <FileText className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" /> */}
                   <div>
                     <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
                       Descripción:
@@ -274,7 +260,6 @@ export default function VMDetails() {
                   </div>
                 </div>
               )}
-              {/* Tags */}
               {vm.tags && vm.tags.length > 0 && (
                 <div className="flex items-start space-x-2">
                   <Tag className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" />
@@ -295,37 +280,34 @@ export default function VMDetails() {
                   </div>
                 </div>
               )}
-            {/* Ticket */}
-            {vm.ticket && (
+              {vm.ticket && (
                 <div className="flex items-start space-x-2">
-                    <Ticket className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" />
-                    <div>
+                  <Ticket className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" />
+                  <div>
                     <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
-                        Ticket:
+                      Ticket:
                     </span>
                     <p className="text-slate-800 dark:text-slate-100">{vm.ticket}</p>
-                    </div>
+                  </div>
                 </div>
-            )}
-            {/* Final Client */}
-            {vm.finalClientName && (
+              )}
+              {vm.finalClientName && (
                 <div className="flex items-start space-x-2">
-                    <Users className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" />{" "}
-                    {/* Assuming Users icon from lucide */}
-                    <div>
+                  <Users className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" />
+                  <div>
                     <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
-                        Cliente Final:
+                      Cliente Final:
                     </span>
                     <p className="text-slate-800 dark:text-slate-100">
-                        {vm.finalClientName}
+                      {vm.finalClientName}
                     </p>
-                    </div>
+                  </div>
                 </div>
-            )}
+              )}
             </div>
           </div>
         )}
-       
+
         {/* Performance Metrics Section */}
         {vm.status === "running" && (
           <div className="border-t border-slate-200 dark:border-slate-700 p-6">
@@ -338,7 +320,6 @@ export default function VMDetails() {
             </h3>
             {metrics ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {/* CPU Usage */}
                 <div className="bg-slate-50 dark:bg-slate-700 rounded-lg p-3">
                   <div className="flex items-center space-x-2 mb-1">
                     <Cpu className="w-5 h-5 text-blue-500" />
@@ -350,7 +331,6 @@ export default function VMDetails() {
                     {metrics.cpu.toFixed(1)}%
                   </p>
                 </div>
-                {/* Memory Usage */}
                 <div className="bg-slate-50 dark:bg-slate-700 rounded-lg p-3">
                   <div className="flex items-center space-x-2 mb-1">
                     <Memory className="w-5 h-5 text-green-500" />
@@ -362,7 +342,6 @@ export default function VMDetails() {
                     {metrics.memory.toFixed(1)}%
                   </p>
                 </div>
-                {/* Network I/O (Total) */}
                 <div className="bg-slate-50 dark:bg-slate-700 rounded-lg p-3">
                   <div className="flex items-center space-x-2 mb-1">
                     <Network className="w-5 h-5 text-purple-500" />
@@ -377,7 +356,6 @@ export default function VMDetails() {
                     Out: {formatBytes(metrics.network.out)}
                   </p>
                 </div>
-                {/* Uptime */}
                 <div className="bg-slate-50 dark:bg-slate-700 rounded-lg p-3">
                   <div className="flex items-center space-x-2 mb-1">
                     <Clock className="w-5 h-5 text-orange-500" />
@@ -400,7 +378,19 @@ export default function VMDetails() {
           </div>
         )}
       </div>
-      
+
+      {/* VM Console Section - Render if VM is running */}
+      {vm.status === 'running' && (
+        <div className="mt-6 border-t border-slate-200 dark:border-slate-700 p-6 bg-white dark:bg-slate-800 rounded-lg shadow-lg">
+          <h3 className="text-xl font-semibold text-slate-800 dark:text-slate-100 mb-4 flex items-center">
+            <MonitorIcon className="w-6 h-6 mr-2 text-primary-600" />
+            Consola de la VM
+          </h3>
+          {/* Pass vm.id (hypervisor_vm_id) and vm.name to the console component */}
+          {/* The VMConsole component will handle fetching the actual console URL/details */}
+          <VMConsole vmId={vm.id} vmName={vm.name} />
+        </div>
+      )}
     </div>
   );
 }
