@@ -15,14 +15,13 @@ import {
   Tag,
   Ticket,
   Users,
-  TerminalSquare,
+  
   ArrowLeft, // Importar ArrowLeft
 } from "lucide-react"; // Added Ticket
 import type { VM, VMMetrics } from "../types/vm"; // Use the correct VM type and import VMMetrics
 import { formatBytes } from "../utils/formatters"; // Helper function to format bytes (create this file if needed)
 import { toast } from "react-hot-toast";
 import { useAuth } from "../hooks/useAuth";
-import VMConsoleView, { type ConsoleDetailsData } from "../components/VMConsoleView"; // Import ConsoleDetailsData
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL; // Read from .env
 
@@ -33,9 +32,7 @@ export default function VMDetails() {
   const [metrics, setMetrics] = useState<VMMetrics | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const { token: authToken } = useAuth(); // Get token from context
-  const [consoleDetails, setConsoleDetails] = useState<ConsoleDetailsData | null>(null); // Use specific type
-  const [isConsoleLoading, setIsConsoleLoading] = useState(false);
-  const [showConsoleView, setShowConsoleView] = useState(false); // To toggle console modal
+  
 
 
   useEffect(() => {
@@ -103,39 +100,7 @@ export default function VMDetails() {
     return () => clearInterval(intervalId); // Cleanup interval on unmount or when VM/status changes
   }, [id, vm, vm?.status, authToken]); // Re-run if VM data or status changes
 
-  const handleOpenConsole = async () => {
-    if (!vm) return;
-    setIsConsoleLoading(true);
-    setConsoleDetails(null);
-    try {
-      const response = await fetch(`${API_BASE_URL}/vms/${vm.id}/console`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(authToken && { Authorization: `Bearer ${authToken}` }),
-        },
-      });
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(
-          errorData.details ||
-            errorData.error ||
-            `Failed to get console details (status: ${response.status})`
-        );
-      }
-      const data = await response.json();
-      setConsoleDetails(data);
-      setShowConsoleView(true); // Show the console view modal
-      console.log("Console Details:", data);
-    } catch (error: any) {
-      console.error("Error fetching console details:", error);
-      toast.error(`Failed to open console: ${error.message}`);
-      setConsoleDetails(null);
-      setShowConsoleView(false);
-    } finally {
-      setIsConsoleLoading(false);
-    }
-  };
+ 
 
   if (loading) {
     return (
@@ -203,22 +168,8 @@ export default function VMDetails() {
                 <Power className="w-4 h-4 mr-1" />
                 {vm.status.charAt(0).toUpperCase() + vm.status.slice(1)}
               </span>
-            {/* Console Button */}
-            {vm.status === "running" && (
-                <button
-                    onClick={handleOpenConsole}
-                    disabled={isConsoleLoading}
-                    className="ml-4 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-                >
-                    <TerminalSquare className="w-5 h-5 mr-2" />
-                    {isConsoleLoading ? "Loading..." : "Open Console"}
-                </button>
-            )}
-            </div> {/* This was the div for ml-auto flex items-center space-x-2 */}
-            {/* Debug: Display consoleDetails if not showing modal (can be removed later) */}
-            {/* {consoleDetails && !showConsoleView && (
-                <pre className="mt-2 p-2 bg-slate-900 text-xs text-white rounded overflow-auto max-h-32">{JSON.stringify(consoleDetails, null, 2)}</pre>
-            )} */}
+           
+            </div> 
           </div>
         </div>
 
@@ -449,17 +400,7 @@ export default function VMDetails() {
           </div>
         )}
       </div>
-      {/* Console Modal */}
-      {showConsoleView && consoleDetails && (
-        <VMConsoleView
-          consoleDetails={consoleDetails}
-          onClose={() => {
-            setShowConsoleView(false);
-            setConsoleDetails(null); // Clear details when closing
-          }}
-          onError={(message) => toast.error(`Console Error: ${message}`)}
-        />
-      )}
+      
     </div>
   );
 }
