@@ -8,6 +8,8 @@ import bcrypt from 'bcrypt';
 import { constants as cryptoConstants } from 'crypto';
 import jwt from 'jsonwebtoken';
 // import fetch from 'node-fetch'; // Asegúrate de tener node-fetch si usas Node < 18 o si fetch no está global
+import WebSocket, { WebSocketServer } from 'ws';
+import http from 'http'; // o https si tu servidor Express ya usa HTTPS
 
 dotenv.config();
 
@@ -2685,6 +2687,192 @@ app.get('/api/stats/client-vms/:clientId', authenticate, async (req, res) => {
 
 
 
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+// --- Servidor HTTP para Express y WebSocket ---
+const server = http.createServer(app); // O https.createServer(options, app) si usas HTTPS
+
+// --- Configuración del Servidor WebSocket para el Proxy de Consola Proxmox ---
+const wss = new WebSocketServer({ noServer: true });
+
+server.on('upgrade', (request, socket, head) => {
+  const { pathname } = new URL(request.url, `ws://${request.headers.host}`);
+
+  if (pathname.startsWith('/ws/proxmox-console/')) {
+    // Aquí podrías añadir una capa de autenticación para el upgrade si es necesario,
+    // por ejemplo, verificando un token JWT pasado como query param o en una cookie.
+    // Por ahora, nos basaremos en que el ticket VNC ya proporciona autorización
+    // una vez que el proxy se conecta a Proxmox.
+    // También, el endpoint HTTP que genera el ticket VNC ya está protegido por JWT.
+
+    wss.handleUpgrade(request, socket, head, (wsClient) => {
+      wss.emit('connection', wsClient, request);
+    });
+  } else {
+    console.log(`WebSocket upgrade request for unknown path ${pathname}, destroying socket.`);
+    socket.destroy();
+  }
+});
+
+wss.on('connection', async (wsClient, request) => {
+  console.log('Proxy WS: Cliente conectado al backend');
+  const { pathname, searchParams } = new URL(request.url, `ws://${request.headers.host}`);
+  
+  const parts = pathname.split('/'); // e.g., ['', 'ws', 'proxmox-console', 'NODE_NAME', 'VMID']
+  const node = parts[3];
+  const vmid = parts[4];
+  const proxmoxVncTicket = searchParams.get('ticket');
+  const proxmoxInternalVncPort = searchParams.get('vncPort');
+
+  if (!node || !vmid || !proxmoxVncTicket || !proxmoxInternalVncPort) {
+    console.error('Proxy WS: Faltan parámetros (node, vmid, ticket, vncPort) para la conexión a Proxmox.');
+    wsClient.close(1008, 'Missing connection parameters');
+    return;
+  }
+
+  let proxmoxHostIp;
+  let targetHypervisor; // Changed to store the full hypervisor object
+
+  try { // This is the TRY block that was missing and should wrap all attempts
+    // Intento 1: Buscar la VM en la tabla virtual_machines
+    const { rows: [vmHypervisorDetails] } = await pool.query(
+      `SELECT h.id, h.host 
+       FROM hypervisors h 
+       JOIN virtual_machines vm ON vm.hypervisor_id = h.id 
+       WHERE vm.hypervisor_vm_id = $1 AND h.type = 'proxmox' AND h.status = 'connected'`, // Query only host and id
+      [vmid]
+    );
+
+    if (vmHypervisorDetails) {
+      proxmoxHostIp = vmHypervisorDetails.host.split(':')[0];
+      // Fetch full hypervisor details for token
+      const { rows: [fullHypervisor] } = await pool.query('SELECT * FROM hypervisors WHERE id = $1', [vmHypervisorDetails.id]);
+      targetHypervisor = fullHypervisor;
+      console.log(`Proxy WS: VM ${vmid} encontrada en DB. Usando hypervisor ${targetHypervisor.id} (${proxmoxHostIp})`);
+    } else {
+      // Intento 2: Buscar hypervisor por el nombre del nodo (asumiendo que el nombre del nodo es el nombre del hypervisor en la DB)
+      console.log(`Proxy WS: VM ${vmid} no encontrada en DB. Intentando buscar hypervisor por nombre de nodo '${node}'...`);
+      const { rows: [hypervisorByNodeName] } = await pool.query(
+
+        `SELECT id, host FROM hypervisors WHERE name = $1 AND type = 'proxmox' AND status = 'connected'`,
+        [node] // Asumiendo que 'node' podría ser el nombre del hypervisor
+      );
+      if (hypervisorByNodeName) {
+        proxmoxHostIp = hypervisorByNodeName.host.split(':')[0];
+        const { rows: [fullHypervisor] } = await pool.query('SELECT * FROM hypervisors WHERE id = $1', [hypervisorByNodeName.id]);
+        targetHypervisor = fullHypervisor;
+        console.log(`Proxy WS: Hypervisor encontrado por nombre de nodo '${node}' (ID: ${targetHypervisor.id}, IP: ${proxmoxHostIp})`);
+   
+      } else {
+ // Intento 3: Escanear todos los hypervisors Proxmox conectados
+ console.log(`Proxy WS: Hypervisor no encontrado por nombre de nodo '${node}'. Escaneando hypervisors Proxmox conectados para VM ${vmid} en nodo ${node}...`);
+ const { rows: connectedProxmoxHypervisors } = await pool.query(
+   `SELECT id, host, username, api_token, token_name 
+    FROM hypervisors WHERE status = 'connected' AND type = 'proxmox'`
+ );  
+ let foundOnScan = false;
+ for (const hypervisor of connectedProxmoxHypervisors) {
+   const [dbHost, dbPortStr] = hypervisor.host.split(':');
+   const port = dbPortStr ? parseInt(dbPortStr, 10) : 8006;
+   const cleanHost = dbHost;
+   const proxmoxConfigScan = { // Usar un nombre de variable diferente para evitar conflictos
+     host: cleanHost, port: port, username: hypervisor.username,
+     tokenID: `${hypervisor.username}!${hypervisor.token_name}`,
+     tokenSecret: hypervisor.api_token, timeout: 5000, rejectUnauthorized: false
+   };
+   const proxmoxClientScan = proxmoxApi(proxmoxConfigScan);
+   try {
+     // Intentar obtener el estado de la VM en el nodo especificado usando este hypervisor
+     await proxmoxClientScan.nodes.$(node).qemu.$(vmid).status.current.$get();
+     
+     proxmoxHostIp = cleanHost; // Usar la IP de este hypervisor
+     targetHypervisor = hypervisor; // Assign the full hypervisor object
+     console.log(`Proxy WS: VM ${vmid} en nodo ${node} accesible via hypervisor ${targetHypervisor.id} (${cleanHost}) durante escaneo.`);
+     foundOnScan = true;
+     break; // Hypervisor encontrado
+   } catch (scanError) {
+     // Silencio: esta VM/nodo no es accesible a través de este hypervisor, probar el siguiente
+     // console.warn(`Proxy WS: VM ${vmid} en nodo ${node} no accesible via hypervisor ${hypervisor.id} (${cleanHost}) durante escaneo.`);
+   }
+ }
+ if (!foundOnScan) {
+   throw new Error(`No se pudo determinar un host Proxmox para VM ${vmid} en nodo ${node} mediante DB o escaneo.`);
+ }    }
+    } // Correct closing brace for the "else" of "if (vmHypervisorDetails)"
+    console.log(`Proxy WS: Usando Proxmox host ${proxmoxHostIp} (descubierto via hypervisor ID: ${targetHypervisor?.id || 'N/A'}) para VM ${vmid} en nodo ${node}`);
+  } catch (dbOrScanError) { // This CATCH block is now correctly associated with the TRY above
+    console.error('Proxy WS: Error determinando el host de Proxmox:', dbOrScanError.message);
+    wsClient.close(1011, `Backend error: Could not determine Proxmox host. ${dbOrScanError.message.substring(0, 60)}`);
+    return;
+  }
+  
+  const proxmoxWsUrl = `wss://${proxmoxHostIp}:8006/api2/json/nodes/${node}/qemu/${vmid}/vncwebsocket?port=${proxmoxInternalVncPort}&vncticket=${encodeURIComponent(proxmoxVncTicket)}`;
+  console.log(`Proxy WS: Intentando conectar a Proxmox en: ${proxmoxWsUrl}`);
+
+  // Construct the Authorization header using the details from the targetHypervisor
+  // targetHypervisor should be set if foundOnScan was true or if found via DB.
+  let wsHeaders = {};
+  if (targetHypervisor && targetHypervisor.username && targetHypervisor.token_name && targetHypervisor.api_token) {
+    const pveApiTokenId = `${targetHypervisor.username}!${targetHypervisor.token_name}`;
+    const pveApiTokenSecret = targetHypervisor.api_token;
+    wsHeaders['Authorization'] = `PVEAPIToken ${pveApiTokenId}=${pveApiTokenSecret}`;
+    console.log(`Proxy WS: Using PVEAPIToken for WebSocket handshake to Proxmox.`);
+  }
+  const wsProxmox = new WebSocket(proxmoxWsUrl, {
+    rejectUnauthorized: false, // Coincide con tu configuración de Proxmox API
+    headers: wsHeaders // Add the Authorization header
+  });
+
+  wsProxmox.on('open', () => {
+    console.log('Proxy WS: Conectado a Proxmox VNC WebSocket');
+    // Podrías enviar un mensaje de estado al cliente si es útil
+    // wsClient.send(JSON.stringify({ type: 'status', message: 'Proxy connected to Proxmox' }));
+  });
+
+  wsProxmox.on('message', (message) => {
+    // Simplemente retransmitir el mensaje al cliente del frontend
+    if (wsClient.readyState === WebSocket.OPEN) {
+      wsClient.send(message);
+    }
+  });
+
+  wsProxmox.on('close', (code, reason) => {
+    console.log(`Proxy WS: Conexión a Proxmox cerrada. Code: ${code}, Reason: ${reason ? reason.toString().substring(0,100) : 'N/A'}`);
+    if (wsClient.readyState === WebSocket.OPEN) {
+      // Use a standard code and a string reason for closing the client connection.
+      // If the Proxmox connection closed unexpectedly, 1011 (Server Error) might be appropriate.
+      const clientCloseCode = code === 1000 ? 1000 : 1011;
+      wsClient.close(clientCloseCode, `Proxmox connection closed: ${reason ? reason.toString().substring(0, 50) : (code || 'Unknown reason')}`);
+    }
+  });
+
+  wsProxmox.on('error', (error) => {
+    console.error('Proxy WS: Error en la conexión WebSocket a Proxmox:', error.message);
+    if (wsClient.readyState === WebSocket.OPEN) wsClient.close(1011, `Proxmox connection error: ${error.message.substring(0,100)}`);
+  });
+
+  // Manejar mensajes del cliente del frontend hacia Proxmox
+  wsClient.on('message', (message) => {
+    if (wsProxmox.readyState === WebSocket.OPEN) {
+      wsProxmox.send(message);
+    }
+  });
+
+  wsClient.on('close', (code, reason) => {
+    console.log(`Proxy WS: Cliente del frontend desconectado. Code: ${code}, Reason: ${reason ? reason.toString().substring(0,100) : 'N/A'}`);
+    if (wsProxmox.readyState === WebSocket.OPEN || wsProxmox.readyState === WebSocket.CONNECTING) {
+      wsProxmox.close();
+    }
+  });
+
+  wsClient.on('error', (error) => {
+    console.error('Proxy WS: Error en la conexión WebSocket del cliente del frontend:', error.message);
+    if (wsProxmox.readyState === WebSocket.OPEN || wsProxmox.readyState === WebSocket.CONNECTING) {
+      wsProxmox.close(1011, 'Client connection error');
+    }
+  });
+});
+
+
+// En lugar de app.listen, usa server.listen
+server.listen(port, () => {
+  console.log(`Server (con WebSocket proxy) corriendo en el puerto ${port}`);
 });

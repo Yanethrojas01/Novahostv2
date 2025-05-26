@@ -102,12 +102,24 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
       }
       
       const connectionDetails = consoleConnectionDetails as ProxmoxConnectionDetails;
-      const { host, port, ticket, node, vmid } = connectionDetails;
-      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      const rfbUrl = `${protocol}://${host}:8006/api2/json/nodes/${node}/qemu/${vmid}/vncwebsocket?port=${port}&vncticket=${encodeURIComponent(ticket)}`;
+          // 'port' en connectionDetails es el puerto VNC interno de Proxmox (ej. 5900)
+          const { node, vmid, ticket, port: proxmoxInternalVncPort } = connectionDetails;
 
-      console.log(`Proxmox VNC: Connecting to ${rfbUrl} for VM ${vmid} on node ${node}`);
-      setConnectionStatus('Connecting to VNC...');
+// --- Construir la URL para el Proxy WebSocket en el Backend ---
+      // El host y puerto serán los de tu backend.
+      const backendHost = window.location.hostname; 
+      // Asegúrate que este puerto coincida con el puerto donde corre tu backend Express (definido en server/index.js)
+      // En desarrollo, si tu frontend (Vite) y backend corren en puertos diferentes, usa el puerto del backend.
+      // En producción, si están detrás de un mismo proxy/dominio, window.location.port podría ser correcto o estar vacío (puerto estándar 80/443).
+      const backendPort = import.meta.env.DEV ? 3001 : (window.location.port || (window.location.protocol === 'https:' ? 443 : 80));
+      const backendWebSocketProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+
+      const rfbUrl = `${backendWebSocketProtocol}://${backendHost}:${backendPort}/ws/proxmox-console/${node}/${vmid}?ticket=${encodeURIComponent(ticket)}&vncPort=${proxmoxInternalVncPort}`;
+      // --- Fin de la construcción de la URL del Proxy ---
+
+
+      console.log(`Proxmox VNC (via Proxy): Connecting to ${rfbUrl} for VM ${vmid} on node ${node}`);
+        setConnectionStatus('Connecting to VNC...');
 
       try {
         if (!RFB) { // RFB should be available from import
