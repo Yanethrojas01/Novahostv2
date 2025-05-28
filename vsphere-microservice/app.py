@@ -910,25 +910,61 @@ def vm_console_ticket(vm_uuid):
 
         app.logger.info(f"Console Ticket: Found VM '{vm.name}'. Acquiring WebMKS ticket...")
         
-        # Acquire WebMKS ticket
-        mks_ticket = vm.AcquireTicket('webmks')
-        
-        app.logger.info(f"Console Ticket: WebMKS ticket acquired for VM '{vm.name}'. Host: {mks_ticket.host}, Port: {mks_ticket.port}")
+        ticket_details = None
+        ticket_type_acquired = None
 
-        return jsonify({
-            'ticket': mks_ticket.ticket,
-            'host': mks_ticket.host, # This is the ESXi host, or vCenter if it proxies
-            'port': mks_ticket.port, # Typically 9443 for vCenter proxy, 443 for direct ESXi
-            'sslThumbprint': mks_ticket.sslThumbprint,
-            # 'cfgFile': mks_ticket.cfgFile, # Not usually needed by client
-            # 'vmId': vm._moId # MOID, if needed by frontend for any reason
-        }), 200
+        # Intento 1: MKS Ticket
+        try:
+            app.logger.info(f"Console Ticket: Attempting to acquire MKS ticket for VM '{vm.name}'...")
+            mks_ticket_obj = vm.AcquireMksTicket()
+            app.logger.info(f"Console Ticket: MKS ticket acquired. ESXi Host: {mks_ticket_obj.host}, CfgFile: {mks_ticket_obj.cfgFile}")
+            ticket_details = {
+                'ticket_type': 'mks',
+                'mksTicket': mks_ticket_obj.ticket,
+                'esxiHost': mks_ticket_obj.host,
+                'esxiPort': mks_ticket_obj.port,
+                'cfgFile': mks_ticket_obj.cfgFile,
+                'sslThumbprint': mks_ticket_obj.sslThumbprint, # ESXi host's thumbprint
+                'vcenterHost': host_param.split(':')[0] 
+            }
+            ticket_type_acquired = 'mks'
+        except vmodl.fault.NotSupported:
+            app.logger.warn(f"Console Ticket: AcquireMksTicket is not supported for VM '{vm.name}'. Falling back to WebMKS ticket.")
+        except Exception as e_mks:
+            app.logger.warn(f"Console Ticket: Error acquiring MKS ticket for VM '{vm.name}': {str(e_mks)}. Falling back to WebMKS ticket.")
+
+        # Intento 2: WebMKS Ticket (si MKS falló o no fue soportado)
+        if not ticket_type_acquired:
+            try:
+                app.logger.info(f"Console Ticket: Attempting to acquire WebMKS ticket for VM '{vm.name}'...")
+                webmks_ticket_obj = vm.AcquireTicket('webmks')
+                app.logger.info(f"Console Ticket: WebMKS ticket acquired. Host: {webmks_ticket_obj.host}, Port: {webmks_ticket_obj.port}")
+                ticket_details = {
+                    'ticket_type': 'webmks',
+                    'ticket': webmks_ticket_obj.ticket,
+                    'host': webmks_ticket_obj.host, # ESXi host or vCenter proxy
+                    'port': webmks_ticket_obj.port, # Typically 9443 for vCenter proxy, 443 for direct ESXi
+                    'sslThumbprint': webmks_ticket_obj.sslThumbprint # Thumbprint of 'host'
+                }
+                ticket_type_acquired = 'webmks'
+            except Exception as e_webmks:
+                app.logger.error(f"Console Ticket: Error acquiring WebMKS ticket for VM '{vm.name}' after MKS attempt failed: {str(e_webmks)}", exc_info=True)
+                raise e_webmks # Re-lanza la excepción si ambos métodos fallan
+
+        return jsonify(ticket_details), 200
+
 
     except vim.fault.InvalidLogin:
         app.logger.error(f"Console Ticket: vSphere login failed for {user_param}@{host_param}")
         return jsonify({'error': 'vSphere login failed. Check credentials.'}), 401
+   
+    except AttributeError as ae:
+        if "'NoneType' object has no attribute 'AcquireMksTicket'" in str(ae): # Should be caught by vm not found earlier
+            app.logger.error(f"Console Ticket: VM with UUID '{vm_uuid}' not found (AttributeError on AcquireMksTicket).")
+            return jsonify({'error': f'VM with UUID {vm_uuid} not found'}), 404
+    
     except Exception as e:
-        app.logger.error(f"Console Ticket: Error acquiring MKS ticket for VM {vm_uuid} on {host_param}: {str(e)}", exc_info=True)
+        app.logger.error(f"Console Ticket: Error acquiring console ticket for VM {vm_uuid} on {host_param}: {str(e)}", exc_info=True)
         return jsonify({'error': f'An error occurred: {str(e)}'}), 500
     finally:
         if si:

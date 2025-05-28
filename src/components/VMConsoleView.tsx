@@ -48,18 +48,29 @@ export interface ProxmoxConnectionDetails {
   vmid: string | number;
   vmName?: string;
 }
-
-export interface VSphereConnectionDetails {
-  host: string;
-  port: number;
-  ticket: string; // WebMKS ticket
-  sslThumbprint: string;
+// New type for vSphere MKS ticket details
+export interface VSphereMKSConnectionDetails {
+  vcenterHost: string; // vCenter host to connect WebSocket to
+  mksTicket: string;
+  esxiHost: string;    // ESXi host where VM runs
+  esxiPort: number;    // ESXi VNC port (e.g., 902)
+  cfgFile: string;     // Path to .vmx file
+  sslThumbprint: string; // ESXi host's SSL thumbprint
   vmName?: string;
+  // ticket_type is part of the parent, not directly here
+}
+export interface VSphereConnectionDetails { // This is for WebMKS
+  host: string; // ESXi host or vCenter proxy
+  port: number; // Port for WebMKS ticket (e.g., 9443 or 443)
+  ticket: string; // WebMKS ticket
+  sslThumbprint: string; // Thumbprint of the 'host'
+  vmName?: string;
+  // ticket_type is part of the parent, not directly here
 }
 export type ConsoleDetailsData = {
-  type: 'proxmox' | 'vsphere';
-  connectionDetails: ProxmoxConnectionDetails | VSphereConnectionDetails;
-  vmName?: string;
+  type: 'proxmox' | 'vsphere_webmks' | 'vsphere_mks'; // Updated types
+  connectionDetails: ProxmoxConnectionDetails | VSphereConnectionDetails | VSphereMKSConnectionDetails;
+  vmName?: string; // General VM name, can be overridden by connectionDetails.vmName
 };
 
 interface VMConsoleViewProps {
@@ -74,16 +85,11 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
   const [connectionStatus, setConnectionStatus] = useState('Initializing...');
   const [error, setError] = useState<string | null>(null);
 
-  // rfbInstance.current will be an instance of the imported RFB class
   const rfbInstance = useRef<InstanceType<typeof RFB> | null>(null);
   const wmksInstance = useRef<WMKSInstance | null>(null);
 
-  // Destructure consoleDetails for stable dependencies
   const { type: consoleType, connectionDetails: consoleConnectionDetails, vmName: consoleVmNameProp } = consoleDetails;
-  // Generate a unique ID for the WMKS container if needed, once per component instance.
   const [uniqueWmksId] = useState(() => `wmks-container-${Math.random().toString(36).substring(2, 9)}`);
-
-  // Create a stable key from connectionDetails to use as a dependency
   const connectionDetailsKey = JSON.stringify(consoleConnectionDetails);
 
   useEffect(() => {
@@ -102,27 +108,19 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
       }
       
       const connectionDetails = consoleConnectionDetails as ProxmoxConnectionDetails;
-          // 'port' en connectionDetails es el puerto VNC interno de Proxmox (ej. 5900)
-          const { node, vmid, ticket, port: proxmoxInternalVncPort } = connectionDetails;
+      const { node, vmid, ticket, port: proxmoxInternalVncPort } = connectionDetails;
 
-// --- Construir la URL para el Proxy WebSocket en el Backend ---
-      // El host y puerto serán los de tu backend.
       const backendHost = window.location.hostname; 
-      // Asegúrate que este puerto coincida con el puerto donde corre tu backend Express (definido en server/index.js)
-      // En desarrollo, si tu frontend (Vite) y backend corren en puertos diferentes, usa el puerto del backend.
-      // En producción, si están detrás de un mismo proxy/dominio, window.location.port podría ser correcto o estar vacío (puerto estándar 80/443).
       const backendPort = import.meta.env.DEV ? 3001 : (window.location.port || (window.location.protocol === 'https:' ? 443 : 80));
       const backendWebSocketProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
 
       const rfbUrl = `${backendWebSocketProtocol}://${backendHost}:${backendPort}/ws/proxmox-console/${node}/${vmid}?ticket=${encodeURIComponent(ticket)}&vncPort=${proxmoxInternalVncPort}`;
-      // --- Fin de la construcción de la URL del Proxy ---
-
-
+      
       console.log(`Proxmox VNC (via Proxy): Connecting to ${rfbUrl} for VM ${vmid} on node ${node}`);
-        setConnectionStatus('Connecting to VNC...');
+      setConnectionStatus('Connecting to VNC...');
 
       try {
-        if (!RFB) { // RFB should be available from import
+        if (!RFB) {
           throw new Error("RFB module not available. Check import.");
         }
         rfbInstance.current = new RFB(rfbCanvasRef.current, rfbUrl, {
@@ -135,7 +133,7 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
             console.log('Proxmox VNC: Connected');
           });
 
-          rfbInstance.current.addEventListener('disconnect', (event: CustomEvent<{ clean: boolean }>) => {
+        rfbInstance.current.addEventListener('disconnect', (event: CustomEvent<{ clean: boolean }>) => {
             if (!isMounted) return;
             setConnectionStatus(`Disconnected from ${vmName} (Proxmox). ${event.detail.clean ? 'Cleanly.' : 'Abruptly.'}`);
             console.log('Proxmox VNC: Disconnected', event.detail);
@@ -145,7 +143,7 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
             }
           });
 
-          rfbInstance.current.addEventListener('securityfailure', (event: CustomEvent<{ reason?: string }>) => {
+        rfbInstance.current.addEventListener('securityfailure', (event: CustomEvent<{ reason?: string }>) => {
             if (!isMounted) return;
             setConnectionStatus(`Security failure for ${vmName} (Proxmox)`);
             console.error('Proxmox VNC: Security failure', event.detail);
@@ -165,14 +163,14 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
 
     if (consoleType === 'proxmox') {
       initProxmoxRFB();
-    } else if (consoleType === 'vsphere') {
+    } else if (consoleType === 'vsphere_webmks') {
       const connectionDetails = consoleConnectionDetails as VSphereConnectionDetails;
       if (wmksContainerRef.current && window.WMKS) {
         const { host, port, ticket, sslThumbprint } = connectionDetails;
         console.log(`vSphere WebMKS: Connecting to ${host}:${port} for VM ${vmName}`);
+        setConnectionStatus('Connecting to vSphere WebMKS...');
 
         try {
-          // Ensure the container has the unique ID before creating WMKS instance
           if (wmksContainerRef.current) wmksContainerRef.current.id = uniqueWmksId;
 
           wmksInstance.current = window.WMKS.createWMKS(uniqueWmksId, {})
@@ -181,10 +179,10 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
               (event, data) => {
                 if (!isMounted) return;
                 if (data.state === window.WMKS!.ConnectionState.CONNECTED) {
-                  setConnectionStatus(`Connected to ${vmName} (vSphere)`);
+                  setConnectionStatus(`Connected to ${vmName} (vSphere WebMKS)`);
                   console.log('vSphere WebMKS: Connected');
                 } else if (data.state === window.WMKS!.ConnectionState.DISCONNECTED) {
-                  setConnectionStatus(`Disconnected from ${vmName} (vSphere). ${data.error?.message ? data.error.message : ''}`);
+                  setConnectionStatus(`Disconnected from ${vmName} (vSphere WebMKS). ${data.error?.message ? data.error.message : ''}`);
                   console.log('vSphere WebMKS: Disconnected', data.error);
                   if (data.error) {
                     setError(`WebMKS disconnected: ${data.error.message || 'Unknown reason'}`);
@@ -197,10 +195,10 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
               window.WMKS.Events.ERROR,
               (event, data) => {
                 if (!isMounted) return;
-                setConnectionStatus(`Error with ${vmName} (vSphere)`);
+                setConnectionStatus(`Error with ${vmName} (vSphere WebMKS)`);
                 console.error('vSphere WebMKS: Error', data);
-                setError(`WebMKS Error: ${data.errorType || 'Unknown error'}`);
-                if (onError) onError(`WebMKS Error: ${data.errorType || 'Unknown error'}`);
+                setError(`WebMKS Error: ${data.errorType || 'Unknown error'} - ${data.error?.message || ''}`);
+                if (onError) onError(`WebMKS Error: ${data.errorType || 'Unknown error'} - ${data.error?.message || ''}`);
               }
             );
 
@@ -223,6 +221,63 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
         if (onError) onError('WMKS library not found.');
         setConnectionStatus('Error: WMKS library missing');
       }
+    } else if (consoleType === 'vsphere_mks') {
+      const connectionDetails = consoleConnectionDetails as VSphereMKSConnectionDetails;
+      if (wmksContainerRef.current && window.WMKS) {
+        const { vcenterHost, mksTicket, esxiHost, esxiPort, cfgFile, sslThumbprint } = connectionDetails;
+        
+        const wmksUrl = `wss://${vcenterHost}:9443/vsphere-client/webconsole/authd?mksTicket=${encodeURIComponent(mksTicket)}&host=${encodeURIComponent(esxiHost)}&port=${esxiPort}&cfgFile=${encodeURIComponent(cfgFile)}&sslThumbprint=${encodeURIComponent(sslThumbprint)}`;
+        
+        console.log(`vSphere MKS Ticket: Connecting to ${wmksUrl} for VM ${vmName}`);
+        setConnectionStatus('Connecting to vSphere MKS...');
+
+        try {
+          if (wmksContainerRef.current) wmksContainerRef.current.id = uniqueWmksId;
+
+          wmksInstance.current = window.WMKS.createWMKS(uniqueWmksId, {})
+            .register<WMKSConnectionStateChangeData>(
+              window.WMKS.Events.CONNECTION_STATE_CHANGE,
+              (event, data) => {
+                if (!isMounted) return;
+                if (data.state === window.WMKS!.ConnectionState.CONNECTED) {
+                  setConnectionStatus(`Connected to ${vmName} (vSphere MKS)`);
+                  console.log('vSphere MKS: Connected');
+                } else if (data.state === window.WMKS!.ConnectionState.DISCONNECTED) {
+                  setConnectionStatus(`Disconnected from ${vmName} (vSphere MKS). ${data.error?.message ? data.error.message : ''}`);
+                  console.log('vSphere MKS: Disconnected', data.error);
+                  if (data.error) {
+                    setError(`MKS disconnected: ${data.error.message || 'Unknown reason'}`);
+                    if (onError) onError(`MKS disconnected: ${data.error.message || 'Unknown reason'}`);
+                  }
+                }
+              }
+            )
+            .register<WMKSErrorData>(
+              window.WMKS.Events.ERROR,
+              (event, data) => {
+                if (!isMounted) return;
+                setConnectionStatus(`Error with ${vmName} (vSphere MKS)`);
+                console.error('vSphere MKS: Error', data);
+                setError(`MKS Error: ${data.errorType || 'Unknown error'} - ${data.error?.message || ''}`);
+                if (onError) onError(`MKS Error: ${data.errorType || 'Unknown error'} - ${data.error?.message || ''}`);
+              }
+            );
+          wmksInstance.current.connect(wmksUrl, { useSSL: true, sslThumbprint: "" }); 
+        } catch (e: unknown) {
+          if (!isMounted) return;
+          const message = e instanceof Error ? e.message : String(e);
+          console.error('vSphere MKS: WMKS instantiation or connection error', e);
+          setError(`Failed to initialize MKS client: ${message}`);
+          if (onError) onError(`Failed to initialize MKS client: ${message}`);
+          setConnectionStatus('Error initializing MKS');
+        }
+      } else if (!window.WMKS) {
+        if (!isMounted) return;
+        console.error('vSphere MKS: WMKS library not found. Ensure wmks.js is loaded.');
+        setError('WMKS library not found. Please contact support.');
+        if (onError) onError('WMKS library not found.');
+        setConnectionStatus('Error: WMKS library missing');
+      }
     }
 
     return () => {
@@ -233,8 +288,6 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
         try {
           rfbInstance.current.disconnect();
         } catch (cleanupError) {
-          // These errors are often symptomatic of rapid useEffect re-runs or noVNC internal state issues.
-          // Logging them is important, but the primary fix is stabilizing the effect's execution.
           console.warn('Error during RFB disconnect cleanup (may indicate noVNC internal state issue or rapid re-render):', cleanupError);
         }
         rfbInstance.current = null;
@@ -245,7 +298,7 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
         wmksInstance.current = null;
       }
     };
-  }, [consoleType, connectionDetailsKey, consoleVmNameProp, onError]); // Use stable dependencies
+  }, [consoleType, connectionDetailsKey, consoleVmNameProp, onError, uniqueWmksId]); // Added uniqueWmksId
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
@@ -262,7 +315,7 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
           {consoleDetails.type === 'proxmox' && (
             <canvas ref={rfbCanvasRef} className="w-full h-full" />
           )}
-          {consoleDetails.type === 'vsphere' && (
+          {(consoleDetails.type === 'vsphere_webmks' || consoleDetails.type === 'vsphere_mks') && (
             <div ref={wmksContainerRef} id={uniqueWmksId} className="w-full h-full" />
           )}
         </div>

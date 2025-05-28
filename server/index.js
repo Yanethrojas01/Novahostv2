@@ -854,7 +854,7 @@ app.post('/api/vms/:id/console', authenticate, async (req, res) => {
           tokenID: `${hypervisor.username}!${hypervisor.token_name}`,
           tokenSecret: hypervisor.api_token, timeout: 10000, rejectUnauthorized: false
         };
-        console.log("elclean",cleanHost)
+        
 console.log("proxmoxConfig",proxmoxConfig)
         proxmoxClientInstance = proxmoxApi(proxmoxConfig);
         try {
@@ -927,9 +927,14 @@ console.log("proxmoxConfig",proxmoxConfig)
     } else if (targetHypervisor.type === 'vsphere') {
       console.log(`Console: Requesting WebMKS ticket for vSphere VM ${vmExternalId} via PyVmomi`);
       const mksTicketDetails = await callPyvmomiService('POST', `/vm/${vmExternalId}/console`, targetHypervisor, { vm_name: vmNameForConsole });
+         // PyVmomi service now returns ticket_type ('mks' or 'webmks') and corresponding details.
+      // The frontend will use ticket_type to determine how to connect.
       res.json({
-        type: 'vsphere',
-        connectionDetails: { ...mksTicketDetails, vmName: vmNameForConsole } // PyVmomi response should include ticket, host, port, sslThumbprint
+        type: `vsphere_${mksTicketDetails.ticket_type}`, // e.g., vsphere_mks or vsphere_webmks
+        connectionDetails: { 
+          ...mksTicketDetails, // Pass all details from PyVmomi
+          vmName: vmNameForConsole 
+        }
       });
     }
   } catch (error) {
@@ -2729,12 +2734,12 @@ wss.on('connection', async (wsClient, request) => {
   }
 
   let proxmoxHostIp;
-  let targetHypervisor; // Changed to store the full hypervisor object
+  let targetHypervisorDetails; // To store full details of the determined hypervisor
 
   try { // This is the TRY block that was missing and should wrap all attempts
     // Intento 1: Buscar la VM en la tabla virtual_machines
     const { rows: [vmHypervisorDetails] } = await pool.query(
-      `SELECT h.id, h.host 
+      `SELECT h.id, h.host, h.username, h.api_token, h.token_name
        FROM hypervisors h 
        JOIN virtual_machines vm ON vm.hypervisor_id = h.id 
        WHERE vm.hypervisor_vm_id = $1 AND h.type = 'proxmox' AND h.status = 'connected'`, // Query only host and id
@@ -2743,23 +2748,19 @@ wss.on('connection', async (wsClient, request) => {
 
     if (vmHypervisorDetails) {
       proxmoxHostIp = vmHypervisorDetails.host.split(':')[0];
-      // Fetch full hypervisor details for token
-      const { rows: [fullHypervisor] } = await pool.query('SELECT * FROM hypervisors WHERE id = $1', [vmHypervisorDetails.id]);
-      targetHypervisor = fullHypervisor;
-      console.log(`Proxy WS: VM ${vmid} encontrada en DB. Usando hypervisor ${targetHypervisor.id} (${proxmoxHostIp})`);
+      targetHypervisorDetails = vmHypervisorDetails; // Already has token details
+      console.log(`Proxy WS: VM ${vmid} encontrada en DB. Usando hypervisor ${targetHypervisorDetails.id} (${proxmoxHostIp})`);
     } else {
       // Intento 2: Buscar hypervisor por el nombre del nodo (asumiendo que el nombre del nodo es el nombre del hypervisor en la DB)
       console.log(`Proxy WS: VM ${vmid} no encontrada en DB. Intentando buscar hypervisor por nombre de nodo '${node}'...`);
       const { rows: [hypervisorByNodeName] } = await pool.query(
-
-        `SELECT id, host FROM hypervisors WHERE name = $1 AND type = 'proxmox' AND status = 'connected'`,
+        `SELECT id, host, username, api_token, token_name FROM hypervisors WHERE name = $1 AND type = 'proxmox' AND status = 'connected'`,
         [node] // Asumiendo que 'node' podría ser el nombre del hypervisor
       );
       if (hypervisorByNodeName) {
         proxmoxHostIp = hypervisorByNodeName.host.split(':')[0];
-        const { rows: [fullHypervisor] } = await pool.query('SELECT * FROM hypervisors WHERE id = $1', [hypervisorByNodeName.id]);
-        targetHypervisor = fullHypervisor;
-        console.log(`Proxy WS: Hypervisor encontrado por nombre de nodo '${node}' (ID: ${targetHypervisor.id}, IP: ${proxmoxHostIp})`);
+        targetHypervisorDetails = hypervisorByNodeName;
+        console.log(`Proxy WS: Hypervisor encontrado por nombre de nodo '${node}' (ID: ${targetHypervisorDetails.id}, IP: ${proxmoxHostIp})`);
    
       } else {
  // Intento 3: Escanear todos los hypervisors Proxmox conectados
@@ -2784,8 +2785,8 @@ wss.on('connection', async (wsClient, request) => {
      await proxmoxClientScan.nodes.$(node).qemu.$(vmid).status.current.$get();
      
      proxmoxHostIp = cleanHost; // Usar la IP de este hypervisor
-     targetHypervisor = hypervisor; // Assign the full hypervisor object
-     console.log(`Proxy WS: VM ${vmid} en nodo ${node} accesible via hypervisor ${targetHypervisor.id} (${cleanHost}) durante escaneo.`);
+     targetHypervisorDetails = hypervisor; // Assign the full hypervisor object
+     console.log(`Proxy WS: VM ${vmid} en nodo ${node} accesible via hypervisor ${targetHypervisorDetails.id} (${cleanHost}) durante escaneo.`);
      foundOnScan = true;
      break; // Hypervisor encontrado
    } catch (scanError) {
@@ -2797,25 +2798,40 @@ wss.on('connection', async (wsClient, request) => {
    throw new Error(`No se pudo determinar un host Proxmox para VM ${vmid} en nodo ${node} mediante DB o escaneo.`);
  }    }
     } // Correct closing brace for the "else" of "if (vmHypervisorDetails)"
-    console.log(`Proxy WS: Usando Proxmox host ${proxmoxHostIp} (descubierto via hypervisor ID: ${targetHypervisor?.id || 'N/A'}) para VM ${vmid} en nodo ${node}`);
+    console.log(`Proxy WS: Usando Proxmox host ${proxmoxHostIp} (descubierto via hypervisor ID: ${targetHypervisorDetails?.id || 'N/A'}) para VM ${vmid} en nodo ${node}`);
   } catch (dbOrScanError) { // This CATCH block is now correctly associated with the TRY above
     console.error('Proxy WS: Error determinando el host de Proxmox:', dbOrScanError.message);
     wsClient.close(1011, `Backend error: Could not determine Proxmox host. ${dbOrScanError.message.substring(0, 60)}`);
     return;
   }
   
+  // After the try/catch block that determines targetHypervisorDetails
+  
+  console.log('Proxy WS: targetHypervisorDetails for WebSocket Auth:', JSON.stringify(targetHypervisorDetails, null, 2));
+  
   const proxmoxWsUrl = `wss://${proxmoxHostIp}:8006/api2/json/nodes/${node}/qemu/${vmid}/vncwebsocket?port=${proxmoxInternalVncPort}&vncticket=${encodeURIComponent(proxmoxVncTicket)}`;
+  // Construct the Authorization header using the details from the targetHypervisor
+  // targetHypervisorDetails should be set if foundOnScan was true or if found via DB.
+  let wsHeaders = {};
+  if (targetHypervisorDetails &&
+      targetHypervisorDetails.username &&
+      targetHypervisorDetails.token_name &&
+      targetHypervisorDetails.api_token) {
+    const pveApiTokenId = `${targetHypervisorDetails.username}!${targetHypervisorDetails.token_name}`;
+    const pveApiTokenSecret = targetHypervisorDetails.api_token;
+    wsHeaders['Authorization'] = `PVEAPIToken ${pveApiTokenId}=${pveApiTokenSecret}`;
+    // Log only a part of the secret for security
+    console.log(`Proxy WS: Constructed Authorization Header: PVEAPIToken ${pveApiTokenId}=${pveApiTokenSecret ? pveApiTokenSecret.substring(0, 5) + '...' : 'MISSING_SECRET'}`);
+  } else {
+    console.error('Proxy WS: CRITICAL - Missing details in targetHypervisorDetails for WebSocket Authorization. Cannot set PVEAPIToken.');
+    console.error('Proxy WS: targetHypervisorDetails was:', JSON.stringify(targetHypervisorDetails, null, 2));
+    wsClient.close(1011, 'Backend configuration error: Cannot authenticate to Proxmox for console.');
+    return; // Stop further processing for this client
+  }
+  
+  console.log(`Proxy WS: Headers to be sent to Proxmox WebSocket:`, JSON.stringify(wsHeaders, null, 2));
   console.log(`Proxy WS: Intentando conectar a Proxmox en: ${proxmoxWsUrl}`);
 
-  // Construct the Authorization header using the details from the targetHypervisor
-  // targetHypervisor should be set if foundOnScan was true or if found via DB.
-  let wsHeaders = {};
-  if (targetHypervisor && targetHypervisor.username && targetHypervisor.token_name && targetHypervisor.api_token) {
-    const pveApiTokenId = `${targetHypervisor.username}!${targetHypervisor.token_name}`;
-    const pveApiTokenSecret = targetHypervisor.api_token;
-    wsHeaders['Authorization'] = `PVEAPIToken ${pveApiTokenId}=${pveApiTokenSecret}`;
-    console.log(`Proxy WS: Using PVEAPIToken for WebSocket handshake to Proxmox.`);
-  }
   const wsProxmox = new WebSocket(proxmoxWsUrl, {
     rejectUnauthorized: false, // Coincide con tu configuración de Proxmox API
     headers: wsHeaders // Add the Authorization header
