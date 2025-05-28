@@ -1196,6 +1196,7 @@ app.get('/api/vms/:id', authenticate, async (req, res) => {
         hypervisorData = {
           name: pyvmomiVmDetails.name,
           nodeName: pyvmomiVmDetails.host_name || targetHypervisor.hypervisor_name,
+          description: pyvmomiVmDetails.annotation || '', // Mapear anotación de vSphere a descripción
           status: pyvmomiVmDetails.power_state === 'poweredOn' ? 'running' : (pyvmomiVmDetails.power_state === 'poweredOff' ? 'stopped' : pyvmomiVmDetails.power_state.toLowerCase()),
           ipAddress: pyvmomiVmDetails.ip_address || null,
           ipAddresses: vsphereIps, 

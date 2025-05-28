@@ -12,6 +12,7 @@ import {
   Info,
   ServerCog,
   NetworkIcon,
+  FileText, // Importar FileText para el icono de descripción
   Tag,
   Ticket,
   Users,
@@ -33,7 +34,7 @@ export default function VMDetails() {
   const [loading, setLoading] = useState(true);
   const [metrics, setMetrics] = useState<VMMetrics | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
-  const { token: authToken } = useAuth(); // Get token from context
+  const { user, token: authToken } = useAuth(); // Get user and token from context
   const [consoleDetails, setConsoleDetails] = useState<ConsoleDetailsData | null>(null); // Use specific type
   const [isConsoleLoading, setIsConsoleLoading] = useState(false);
   const [showConsoleView, setShowConsoleView] = useState(false); // To toggle console modal
@@ -260,7 +261,7 @@ export default function VMDetails() {
         </div>
 
         {/* VM Controls Section */}
-        {vm && (
+        {vm && (user?.role === 'admin' || user?.role === 'user') && (
             <VMControls vm={vm} onAction={handleVMAction} />
         )}
 
@@ -352,9 +353,8 @@ export default function VMDetails() {
               )}
               {/* Description */}
               {vm.description && (
-                <div className="flex items-start space-x-2">
-                  {/* Optional: Add an icon for description if desired */}
-                  {/* <FileText className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" /> */}
+                <div className="flex items-start space-x-2 pt-1">
+                  <FileText className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" />
                   <div>
                     <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
                       Descripción:

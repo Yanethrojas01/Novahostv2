@@ -28,7 +28,7 @@ const VMControls: React.FC<VMControlsProps> = ({ vm, onAction }) => {
 
   return (
     <div className="bg-white dark:bg-slate-800 rounded-lg shadow-md p-4 mt-6">
-      <h3 className="text-lg font-medium text-slate-900 dark:text-white mb-4">Power Actions</h3>
+      <h3 className="text-lg font-medium text-slate-900 dark:text-white mb-4">Acciones de Encendido</h3>
       
       <div className="flex flex-wrap gap-3">
         {/* Botón Start: disponible si no está 'running' ni 'paused' (o 'suspended') */}
