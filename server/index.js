@@ -669,7 +669,7 @@ app.post('/api/vms/:id/action', authenticate, async (req, res) => {
 
   console.log(`--- Received POST /api/vms/${vmExternalId}/action --- Action: ${action}`);
 
-  if (!['start', 'stop', 'restart'].includes(action)) {
+  if (!['start', 'stop', 'restart', 'suspend', 'resume', 'shutdown'].includes(action)) {
     return res.status(400).json({ error: 'Invalid action specified.' });
   }
 
@@ -752,8 +752,22 @@ app.post('/api/vms/:id/action', authenticate, async (req, res) => {
       let proxmoxResult;
       switch (action) {
         case 'start': proxmoxResult = await vmPath.start.$post(); break;
-        case 'stop': proxmoxResult = await vmPath.stop.$post(); break;
-        case 'restart': proxmoxResult = await vmPath.reboot.$post(); break;
+        case 'stop': // Changed to hard stop for Proxmox to avoid timeout issues
+          console.log(`Proxmox action 'stop': Performing hard stop for VM ${vmExternalId}`);
+          proxmoxResult = await proxmoxClientInstance.nodes.$(targetNode).qemu.$(vmExternalId).status.stop.$post();
+          break;
+        case 'restart': // Changed to hard restart for Proxmox
+          console.log(`Proxmox action 'restart': Performing hard restart (stop then start) for VM ${vmExternalId}`);
+          await proxmoxClientInstance.nodes.$(targetNode).qemu.$(vmExternalId).status.stop.$post();
+          // Esperar un momento para asegurar que la VM se detenga antes de intentar iniciarla.
+          // Considera que esto es un delay fijo y podría no ser ideal para todos los casos.
+          // Monitorear el estado de la tarea de detención sería más robusto pero más complejo aquí.
+          await new Promise(resolve => setTimeout(resolve, 5000)); // 5 segundos de espera
+          proxmoxResult = await proxmoxClientInstance.nodes.$(targetNode).qemu.$(vmExternalId).status.start.$post();
+          break;
+        case 'suspend': proxmoxResult = await vmPath.suspend.$post(); break;
+        case 'resume': proxmoxResult = await vmPath.resume.$post(); break;
+        case 'shutdown': proxmoxResult = await proxmoxClientInstance.nodes.$(targetNode).qemu.$(vmExternalId).status.stop.$post(); break; // Hard power off (Force Off) - Explicit client instance
         default: throw new Error('Invalid action');
       }
       taskId = proxmoxResult;
@@ -761,11 +775,31 @@ app.post('/api/vms/:id/action', authenticate, async (req, res) => {
       console.log(`Proxmox action '${action}' result for VM ${vmExternalId}:`, taskId);
     } else if (targetHypervisor.type === 'vsphere') {
       console.log(`Performing vSphere action '${action}' on VM ${vmExternalId} via PyVmomi microservice...`);
-      let pyvmomiAction = '';
-      if (action === 'start') pyvmomiAction = 'on';
-      else if (action === 'stop') pyvmomiAction = 'off';
-      // No specific 'else if (action === 'restart')' needed here for pyvmomiAction,
-      // as the restart logic is handled below by calling 'off' then 'on'.
+      let pyvmomiAction = action; // Default to sending the action name directly
+
+      // Map frontend actions to PyVmomi actions
+      switch (action) {
+        case 'start':
+        case 'resume': // vSphere uses 'on' for both start and resume
+          pyvmomiAction = 'on';
+          break;
+        case 'stop': // Graceful stop
+          pyvmomiAction = 'shutdown_guest';
+          break;
+        case 'restart': // Graceful restart
+          pyvmomiAction = 'reboot_guest';
+          break;
+        case 'shutdown': // Force off
+          pyvmomiAction = 'off';
+          break;
+        case 'suspend':
+          pyvmomiAction = 'suspend';
+          break;
+        // 'suspend' is already correct
+        default:
+          // pyvmomiAction remains as action
+          break;
+      }
 
       if (action === 'restart') {
             console.log(`Simulating restart for vSphere VM ${vmExternalId}: power off then power on.`);
@@ -773,9 +807,9 @@ app.post('/api/vms/:id/action', authenticate, async (req, res) => {
             try {
               console.log(`Action route: Calling PyVmomi for 'off' for VM ${vmExternalId} on hypervisor ${targetHypervisor.id}`);
 
-              await callPyvmomiService('POST', `/vm/${vmExternalId}/power`, targetHypervisor, { action: 'off' });
+              await callPyvmomiService('POST', `/vm/${vmExternalId}/power`, targetHypervisor, { action: 'reboot_guest' }); // Or 'off' then 'on' if reboot_guest is not robust
               console.log(`Action route: Calling PyVmomi for 'on' for VM ${vmExternalId} on hypervisor ${targetHypervisor.id}`);
-              await callPyvmomiService('POST', `/vm/${vmExternalId}/power`, targetHypervisor, { action: 'on' });
+              // await callPyvmomiService('POST', `/vm/${vmExternalId}/power`, targetHypervisor, { action: 'on' }); // if doing off then on
               resultMessage = `vSphere VM ${vmExternalId} restart (off/on) action initiated via PyVmomi.`;
             } catch (pyError) {
               console.error(`Action route: Error during vSphere restart sequence for ${vmExternalId}:`, pyError.message, "Status:", pyError.status, "Details:", pyError.details);
@@ -783,7 +817,7 @@ app.post('/api/vms/:id/action', authenticate, async (req, res) => {
             }
           } else { // This covers 'start' (mapped to 'on') or 'stop' (mapped to 'off')
             // This will be 'on' or 'off'
-            console.log(`Action route: Calling PyVmomi for '${pyvmomiAction}' for VM ${vmExternalId} on hypervisor ${targetHypervisor.id}`);
+            console.log(`Action route: Calling PyVmomi for action '${pyvmomiAction}' (mapped from '${action}') for VM ${vmExternalId} on hypervisor ${targetHypervisor.id}`);
              try {
               await callPyvmomiService('POST', `/vm/${vmExternalId}/power`, targetHypervisor, { action: pyvmomiAction });
               resultMessage = `vSphere VM ${vmExternalId} ${action} action initiated via PyVmomi.`;

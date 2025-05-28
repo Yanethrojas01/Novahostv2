@@ -402,7 +402,7 @@ def power_vm(vm_uuid):
     host = request.json.get('host')
     user = request.json.get('user')
     password = request.json.get('password')
-    action = request.json.get('action')  # 'on' or 'off'
+    action = request.json.get('action')  # 'on', 'off', 'suspend', 'resume', 'shutdown_guest', 'reboot_guest'
     port = int(request.json.get('port', 443)) # Asumir puerto si no se provee
 
     app.logger.info(f"Power action: Received raw UUID param: '{original_vm_uuid_param}', Stripped UUID for search: '{vm_uuid}', Action: '{action}', Host: {host}")
@@ -429,10 +429,26 @@ def power_vm(vm_uuid):
         if not vm:
             app.logger.error(f"Power action: VM with UUID '{vm_uuid}' not found on host '{host}'.")
             return jsonify({'error': 'VM not found'}), 404
+        
+        task = None
         if action == 'on':
-            task = vm.PowerOnVM_Task()
+            # PowerOnVM_Task is used for starting and resuming
+            if vm.runtime.powerState == vim.VirtualMachinePowerState.poweredOff or vm.runtime.powerState == vim.VirtualMachinePowerState.suspended:
+                task = vm.PowerOnVM_Task()
+            else:
+                app.logger.info(f"Power action: VM '{vm.name}' is already on or in an unsuitable state for 'on' action.")
+                return jsonify({'status': 'success', 'message': 'VM already powered on or not in a state to be powered on.'})
         elif action == 'off':
             task = vm.PowerOffVM_Task()
+        elif action == 'suspend':
+            task = vm.SuspendVM_Task()
+        elif action == 'shutdown_guest': # Graceful shutdown
+            if vm.guest.toolsRunningStatus == 'guestToolsRunning':
+                task = vm.ShutdownGuest()
+            else: # Fallback to hard power off if tools are not running
+                task = vm.PowerOffVM_Task()
+        elif action == 'reboot_guest': # Graceful reboot
+            task = vm.RebootGuest() # This will fail if tools not running, wait_for_tasks will catch it.
         else:
             return jsonify({'error': 'Invalid action'}), 400
 

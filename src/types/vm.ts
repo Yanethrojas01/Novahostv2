@@ -9,6 +9,8 @@ export type VMStatus =
   | 'error'
   | 'unknown';
 
+export type PowerAction = 'start' | 'stop' | 'restart' | 'suspend' | 'resume' | 'shutdown';
+
 export interface VMSpecs {
   cpu: number;
   memory: number; // In MB

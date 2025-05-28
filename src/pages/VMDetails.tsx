@@ -18,11 +18,12 @@ import {
   TerminalSquare,
   ArrowLeft, // Importar ArrowLeft
 } from "lucide-react"; // Added Ticket
-import type { VM, VMMetrics } from "../types/vm"; // Use the correct VM type and import VMMetrics
+import type { VM, VMMetrics, PowerAction } from "../types/vm"; // Use the correct VM type and import VMMetrics, PowerAction
 import { formatBytes } from "../utils/formatters"; // Helper function to format bytes (create this file if needed)
 import { toast } from "react-hot-toast";
 import { useAuth } from "../hooks/useAuth";
 import VMConsoleView, { type ConsoleDetailsData } from "../components/VMConsoleView"; // Import ConsoleDetailsData
+import VMControls from "../components/vmdetails/VMControls"; // Import the new VMControls component
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL; // Read from .env
 
@@ -37,32 +38,31 @@ export default function VMDetails() {
   const [isConsoleLoading, setIsConsoleLoading] = useState(false);
   const [showConsoleView, setShowConsoleView] = useState(false); // To toggle console modal
 
+  const fetchVMDetails = async () => {
+    if (!id) return;
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/vms/${id}`, {
+        headers: {
+          ...(authToken && { Authorization: `Bearer ${authToken}` }),
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data: VM = await response.json();
+      setVM(data);
+    } catch (error) {
+      console.error("Error fetching VM details:", error);
+      toast.error("Failed to load VM details.");
+      setVM(null);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchVM = async () => {
-      setLoading(true);
-      try {
-        //const token = localStorage.getItem('authToken'); // Recuperar token
-        const response = await fetch(`${API_BASE_URL}/vms/${id}`, {
-          headers: {
-            ...(authToken && { Authorization: `Bearer ${authToken}` }), // Usar token real
-          },
-        });
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        const data: VM = await response.json();
-        setVM(data);
-      } catch (error) {
-        console.error("Error fetching VM details:", error);
-        toast.error("Failed to load VM details.");
-        setVM(null); // Ensure VM is null on error
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchVM();
+    fetchVMDetails();
   }, [id, authToken]);
 
   // Fetch metrics periodically
@@ -134,6 +134,43 @@ export default function VMDetails() {
       setShowConsoleView(false);
     } finally {
       setIsConsoleLoading(false);
+    }
+  };
+
+  const handleVMAction = async (action: PowerAction) => {
+    if (!vm) {
+      toast.error("VM data not available to perform action.");
+      return;
+    }
+    // Optional: Optimistic UI update for status can be done here
+    // For example: setVM(prev => prev ? ({ ...prev, status: 'pending' }) : null);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/vms/${vm.id}/action`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(authToken && { Authorization: `Bearer ${authToken}` }),
+        },
+        body: JSON.stringify({ action }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.details || errorData.error || `Failed to perform action: ${action}`);
+      }
+
+      toast.success(`Action '${action}' initiated successfully for ${vm.name}.`);
+      // Refresh VM details after a short delay to allow hypervisor to process
+      setTimeout(() => {
+        fetchVMDetails(); // Use the new standalone fetch function
+        // Also refetch metrics if VM was started/resumed
+        if (action === 'start' || action === 'resume') setMetricsLoading(true); // This will trigger metrics useEffect
+      }, 3000); // Adjust delay as needed
+    } catch (error: any) {
+      console.error(`Error performing action ${action} on VM ${vm.id}:`, error);
+      toast.error(`Failed to ${action} VM: ${error.message}`);
+      // Optional: Revert optimistic UI update if one was made
     }
   };
 
@@ -221,6 +258,11 @@ export default function VMDetails() {
             )} */}
           </div>
         </div>
+
+        {/* VM Controls Section */}
+        {vm && (
+            <VMControls vm={vm} onAction={handleVMAction} />
+        )}
 
         {/* Details Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 p-6">
