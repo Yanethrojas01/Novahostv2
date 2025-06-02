@@ -126,7 +126,7 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
         rfbInstance.current = new RFB(rfbCanvasRef.current, rfbUrl, {
             credentials: { password: ticket },
         });
-
+console.log(rfbInstance.current)
         rfbInstance.current.addEventListener('connect', () => {
             if (!isMounted) return;
             setConnectionStatus(`Connected to ${vmName} (Proxmox)`);
