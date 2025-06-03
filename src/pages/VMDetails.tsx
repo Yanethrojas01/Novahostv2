@@ -553,7 +553,7 @@ export default function VMDetails() {
         )}
        
         {/* Performance Metrics Section */}
-        {vm.status === "running" && (
+        {vm.status === "running" && (vm.hypervisorType === 'proxmox' || vm.hypervisorType === 'vsphere') && authToken && (
           <div className="border-t border-slate-200 dark:border-slate-700 p-6">
             <h3 className="text-xl font-semibold text-slate-800 dark:text-slate-100 mb-4 flex items-center">
               <Activity className="w-6 h-6 mr-2 text-primary-600" />

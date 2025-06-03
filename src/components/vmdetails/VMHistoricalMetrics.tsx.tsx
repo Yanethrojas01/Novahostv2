@@ -19,7 +19,7 @@ interface HistoricalDataPoint {
 
 interface VMHistoricalMetricsProps {
   vmId: string;
-  nodeName: string; // Required for Proxmox
+  nodeName?: string; // Required for Proxmox, optional for vSphere
   hypervisorType: 'proxmox' | 'vsphere'; // To potentially extend later
   authToken: string | null;
 }
@@ -38,16 +38,24 @@ const VMHistoricalMetrics: React.FC<VMHistoricalMetricsProps> = ({ vmId, nodeNam
   const [selectedTimeframe, setSelectedTimeframe] = useState('hour');
 
   const fetchHistoricalMetrics = useCallback(async () => {
-    if (!authToken || !vmId || (hypervisorType === 'proxmox' && !nodeName)) {
-      // Don't fetch if essential props are missing, though parent should ensure they are passed
-      return;
+    if (!authToken || !vmId) {
+        return;
+      }
+      if (hypervisorType === 'proxmox' && !nodeName) {
+        console.warn("Proxmox historical metrics fetch: nodeName is missing.");
+          return;
     }
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/vms/${vmId}/historical-metrics?timeframe=${selectedTimeframe}&node=${nodeName}`, {
-        headers: {
-          'Authorization': `Bearer ${authToken}`,
-        },
+        let url = `${API_BASE_URL}/vms/${vmId}/historical-metrics?timeframe=${selectedTimeframe}`;
+        if (hypervisorType === 'proxmox' && nodeName) {
+          url += `&node=${nodeName}`; // nodeName is only relevant for Proxmox in the query
+        }
+        const response = await fetch(url, {
+          headers: {
+            'Authorization': `Bearer ${authToken}`, // Ensure Bearer prefix
+          },
+        
       });
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ message: 'Error desconocido del servidor' }));
@@ -65,27 +73,18 @@ const VMHistoricalMetrics: React.FC<VMHistoricalMetricsProps> = ({ vmId, nodeNam
   }, [vmId, nodeName, hypervisorType, authToken, selectedTimeframe]);
 
   useEffect(() => {
-    if (hypervisorType === 'proxmox') { // Initially, only fetch for Proxmox
-      fetchHistoricalMetrics();
-    } else {
-      setMetricsData([]); // Clear data for unsupported types for now
-    }
+     // Fetch metrics when component mounts or dependencies change
+     fetchHistoricalMetrics();
   }, [fetchHistoricalMetrics, hypervisorType]);
 
   const formatXAxis = (tickItem: number) => {
     const date = new Date(tickItem);
     if (selectedTimeframe === 'hour') return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    if (selectedTimeframe === 'day') return date.toLocaleTimeString([], { day: 'numeric', month:'short', hour: '2-digit', minute: '2-digit' });
+    if (selectedTimeframe === 'day') return date.toLocaleTimeString([], { month:'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
   };
 
-  if (hypervisorType !== 'proxmox') {
-    return (
-      <div className="p-4 text-sm text-slate-500 dark:text-slate-400">
-        Las métricas históricas aún no están implementadas para {hypervisorType}.
-      </div>
-    );
-  }
+
 
   return (
     <div className="border-t border-slate-200 dark:border-slate-700 p-6">
