@@ -1,7 +1,3 @@
-/*
-  Esquema completo corregido - BoltV2 (Ordenado por dependencias)
-*/
-
 -- Ensure the public schema is used
 SET search_path TO public;
 
@@ -185,18 +181,21 @@ CREATE POLICY "Allow app user to manage final clients" ON final_clients
 -- Hypervisors
 CREATE POLICY "Allow public read access to hypervisors" ON hypervisors
     FOR SELECT USING (true);
-CREATE POLICY "Allow app user to read hypervisors" ON hypervisors
-    FOR SELECT TO novauser USING (true); -- App user needs read access
+-- CREATE POLICY "Allow app user to read hypervisors" ON hypervisors -- Esta política es redundante si existe la de abajo FOR ALL
+--    FOR SELECT TO novauser USING (true);
 
 CREATE POLICY "Allow postgres user to manage hypervisors" ON hypervisors
     FOR ALL TO postgres USING (true);
+-- Allow your application user to manage hypervisors
+CREATE POLICY "Allow app user to manage hypervisors" ON hypervisors
+    FOR ALL TO novauser USING (true);
 
 -- Virtual Machines
 CREATE POLICY "Allow public read access to VMs" ON virtual_machines
     FOR SELECT USING (true);
--- Allow app user to read VMs
-CREATE POLICY "Allow app user to read VMs" ON virtual_machines
-    FOR SELECT TO novauser USING (true);
+-- Allow app user to read VMs -- Redundante si existe FOR ALL
+-- CREATE POLICY "Allow app user to read VMs" ON virtual_machines
+--    FOR SELECT TO novauser USING (true);
 
 CREATE POLICY "Allow postgres user to manage VMs" ON virtual_machines
     FOR ALL TO postgres USING (true);
@@ -219,27 +218,31 @@ CREATE POLICY "Allow app user to manage VM metrics" ON vm_metrics
 -- VM Plans
 CREATE POLICY "Allow public read access to active plans" ON vm_plans
     FOR SELECT USING (is_active = true);
--- Allow app user to read active plans
-CREATE POLICY "Allow app user to read active plans" ON vm_plans FOR SELECT TO novauser USING (is_active = true);
+-- Allow app user to read active plans -- Redundante si existe FOR ALL
+-- CREATE POLICY "Allow app user to read active plans" ON vm_plans FOR SELECT TO novauser USING (is_active = true);
 
 CREATE POLICY "Allow postgres user to manage plans" ON vm_plans
     FOR ALL TO postgres USING (true);
+-- Allow app user to manage plans
+CREATE POLICY "Allow app user to manage vm_plans" ON vm_plans
+    FOR ALL TO novauser USING (true);
 
 -- Roles
 CREATE POLICY "Allow public read access to roles" ON roles
     FOR SELECT USING (true);
--- Allow app user to read roles
-CREATE POLICY "Allow app user to read roles" ON roles
-    FOR SELECT TO novauser USING (true);
+-- Allow app user to read roles -- Redundante si existe FOR ALL
+-- CREATE POLICY "Allow app user to read roles" ON roles
+--    FOR SELECT TO novauser USING (true);
 
 CREATE POLICY "Allow postgres user to manage roles" ON roles
     FOR ALL TO postgres USING (true);
--- Allow app user to manage roles (if needed, e.g., for user creation/update)
--- CREATE POLICY "Allow app user to manage roles" ON roles FOR ALL TO novauser USING (true); -- Uncomment if your app modifies roles
+-- Allow app user to manage roles
+CREATE POLICY "Allow app user to manage roles" ON roles
+    FOR ALL TO novauser USING (true);
 
 -- Users
 CREATE POLICY "Allow postgres user to manage users" ON users
     FOR ALL TO postgres USING (true);
--- Allow app user to manage users (if needed, e.g., for user creation/update)
+-- Allow app user to manage users
 CREATE POLICY "Allow app user to manage users" ON users
     FOR ALL TO novauser USING (true);
