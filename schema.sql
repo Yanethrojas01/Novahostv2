@@ -174,10 +174,16 @@ CREATE POLICY "Allow public read access to final clients" ON final_clients
 CREATE POLICY "Allow postgres user to manage final clients" ON final_clients
     FOR ALL TO postgres USING (true);
 
+-- Allow your application user to manage final clients
+CREATE POLICY "Allow app user to manage final clients" ON final_clients
+    FOR ALL TO novahost_app_user USING (true);
+
 -- Políticas de acceso
 -- Hypervisors
 CREATE POLICY "Allow public read access to hypervisors" ON hypervisors
     FOR SELECT USING (true);
+CREATE POLICY "Allow app user to read hypervisors" ON hypervisors
+    FOR SELECT TO novahost_app_user USING (true); -- App user needs read access
 
 CREATE POLICY "Allow postgres user to manage hypervisors" ON hypervisors
     FOR ALL TO postgres USING (true);
@@ -185,9 +191,16 @@ CREATE POLICY "Allow postgres user to manage hypervisors" ON hypervisors
 -- Virtual Machines
 CREATE POLICY "Allow public read access to VMs" ON virtual_machines
     FOR SELECT USING (true);
+-- Allow app user to read VMs
+CREATE POLICY "Allow app user to read VMs" ON virtual_machines
+    FOR SELECT TO novahost_app_user USING (true);
 
 CREATE POLICY "Allow postgres user to manage VMs" ON virtual_machines
     FOR ALL TO postgres USING (true);
+-- Allow app user to manage VMs
+CREATE POLICY "Allow app user to manage VMs" ON virtual_machines
+    FOR ALL TO novahost_app_user USING (true);
+
 
 -- VM Metrics
 CREATE POLICY "Allow public read access to VM metrics" ON vm_metrics
@@ -195,10 +208,16 @@ CREATE POLICY "Allow public read access to VM metrics" ON vm_metrics
 
 CREATE POLICY "Allow postgres user to manage VM metrics" ON vm_metrics
     FOR ALL TO postgres USING (true);
+-- Allow app user to manage VM metrics
+CREATE POLICY "Allow app user to manage VM metrics" ON vm_metrics
+    FOR ALL TO novahost_app_user USING (true);
+
 
 -- VM Plans
 CREATE POLICY "Allow public read access to active plans" ON vm_plans
     FOR SELECT USING (is_active = true);
+-- Allow app user to read active plans
+CREATE POLICY "Allow app user to read active plans" ON vm_plans FOR SELECT TO novahost_app_user USING (is_active = true);
 
 CREATE POLICY "Allow postgres user to manage plans" ON vm_plans
     FOR ALL TO postgres USING (true);
@@ -206,10 +225,18 @@ CREATE POLICY "Allow postgres user to manage plans" ON vm_plans
 -- Roles
 CREATE POLICY "Allow public read access to roles" ON roles
     FOR SELECT USING (true);
+-- Allow app user to read roles
+CREATE POLICY "Allow app user to read roles" ON roles
+    FOR SELECT TO novahost_app_user USING (true);
 
 CREATE POLICY "Allow postgres user to manage roles" ON roles
     FOR ALL TO postgres USING (true);
+-- Allow app user to manage roles (if needed, e.g., for user creation/update)
+-- CREATE POLICY "Allow app user to manage roles" ON roles FOR ALL TO novahost_app_user USING (true); -- Uncomment if your app modifies roles
 
 -- Users
 CREATE POLICY "Allow postgres user to manage users" ON users
     FOR ALL TO postgres USING (true);
+-- Allow app user to manage users (if needed, e.g., for user creation/update)
+CREATE POLICY "Allow app user to manage users" ON users
+    FOR ALL TO novahost_app_user USING (true);
