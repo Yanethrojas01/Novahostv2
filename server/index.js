@@ -1156,7 +1156,7 @@ app.get('/api/vms/:id', authenticate, async (req, res) => {
       let ipAddresses = [];
       if (vmStatus.status === 'running' && vmStatus.agent === 1) { // Check if agent is enabled and VM is running
         try {
-          const agentNetInfo = await proxmoxClientInstance.nodes.$(targetNode).qemu.$(vmExternalId).agent('network-get-interfaces').$get({timeout: 3000});
+          const agentNetInfo = await proxmoxClientInstance.nodes.$(targetNode).qemu.$(vmExternalId).agent.$post({ command: 'network-get-interfaces' }, { timeout: 3000 });
           ipAddresses = extractIpAddressesFromAgent(agentNetInfo?.result);
           if (ipAddresses.length > 0) ipAddress = ipAddresses[0];
         } catch (agentError) {
@@ -1170,9 +1170,10 @@ app.get('/api/vms/:id', authenticate, async (req, res) => {
         ipAddress: ipAddress,
         ipAddresses: ipAddresses,
         specs: { // Specs from Proxmox
-            cpu: vmConfig.cores * (vmConfig.sockets || 1),
-            memory: Math.round(vmConfig.memory / (1024 * 1024)), // MB
-            disk: Math.round(vmConfig.maxdisk / (1024 * 1024 * 1024)), // GB
+          cpu: (vmConfig.cores || 0) * (vmConfig.sockets || 1), // Ensure cores is a number, sockets defaults to 1
+          memory: vmConfig.memory || 0, // memory is already in MB from Proxmox API, ensure it's a number
+          disk: Math.round((vmConfig.maxdisk || 0) / (1024 * 1024 * 1024)), // GB, ensure maxdisk is a number
+        
             os: vmConfig.ostype,
           },
         tags: vmConfig.tags ? vmConfig.tags.split(';') : [],
@@ -1313,7 +1314,7 @@ app.get('/api/vms/:id', authenticate, async (req, res) => {
       hostname: hypervisorData.hostname,
       vmwareToolsStatus: hypervisorData.vmwareToolsStatus,
     };
-
+console.log(finalVmDetails);
     res.json(finalVmDetails);
   } catch (error) {
     console.error(`Error fetching details for VM ${vmExternalId}:`, error);
