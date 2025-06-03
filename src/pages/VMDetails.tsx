@@ -286,7 +286,7 @@ export default function VMDetails() {
             <div className="flex items-center space-x-3 mb-3">
               <Memory className="w-6 h-6 text-blue-600" />
               <h3 className="text-lg font-semibold text-slate-700 dark:text-slate-200">
-                Memory
+                Memoria
               </h3>
             </div>
             <p className="text-slate-600 dark:text-slate-300">
@@ -302,7 +302,7 @@ export default function VMDetails() {
             <div className="flex items-center space-x-3 mb-3">
               <HardDrive className="w-6 h-6 text-blue-600" />
               <h3 className="text-lg font-semibold text-slate-700 dark:text-slate-200">
-                Storage
+                Almacenaniento
               </h3>
             </div>
             <p className="text-slate-600 dark:text-slate-300">
@@ -568,7 +568,7 @@ export default function VMDetails() {
                   <div className="flex items-center space-x-2 mb-1">
                     <Cpu className="w-5 h-5 text-blue-500" />
                     <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
-                      CPU Usage
+                      Uso CPU
                     </span>
                   </div>
                   <p className="text-lg font-semibold text-slate-800 dark:text-slate-100">
@@ -580,7 +580,7 @@ export default function VMDetails() {
                   <div className="flex items-center space-x-2 mb-1">
                     <Memory className="w-5 h-5 text-green-500" />
                     <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
-                      Memory Usage
+                      Uso Memoria
                     </span>
                   </div>
                   <p className="text-lg font-semibold text-slate-800 dark:text-slate-100">
@@ -618,7 +618,7 @@ export default function VMDetails() {
             ) : (
               !metricsLoading && (
                 <p className="text-slate-500 dark:text-slate-400">
-                  Metrics data is currently unavailable.
+                  Metricas no disponibles. Asegúrate de que la VM esté en ejecución y que el agente esté configurado correctamente.
                 </p>
               )
             )}
