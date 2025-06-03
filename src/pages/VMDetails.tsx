@@ -26,6 +26,7 @@ import { toast } from "react-hot-toast";
 import { useAuth } from "../hooks/useAuth";
 import VMConsoleView, { type ConsoleDetailsData } from "../components/VMConsoleView"; // Import ConsoleDetailsData
 import VMControls from "../components/vmdetails/VMControls"; // Import the new VMControls component
+import VMHistoricalMetrics from "../components/vmdetails/VMHistoricalMetrics.tsx"; // Import historical metrics component
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL; // Read from .env
 
@@ -556,7 +557,7 @@ export default function VMDetails() {
           <div className="border-t border-slate-200 dark:border-slate-700 p-6">
             <h3 className="text-xl font-semibold text-slate-800 dark:text-slate-100 mb-4 flex items-center">
               <Activity className="w-6 h-6 mr-2 text-primary-600" />
-              Performance Metrics
+              Metricas de Rendimiento
               {metricsLoading && (
                 <div className="ml-2 animate-spin rounded-full h-4 w-4 border-b-2 border-slate-400"></div>
               )}
@@ -624,6 +625,16 @@ export default function VMDetails() {
             )}
           </div>
         )}
+ {/* Historical Metrics Section - Only for Proxmox for now */}
+ {vm.status === "running" && vm.hypervisorType === 'proxmox' && vm.nodeName && authToken && (
+          <VMHistoricalMetrics
+            vmId={vm.id}
+            nodeName={vm.nodeName}
+            hypervisorType={vm.hypervisorType}
+            authToken={authToken}
+          />
+        )}
+
       </div>
       {/* Console Modal */}
       {showConsoleView && consoleDetails && (

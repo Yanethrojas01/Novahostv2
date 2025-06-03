@@ -1468,6 +1468,86 @@ app.get('/api/vms/:id/metrics', authenticate, async (req, res) => {
   }
 });
 
+// GET /api/vms/:id/historical-metrics - Get historical performance metrics
+app.get('/api/vms/:id/historical-metrics', authenticate, async (req, res) => {
+  const { id: vmExternalId } = req.params;
+  const timeframe = req.query.timeframe || 'hour'; // Default to 'hour'
+  const validTimeframes = ['hour', 'day', 'week', 'month', 'year'];
+
+  if (typeof timeframe !== 'string' || !validTimeframes.includes(timeframe)) {
+    return res.status(400).json({ error: 'Invalid timeframe. Must be one of: ' + validTimeframes.join(', ') });
+  }
+
+  console.log(`--- Received GET /api/vms/${vmExternalId}/historical-metrics?timeframe=${timeframe} ---`);
+
+  let targetHypervisor = null;
+  let targetNode = null; // For Proxmox
+
+  try {
+    // Step 1: Find the VM's Hypervisor (Iterate or DB lookup)
+    // This logic is simplified; a direct DB lookup for the VM to get its hypervisor_id would be more efficient.
+    const { rows: connectedHypervisors } = await pool.query(
+      `SELECT id, type, host, username, api_token, token_name 
+       FROM hypervisors WHERE status = 'connected'`
+    );
+
+    let vmFoundOnHypervisor = false;
+    for (const hypervisor of connectedHypervisors) {
+      if (hypervisor.type === 'proxmox') {
+        const [dbHost, dbPortStr] = hypervisor.host.split(':');
+        const port = dbPortStr ? parseInt(dbPortStr, 10) : 8006;
+        const cleanHost = dbHost;
+        const proxmoxConfig = {
+          host: cleanHost, port: port, username: hypervisor.username,
+          tokenID: `${hypervisor.username}!${hypervisor.token_name}`,
+          tokenSecret: hypervisor.api_token, timeout: 10000, rejectUnauthorized: false
+        };
+        const proxmox = proxmoxApi(proxmoxConfig);
+        try {
+          const vmResources = await proxmox.cluster.resources.$get({ type: 'vm' });
+          const foundVm = vmResources.find(vm => vm.vmid.toString() === vmExternalId);
+          if (foundVm) {
+            targetHypervisor = hypervisor;
+            targetNode = foundVm.node;
+            vmFoundOnHypervisor = true;
+            break;
+          }
+        } catch (findError) { /* ignore, try next hypervisor */ }
+      }
+      // TODO: Add vSphere historical metrics logic if available via PyVmomi
+    }
+
+    if (!vmFoundOnHypervisor || !targetHypervisor) {
+      return res.status(404).json({ error: `VM ${vmExternalId} not found on any connected hypervisor for historical metrics.` });
+    }
+
+    if (targetHypervisor.type === 'proxmox' && targetNode) {
+      const proxmox = await getProxmoxClient(targetHypervisor.id); // Use helper to get client
+      const rrdData = await proxmox.nodes.$(targetNode).qemu.$(vmExternalId).rrddata.$get({ timeframe });
+
+      // Transform data for easier consumption by charts
+      const formattedMetrics = rrdData.map((dataPoint) => ({
+        time: dataPoint.time * 1000, // Convert seconds to milliseconds for JS Date
+        cpuUsagePercent: (dataPoint.cpu || 0) * 100, // CPU usage as percentage
+        memoryUsageBytes: dataPoint.mem || 0,
+        maxMemoryBytes: dataPoint.maxmem || 0,
+        memoryUsagePercent: dataPoint.maxmem > 0 ? (dataPoint.mem / dataPoint.maxmem) * 100 : 0,
+        diskReadBps: dataPoint.diskread || 0,
+        diskWriteBps: dataPoint.diskwrite || 0,
+        netInBps: dataPoint.netin || 0,
+        netOutBps: dataPoint.netout || 0,
+      })).filter(dp => dp.time > 0); // Filter out potential zero/invalid timestamps
+
+      res.json(formattedMetrics);
+    } else {
+      res.status(400).json({ error: `Historical metrics not implemented for hypervisor type ${targetHypervisor.type} or node not found.` });
+    }
+  } catch (error) {
+    console.error(`Error fetching historical metrics for VM ${vmExternalId}:`, error);
+    const errorDetails = getProxmoxError(error); // Adapt if not Proxmox
+    res.status(errorDetails.code || 500).json({ error: 'Failed to retrieve historical metrics.', details: errorDetails.message });
+  }
+});
 
 // Helper function to get authenticated proxmox client (kept for Proxmox logic)
 async function getProxmoxClient(hypervisorId) {
