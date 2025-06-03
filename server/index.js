@@ -2876,9 +2876,13 @@ const server = http.createServer(app); // O https.createServer(options, app) si 
 const wss = new WebSocketServer({ noServer: true });
 
 server.on('upgrade', (request, socket, head) => {
+  console.log(`[WebSocket Upgrade] Received upgrade request for URL: ${request.url}, Method: ${request.method}`);
+  console.log(`[WebSocket Upgrade] Headers: ${JSON.stringify(request.headers)}`);
   const { pathname } = new URL(request.url, `ws://${request.headers.host}`);
+  console.log(`[WebSocket Upgrade] Parsed pathname: ${pathname}`);
 
   if (pathname.startsWith('/ws/proxmox-console/')) {
+    console.log(`[WebSocket Upgrade] Path matches '/ws/proxmox-console/'. Attempting to handle upgrade.`);
     // Aquí podrías añadir una capa de autenticación para el upgrade si es necesario,
     // por ejemplo, verificando un token JWT pasado como query param o en una cookie.
     // Por ahora, nos basaremos en que el ticket VNC ya proporciona autorización
@@ -2886,10 +2890,11 @@ server.on('upgrade', (request, socket, head) => {
     // También, el endpoint HTTP que genera el ticket VNC ya está protegido por JWT.
 
     wss.handleUpgrade(request, socket, head, (wsClient) => {
+      console.log('[WebSocket Upgrade] wss.handleUpgrade successful. Emitting "connection" event to wss.');
       wss.emit('connection', wsClient, request);
     });
   } else {
-    console.log(`WebSocket upgrade request for unknown path ${pathname}, destroying socket.`);
+    console.log(`[WebSocket Upgrade] Path ${pathname} does NOT match '/ws/proxmox-console/'. Destroying socket.`);
     socket.destroy();
   }
 });
