@@ -1173,11 +1173,24 @@ app.get('/api/vms/:id', authenticate, async (req, res) => {
           cpu: (vmConfig.cores || 0) * (vmConfig.sockets || 1), // Ensure cores is a number, sockets defaults to 1
           memory: vmConfig.memory || 0, // memory is already in MB from Proxmox API, ensure it's a number
           disk: Math.round((vmConfig.maxdisk || 0) / (1024 * 1024 * 1024)), // GB, ensure maxdisk is a number
-        
-            os: vmConfig.ostype,
+           // Additional Proxmox Config Details
+           nameserver: vmConfig.nameserver || null,
+           agent: vmConfig.agent || 0, // 0 or 1
+           arch: vmConfig.arch || null,
+           args: vmConfig.args || null,
+           autostart: vmConfig.autostart || 0, // 0 or 1
+           keyboard: vmConfig.keyboard || null,
+           kvm: vmConfig.kvm || 0, // 0 or 1
+           machine: vmConfig.machine || null,
+           onboot: vmConfig.onboot || 0, // 0 or 1
+           startdate: vmConfig.startdate || null, // Configured start date for autostart
+          
+          os: vmConfig.ostype,
           },
         tags: vmConfig.tags ? vmConfig.tags.split(';') : [],
       };
+      console.log('detalles',hypervisorData)
+
         vmFoundOnHypervisor = true; // Found on this hypervisor
         break; // Stop searching
       } else if (hypervisor.type === 'vsphere') {
@@ -1279,6 +1292,17 @@ app.get('/api/vms/:id', authenticate, async (req, res) => {
         ipAddress: hypervisorData.ipAddress || null,
         ipAddresses: hypervisorData.ipAddresses || [],
         moid: hypervisorData.moid,
+         // Include new Proxmox config fields if they exist in hypervisorData
+      nameserver: hypervisorData.nameserver,
+      agent: hypervisorData.agent,
+      arch: hypervisorData.arch,
+      args: hypervisorData.args,
+      autostart: hypervisorData.autostart,
+      keyboard: hypervisorData.keyboard,
+      kvm: hypervisorData.kvm,
+      machine: hypervisorData.machine,
+      onboot: hypervisorData.onboot,
+      startdate: hypervisorData.startdate,
         hostname: hypervisorData.hostname,
         vmwareToolsStatus: hypervisorData.vmwareToolsStatus,
         tags: hypervisorData.tags || [],
@@ -1311,10 +1335,21 @@ app.get('/api/vms/:id', authenticate, async (req, res) => {
       ipAddress: hypervisorData.ipAddress || null,
       ipAddresses: hypervisorData.ipAddresses || [],
       moid: hypervisorData.moid,
+      // Include new Proxmox config fields from hypervisorData
+      nameserver: hypervisorData.nameserver,
+      agent: hypervisorData.agent,
+      arch: hypervisorData.arch,
+      args: hypervisorData.args,
+      autostart: hypervisorData.autostart,
+      keyboard: hypervisorData.keyboard,
+      kvm: hypervisorData.kvm,
+      machine: hypervisorData.machine,
+      onboot: hypervisorData.onboot,
+      startdate: hypervisorData.startdate,
       hostname: hypervisorData.hostname,
       vmwareToolsStatus: hypervisorData.vmwareToolsStatus,
     };
-console.log(finalVmDetails);
+
     res.json(finalVmDetails);
   } catch (error) {
     console.error(`Error fetching details for VM ${vmExternalId}:`, error);

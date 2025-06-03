@@ -66,6 +66,17 @@ export interface VM {
   // Campos adicionales de vSphere
   moid?: string; // Managed Object ID de vSphere
   hostname?: string; // Guest OS hostname
+   // Proxmox Specific Config Details (optional)
+   nameserver?: string | null;
+   agent?: number; // 0 or 1
+   arch?: string | null;
+   args?: string | null;
+   autostart?: number; // 0 or 1
+   keyboard?: string | null;
+   kvm?: number; // 0 or 1
+   machine?: string | null;
+   onboot?: number; // 0 or 1
+   startdate?: string | null; // Configured start date for autostart
   vmwareToolsStatus?: string; // Estado de VMware Tools
   detailedDisks?: VMDiskDetail[]; // Para mostrar detalles de discos individuales
   detailedNics?: VMNicDetail[];   // Para mostrar detalles de NICs individuales

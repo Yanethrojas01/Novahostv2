@@ -16,6 +16,7 @@ import {
   Tag,
   Ticket,
   Users,
+  ToggleRight,
   TerminalSquare,
   ArrowLeft, // Importar ArrowLeft
 } from "lucide-react"; // Added Ticket
@@ -313,7 +314,19 @@ export default function VMDetails() {
         {/* Additional Information Section (Combined) */}
         {(vm.description ||
           vm.hypervisorType ||
+          vm.specs.os ||
           vm.nodeName ||
+          vm.nameserver ||
+          vm.agent !== undefined || // Check if agent is explicitly 0 or 1
+          vm.arch ||
+          vm.args ||
+          vm.autostart !== undefined || // Check if autostart is explicitly 0 or 1
+          vm.keyboard ||
+          vm.kvm !== undefined || // Check if kvm is explicitly 0 or 1
+          vm.machine ||
+          vm.onboot !== undefined || // Check if onboot is explicitly 0 or 1
+          vm.startdate ||
+          vm.vmwareToolsStatus || // vSphere specific
           (vm.tags && vm.tags.length > 0) ||
           vm.ticket ||
           vm.finalClientName) && (
@@ -351,6 +364,127 @@ export default function VMDetails() {
                   </div>
                 </div>
               )}
+                {/* OS Type */}
+                {vm.specs.os && (
+                  <div className="flex items-start space-x-2 pt-1">
+
+                  <ServerCog className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
+                      Sistema Operativo:
+                    </span>
+                    <p className="text-slate-800 dark:text-slate-100">
+                      {vm.specs.os} 
+                      {/* Podrías tener una función para mapear 'l26' a 'Linux 2.6-6.x Kernel' o similar si quieres */}
+                    </p>
+                  </div>
+                </div>
+              )}
+              {/* Proxmox Specific Config Details */}
+              {vm.hypervisorType === 'proxmox' && (
+                <>
+                  {vm.arch && (
+                    <div className="flex items-start space-x-2 pt-1">
+                      <Cpu className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Architecture:</span>
+                        <p className="text-slate-800 dark:text-slate-100">{vm.arch}</p>
+                      </div>
+                    </div>
+                  )}
+                   {vm.machine && (
+                    <div className="flex items-start space-x-2 pt-1">
+                      <ServerCog className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Machine Type:</span>
+                        <p className="text-slate-800 dark:text-slate-100">{vm.machine}</p>
+                      </div>
+                    </div>
+                  )}
+                   {vm.keyboard && (
+                    <div className="flex items-start space-x-2 pt-1">
+                      <TerminalSquare className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Keyboard Layout:</span>
+                        <p className="text-slate-800 dark:text-slate-100">{vm.keyboard}</p>
+                      </div>
+                    </div>
+                  )}
+                   {vm.kvm !== undefined && (
+                    <div className="flex items-start space-x-2 pt-1">
+                      <ToggleRight className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <span className="text-sm font-medium text-slate-600 dark:text-slate-300">KVM Virtualization:</span>
+                        <p className="text-slate-800 dark:text-slate-100">{vm.kvm === 1 ? 'Enabled' : 'Disabled'}</p>
+                      </div>
+                    </div>
+                  )}
+                   {vm.onboot !== undefined && (
+                    <div className="flex items-start space-x-2 pt-1">
+                      <ToggleRight className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Start on Boot:</span>
+                        <p className="text-slate-800 dark:text-slate-100">{vm.onboot === 1 ? 'Yes' : 'No'}</p>
+                      </div>
+                    </div>
+                  )}
+                   {vm.autostart !== undefined && (
+                    <div className="flex items-start space-x-2 pt-1">
+                      <ToggleRight className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Autostart Enabled:</span>
+                        <p className="text-slate-800 dark:text-slate-100">{vm.autostart === 1 ? 'Yes' : 'No'}</p>
+                      </div>
+                    </div>
+                  )}
+                   {vm.startdate && (
+                    <div className="flex items-start space-x-2 pt-1">
+                      <Clock className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Autostart Date:</span>
+                        <p className="text-slate-800 dark:text-slate-100">{vm.startdate}</p>
+                      </div>
+                    </div>
+                  )}
+                   {vm.agent !== undefined && (
+                    <div className="flex items-start space-x-2 pt-1">
+                      <ToggleRight className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <span className="text-sm font-medium text-slate-600 dark:text-slate-300">QEMU Guest Agent Configured:</span>
+                        <p className="text-slate-800 dark:text-slate-100">{vm.agent === 1 ? 'Yes' : 'No'}</p>
+                      </div>
+                    </div>
+                  )}
+                   {vm.nameserver && (
+                    <div className="flex items-start space-x-2 pt-1">
+                      <Network className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Nameserver:</span>
+                        <p className="text-slate-800 dark:text-slate-100">{vm.nameserver}</p>
+                      </div>
+                    </div>
+                  )}
+                   {vm.args && (
+                    <div className="flex items-start space-x-2 pt-1">
+                      <FileText className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <span className="text-sm font-medium text-slate-600 dark:text-slate-300">QEMU Args:</span>
+                        <p className="text-slate-800 dark:text-slate-100 whitespace-pre-wrap">{vm.args}</p>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+               {/* vSphere Specific Details */}
+               {vm.hypervisorType === 'vsphere' && vm.vmwareToolsStatus && (
+                 <div className="flex items-start space-x-2 pt-1">
+                   <ServerCog className="w-5 h-5 text-slate-500 dark:text-slate-400 mt-0.5 flex-shrink-0" />
+                   <div>
+                     <span className="text-sm font-medium text-slate-600 dark:text-slate-300">VMware Tools Status:</span>
+                     <p className="text-slate-800 dark:text-slate-100">{vm.vmwareToolsStatus}</p>
+                   </div>
+                 </div>
+               )}
               {/* Description */}
               {vm.description && (
                 <div className="flex items-start space-x-2 pt-1">
