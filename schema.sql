@@ -2,6 +2,9 @@
   Esquema completo corregido - BoltV2 (Ordenado por dependencias)
 */
 
+-- Ensure the public schema is used
+SET search_path TO public;
+
 -- 1. Tablas base sin dependencias
 CREATE TABLE roles (
     id serial PRIMARY KEY,
