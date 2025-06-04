@@ -51,7 +51,15 @@ async function callPyvmomiService(method, path, hypervisor, body = null) {
       user: vsphereUser,
       password: vspherePassword,
     });
-    url += `?${queryParams.toString()}`;
+    
+    // More robust way to add query parameters: parse the URL first
+    const parsedUrl = new URL(url); // Parse the URL constructed from PYVMOMI_MICROSERVICE_URL + path
+    const combinedQueryParams = new URLSearchParams(parsedUrl.search); // Start with existing query params from 'path'
+    // Add connection parameters, overwriting if they somehow already exist
+    combinedQueryParams.set('host', vsphereHost.split(':')[0]);
+    combinedQueryParams.set('user', vsphereUser);
+    combinedQueryParams.set('password', vspherePassword);
+    url = `${parsedUrl.origin}${parsedUrl.pathname}?${combinedQueryParams.toString()}`;
   } else if (body || method === 'POST') { // Asegurar que POST siempre tenga Content-Type
     options.headers['Content-Type'] = 'application/json';
     // Para POST, las credenciales van en el body según app.py
@@ -1487,7 +1495,7 @@ app.get('/api/vms/:id/historical-metrics', authenticate, async (req, res) => {
     // Step 1: Find the VM's Hypervisor (Iterate or DB lookup)
     // This logic is simplified; a direct DB lookup for the VM to get its hypervisor_id would be more efficient.
     const { rows: connectedHypervisors } = await pool.query( // Ensure password is included for vSphere
-      `SELECT id, type, host, username, api_token, token_name 
+      `SELECT id, type, host, username, password, api_token, token_name 
        FROM hypervisors WHERE status = 'connected'`
     );
 
@@ -1522,7 +1530,6 @@ app.get('/api/vms/:id/historical-metrics', authenticate, async (req, res) => {
             break;
         }
       }
-      // TODO: Add vSphere historical metrics logic if available via PyVmomi
     }
 
     if (!vmFoundOnHypervisor || !targetHypervisor) {
@@ -1547,7 +1554,7 @@ app.get('/api/vms/:id/historical-metrics', authenticate, async (req, res) => {
       })).filter(dp => dp.time > 0); // Filter out potential zero/invalid timestamps
 
       res.json(formattedMetrics);
-    } else if (targetHypervisor.type === 'vsphere') {
+    } else if (targetHypervisor.type === 'vsphere') { // Logic for vSphere historical metrics via PyVmomi
       console.log(`Historical Metrics: Fetching for vSphere VM ${vmExternalId} with timeframe ${timeframe}`);
       // Assuming PyVmomi microservice has an endpoint like /vm/<uuid>/historical_metrics?timeframe=...
       const pyvmomiHistoricalData = await callPyvmomiService(
@@ -1556,23 +1563,27 @@ app.get('/api/vms/:id/historical-metrics', authenticate, async (req, res) => {
         targetHypervisor // Pass the full hypervisor object which includes credentials
       );
 
-      // Transform data from PyVmomi (assuming similar structure to Proxmox RRD for simplicity here)
-      const formattedMetrics = pyvmomiHistoricalData.map((dataPoint) => ({
-        time: dataPoint.timestamp * 1000, // Convert seconds to milliseconds
-        cpuUsagePercent: dataPoint.cpu_usage_percent || 0,
-        memoryUsagePercent: dataPoint.memory_usage_percent || 0,
-        // Add other metrics if PyVmomi provides them (disk, network)
-      })).filter(dp => dp.time > 0);
-      res.json(formattedMetrics);
+      // The Python service now returns data in the expected format (milliseconds timestamp, correct keys)
+      // No complex mapping needed here, just ensure it's an array and timestamps are valid.
+      const formattedMetrics = Array.isArray(pyvmomiHistoricalData) ? pyvmomiHistoricalData.filter(dp => dp.time > 0) : [];
+      res.json(formattedMetrics); // Return the data directly
     
     } else {
       res.status(400).json({ error: `Historical metrics not implemented for hypervisor type ${targetHypervisor?.type} or required details missing.` });
     }
   } catch (error) {
     console.error(`Error fetching historical metrics for VM ${vmExternalId}:`, error);
-    const errorDetails = getProxmoxError(error); // Adapt if not Proxmox
-    res.status(errorDetails.code || 500).json({ error: 'Failed to retrieve historical metrics.', details: errorDetails.message });
-  }
+    let errorDetails;
+    // Check if the error is likely from callPyvmomiService (it adds a 'status' property)
+    if (error.status) {
+        errorDetails = { code: error.status, message: error.details?.error || error.message || `Failed to retrieve historical metrics via PyVmomi for ${vmExternalId}` };
+    } else if (targetHypervisor?.type === 'proxmox') {
+        errorDetails = getProxmoxError(error); // Use existing Proxmox error handler
+    } else {
+        errorDetails = { code: 500, message: error.message || `Failed to retrieve historical metrics for VM ${vmExternalId}` }; // Generic fallback
+    }
+    res.status(errorDetails.code || 500).json({ error: 'Failed to retrieve historical metrics.', details: errorDetails.message, suggestion: errorDetails.suggestion });
+   }
 });
 
 // Helper function to get authenticated proxmox client (kept for Proxmox logic)

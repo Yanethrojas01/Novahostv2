@@ -84,6 +84,10 @@ const VMHistoricalMetrics: React.FC<VMHistoricalMetricsProps> = ({ vmId, nodeNam
     return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
   };
 
+  const formatBytesPerSecond = (value: number) => {
+    return `${formatBytes(value)}/s`; // Use the existing formatBytes utility
+  };
+
 
 
   return (
@@ -157,7 +161,53 @@ const VMHistoricalMetrics: React.FC<VMHistoricalMetricsProps> = ({ vmId, nodeNam
             </ResponsiveContainer>
           </div>
 
-          {/* TODO: Add charts for Disk I/O and Network I/O similarly */}
+          {/* Disk I/O Chart */}
+          {metricsData.some(dp => dp.diskReadBps !== undefined || dp.diskWriteBps !== undefined) && (
+            <div>
+              <h4 className="text-md font-medium text-slate-700 dark:text-slate-200 mb-2">Disco I/O</h4>
+              <ResponsiveContainer width="100%" height={250}>
+                <LineChart data={metricsData} margin={{ top: 5, right: 20, left: -15, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2} />
+                  <XAxis dataKey="time" tickFormatter={formatXAxis} tick={{ fontSize: 10 }} />
+                  <YAxis tickFormatter={formatBytesPerSecond} tick={{ fontSize: 10 }} />
+                  <Tooltip
+                    formatter={(value: number, name: string) => [`${formatBytesPerSecond(value)}`, name === 'diskReadBps' ? "Lectura" : "Escritura"]}
+                    labelFormatter={(label: number) => new Date(label).toLocaleString()}
+                    contentStyle={{ backgroundColor: 'rgba(30, 41, 59, 0.8)', borderColor: 'rgba(71, 85, 105, 0.8)', borderRadius: '0.375rem' }}
+                    itemStyle={{ color: '#cbd5e1' }}
+                    labelStyle={{ color: '#f1f5f9', fontWeight: 'bold' }}
+                  />
+                  <Legend wrapperStyle={{fontSize: "12px"}}/>
+                  <Line type="monotone" dataKey="diskReadBps" name="Lectura Disco" stroke="#ff7300" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="diskWriteBps" name="Escritura Disco" stroke="#8884d8" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {/* Network I/O Chart */}
+          {metricsData.some(dp => dp.netInBps !== undefined || dp.netOutBps !== undefined) && (
+            <div>
+              <h4 className="text-md font-medium text-slate-700 dark:text-slate-200 mb-2">Red I/O</h4>
+              <ResponsiveContainer width="100%" height={250}>
+                <LineChart data={metricsData} margin={{ top: 5, right: 20, left: -15, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2} />
+                  <XAxis dataKey="time" tickFormatter={formatXAxis} tick={{ fontSize: 10 }} />
+                  <YAxis tickFormatter={formatBytesPerSecond} tick={{ fontSize: 10 }} />
+                   <Tooltip
+                    formatter={(value: number, name: string) => [`${formatBytesPerSecond(value)}`, name === 'netInBps' ? "Entrada" : "Salida"]}
+                    labelFormatter={(label: number) => new Date(label).toLocaleString()}
+                    contentStyle={{ backgroundColor: 'rgba(30, 41, 59, 0.8)', borderColor: 'rgba(71, 85, 105, 0.8)', borderRadius: '0.375rem' }}
+                    itemStyle={{ color: '#cbd5e1' }}
+                    labelStyle={{ color: '#f1f5f9', fontWeight: 'bold' }}
+                  />
+                  <Legend wrapperStyle={{fontSize: "12px"}}/>
+                  <Line type="monotone" dataKey="netInBps" name="Entrada Red" stroke="#00c49f" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="netOutBps" name="Salida Red" stroke="#ffbb28" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
 
         </div>
       )}

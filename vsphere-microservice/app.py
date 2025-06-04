@@ -4,6 +4,7 @@ from pyVmomi import vim, vmodl
 import ssl
 import atexit
 import time
+import datetime
 
 app = Flask(__name__)
 
@@ -180,7 +181,7 @@ def create_vm():
             # o crearía uno si no existe. Por ahora, asumimos que vCenter puede manejarlo o
             # que un controlador IDE (ej. key=200) ya existe o se crea implícitamente.
             # Si se necesita crear explícitamente:
-            # ide_controller = vim.vm.device.VirtualIDEController(key=200, busNumber=0) # o 1
+            # ide_controller = vim.vm.device.VirtualIDEController(key=200, busNumber=0) # o 1 
             # ide_spec = vim.vm.device.VirtualDeviceSpec(device=ide_controller, operation=vim.vm.device.VirtualDeviceSpec.Operation.add)
             # devices.append(ide_spec)
             # cd_controller_key = ide_controller.key
@@ -826,8 +827,8 @@ def search_datastore_for_isos(datastore, si):
         # Usar el DatastoreBrowser del datastore
         ds_browser = datastore.browser
         if not ds_browser:
-            app.logger.warn(f"No browser available for datastore {datastore.name}")
-            return isos_found
+            app.logger.warning(f"No browser available for datastore {datastore.name}")
+            return isos_found # Use warning() instead of warn()
 
         search_task = ds_browser.SearchDatastoreSubFolders_Task(datastorePath=search_path, searchSpec=search_spec)
         wait_for_tasks(si, [search_task], action_name=f"Searching ISOs in {datastore.name}")
@@ -852,7 +853,7 @@ def search_datastore_for_isos(datastore, si):
             app.logger.error(f"Failed to search datastore {datastore.name}: {search_task.info.error.msg if search_task.info.error else 'Unknown error'}")
     except Exception as e:
         app.logger.error(f"Exception while searching datastore {datastore.name} for ISOs: {str(e)}", exc_info=True)
-
+        
     return isos_found
 
 @app.route('/isos', methods=['GET'])
@@ -879,7 +880,7 @@ def list_isos():
                 isos_in_ds = search_datastore_for_isos(ds, si) # Pasar el ServiceInstance (si)
                 all_isos.extend(isos_in_ds)
             else:
-                app.logger.warn(f"ISOs: Datastore '{ds.name}' is not accessible, skipping.")
+                app.logger.warning(f"ISOs: Datastore '{ds.name}' is not accessible, skipping.")
         datastore_view.Destroy()
         
         app.logger.info(f"ISOs: Found a total of {len(all_isos)} ISO files for {host_param}")
@@ -945,9 +946,9 @@ def vm_console_ticket(vm_uuid):
             }
             ticket_type_acquired = 'mks'
         except vmodl.fault.NotSupported:
-            app.logger.warn(f"Console Ticket: AcquireMksTicket is not supported for VM '{vm.name}'. Falling back to WebMKS ticket.")
+            app.logger.warning(f"Console Ticket: AcquireMksTicket is not supported for VM '{vm.name}'. Falling back to WebMKS ticket.")
         except Exception as e_mks:
-            app.logger.warn(f"Console Ticket: Error acquiring MKS ticket for VM '{vm.name}': {str(e_mks)}. Falling back to WebMKS ticket.")
+            app.logger.warning(f"Console Ticket: Error acquiring MKS ticket for VM '{vm.name}': {str(e_mks)}. Falling back to WebMKS ticket.")
 
         # Intento 2: WebMKS Ticket (si MKS falló o no fue soportado)
         if not ticket_type_acquired:
@@ -985,6 +986,163 @@ def vm_console_ticket(vm_uuid):
     finally:
         if si:
             disconnect_vsphere(si)
+
+@app.route('/vm/<string:vm_uuid>/historical_metrics', methods=['GET'])
+def vm_historical_metrics_route(vm_uuid):
+    host = request.args.get('host')
+    user = request.args.get('user')
+    password = request.args.get('password')
+    port = int(request.args.get('port', 443))
+    timeframe = request.args.get('timeframe', 'hour') # Default to hour
+
+    vm_uuid = vm_uuid.strip()
+    app.logger.info(f"Historical Metrics: Request for VM UUID '{vm_uuid}' on host: {host}, timeframe: {timeframe}")
+
+    if not all([host, user, password]):
+        app.logger.error("Historical Metrics: Missing connection parameters")
+        return jsonify({'error': 'Missing connection parameters'}), 400
+
+    si = None
+    try:
+        si = connect_vsphere(host, user, password, port)
+        content = si.RetrieveContent()
+        app.logger.info(f"Historical Metrics: Successfully connected to vSphere: {host}")
+
+        vm = get_obj(content, [vim.VirtualMachine], uuid=vm_uuid)
+        if not vm:
+            app.logger.error(f"Historical Metrics: VM with UUID {vm_uuid} not found.")
+            return jsonify({'error': f'VM with UUID {vm_uuid} not found in vSphere'}), 404
+
+        perf_manager = content.perfManager
+
+        # --- Determine time range and preferred interval based on timeframe ---
+        end_time = datetime.datetime.now()
+        start_time = None
+        # Common interval IDs (may vary based on vCenter/ESXi config)
+        # 20s (20), 5min (300), 30min (1800), 2hr (7200), 1day (86400)
+        # We'll try to find the best available interval later, but start with a default
+        preferred_interval_id = 20 # Default to 20s interval (for 'hour')
+
+        if timeframe == 'hour':
+            start_time = end_time - datetime.timedelta(hours=1)
+            preferred_interval_id = 20 # 20 seconds interval
+        elif timeframe == 'day':
+            start_time = end_time - datetime.timedelta(days=1)
+            preferred_interval_id = 300 # 5 minutes interval
+        elif timeframe == 'week':
+            start_time = end_time - datetime.timedelta(weeks=1)
+            preferred_interval_id = 1800 # 30 minutes interval
+        elif timeframe == 'month':
+            start_time = end_time - datetime.timedelta(days=30) # Approx month
+            preferred_interval_id = 7200 # 2 hours interval
+        elif timeframe == 'year':
+            start_time = end_time - datetime.timedelta(days=365) # Approx year
+            preferred_interval_id = 86400 # 1 day interval
+        else:
+            app.logger.warning(f"Historical Metrics: Invalid timeframe '{timeframe}', defaulting to 'hour'.")
+            start_time = end_time - datetime.timedelta(hours=1)
+            preferred_interval_id = 20
+
+        # --- Find metric IDs ---
+        # Get available counters and map their names to keys
+        counters_map = {c.groupInfo.key + '.' + c.nameInfo.key + '.' + c.rollupType: c.key for c in perf_manager.perfCounter}
+
+        # Define desired metrics and their corresponding frontend keys
+        desired_metrics = {
+            'cpu.usage.average': 'cpuUsagePercent',
+            'mem.usage.average': 'memoryUsagePercent',
+            'disk.read.average': 'diskReadBps', # KBps -> Bps
+            'disk.write.average': 'diskWriteBps', # KBps -> Bps
+            'net.received.average': 'netInBps', # KBps -> Bps
+            'net.transmitted.average': 'netOutBps', # KBps -> Bps
+        }
+
+        metric_ids = []
+        for name in desired_metrics:
+            if name in counters_map:
+                # Use "*" instance for aggregation across all instances (e.g., all vCPUs, all NICs)
+                metric_ids.append(vim.PerformanceManager.MetricId(counterId=counters_map[name], instance="*"))
+            else:
+                app.logger.warning(f"Historical Metrics: Metric counter '{name}' not found on this vSphere instance.")
+
+        if not metric_ids:
+             app.logger.error("Historical Metrics: No desired performance counters found for query.")
+             return jsonify({'error': 'No desired performance counters found for query.'}), 500
+
+        # --- Create Query Spec ---
+        query_spec = vim.PerformanceManager.QuerySpec(
+            entity=vm,
+            metricId=metric_ids,
+            startTime=start_time,
+            endTime=end_time,
+            intervalId=preferred_interval_id # Use the preferred interval
+        )
+
+        # --- Query Performance Data ---
+        app.logger.info(f"Historical Metrics: Querying perf data for VM {vm.name} ({vm_uuid}) from {start_time} to {end_time} with interval {preferred_interval_id}")
+        results = perf_manager.QueryPerf(querySpec=[query_spec])
+
+        # --- Process Results ---
+        formatted_data = []
+        if results:
+            # results is a list of EntityMetricBase (one per entity, so one for our VM)
+            vm_metrics = results[0] # Get metrics for our VM
+            # vm_metrics.sampleInfo is a list of timestamps
+            # vm_metrics.value is a list of MetricSeries (one per metricId)
+
+            # Map counterId to frontend key for processing
+            counter_id_to_frontend_key = {counters_map[name]: key for name, key in desired_metrics.items() if name in counters_map}
+
+            # Get VM's total memory for percentage calculation (fetch once)
+            # Note: This requires the VM object to have the config property loaded.
+            # The get_obj function should ensure this if it fetches the full object.
+            total_memory_mb = vm.config.hardware.memoryMB if hasattr(vm, 'config') and hasattr(vm.config, 'hardware') else 0
+            total_memory_kb = total_memory_mb * 1024
+
+            for i, sample in enumerate(vm_metrics.sampleInfo):
+                # Use sample.timestamp directly as it's a datetime object
+                data_point = {'time': int(sample.timestamp.timestamp() * 1000)} # Timestamp in milliseconds for frontend
+
+                for metric_series in vm_metrics.value:
+                    counter_id = metric_series.id.counterId
+                    frontend_key = counter_id_to_frontend_key.get(counter_id)
+
+                    if frontend_key and i < len(metric_series.value):
+                         value = metric_series.value[i]
+
+                         processed_value = None
+                         # Determine how to process the value based on the frontend key
+                         if frontend_key == 'cpuUsagePercent':
+                             # Value is in hundredths of a percent, convert to percent
+                             processed_value = value / 100.0 if value is not None else 0
+                         elif frontend_key == 'memoryUsagePercent':
+                             # Value is in KB. Convert to percentage of total VM memory.
+                             processed_value = (value / total_memory_kb) * 100.0 if value is not None and total_memory_kb > 0 else 0
+                         elif frontend_key in ['diskReadBps', 'diskWriteBps', 'netInBps', 'netOutBps']:
+                             # Value is in KBps. Convert to Bps.
+                             processed_value = value * 1024 if value is not None else 0
+                         # Add other metrics if needed
+
+                         if processed_value is not None:
+                             data_point[frontend_key] = processed_value
+
+                # Only add data points that have at least one metric value (besides time)
+                if len(data_point) > 1:
+                    formatted_data.append(data_point)
+
+        app.logger.info(f"Historical Metrics: Returning {len(formatted_data)} data points for VM: {vm.name}")
+        return jsonify(formatted_data)
+
+    except vim.fault.InvalidLogin:
+        app.logger.error(f"Historical Metrics: vSphere login failed for user {user} on host {host}")
+        return jsonify({'error': 'vSphere login failed. Check credentials.'}), 401
+    except Exception as e:
+        app.logger.error(f"Historical Metrics: Error getting VM historical metrics for {vm_uuid} on {host}: {str(e)}", exc_info=True)
+        return jsonify({'error': f'An error occurred in Python service while fetching historical metrics: {str(e)}'}), 500
+    finally:
+        if si:
+            disconnect_vsphere(si)
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True) # Added debug=True for development

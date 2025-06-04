@@ -26,7 +26,7 @@ import { toast } from "react-hot-toast";
 import { useAuth } from "../hooks/useAuth";
 import VMConsoleView, { type ConsoleDetailsData } from "../components/VMConsoleView"; // Import ConsoleDetailsData
 import VMControls from "../components/vmdetails/VMControls"; // Import the new VMControls component
-import VMHistoricalMetrics from "../components/vmdetails/VMHistoricalMetrics.tsx"; // Import historical metrics component
+import VMHistoricalMetrics from "../components/vmdetails/VMHistoricalMetrics"; // Import historical metrics component
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL; // Read from .env
 
@@ -626,10 +626,10 @@ export default function VMDetails() {
           </div>
         )}
  {/* Historical Metrics Section - Only for Proxmox for now */}
- {vm.status === "running" && vm.hypervisorType === 'proxmox' && vm.nodeName && authToken && (
+ {vm.status === "running" && (vm.hypervisorType === 'proxmox' || vm.hypervisorType === 'vsphere') && authToken && (
           <VMHistoricalMetrics
             vmId={vm.id}
-            nodeName={vm.nodeName}
+            nodeName={vm.hypervisorType === 'proxmox' ? vm.nodeName : undefined} // Pass nodeName only for Proxmox
             hypervisorType={vm.hypervisorType}
             authToken={authToken}
           />
