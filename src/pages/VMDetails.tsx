@@ -23,8 +23,8 @@ import {
 import type { VM, VMMetrics, PowerAction } from "../types/vm"; // Use the correct VM type and import VMMetrics, PowerAction
 import { formatBytes } from "../utils/formatters"; // Helper function to format bytes (create this file if needed)
 import { toast } from "react-hot-toast";
-import { useAuth } from "../hooks/useAuth";
-import VMConsoleView, { type ConsoleDetailsData } from "../components/VMConsoleView"; // Import ConsoleDetailsData
+import { useAuth } from "../hooks/useAuth"; // Import ConsoleDetailsData
+import { type ConsoleDetailsData } from "../components/VMConsoleView";
 import VMControls from "../components/vmdetails/VMControls"; // Import the new VMControls component
 import VMHistoricalMetrics from "../components/vmdetails/VMHistoricalMetrics"; // Import historical metrics component
 
@@ -37,9 +37,7 @@ export default function VMDetails() {
   const [metrics, setMetrics] = useState<VMMetrics | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const { user, token: authToken } = useAuth(); // Get user and token from context
-  const [consoleDetails, setConsoleDetails] = useState<ConsoleDetailsData | null>(null); // Use specific type
   const [isConsoleLoading, setIsConsoleLoading] = useState(false);
-  const [showConsoleView, setShowConsoleView] = useState(false); // To toggle console modal
 
   const fetchVMDetails = async () => {
     if (!id) return;
@@ -109,7 +107,6 @@ export default function VMDetails() {
   const handleOpenConsole = async () => {
     if (!vm) return;
     setIsConsoleLoading(true);
-    setConsoleDetails(null);
     try {
       const response = await fetch(`${API_BASE_URL}/vms/${vm.id}/console`, {
         method: "POST",
@@ -126,16 +123,22 @@ export default function VMDetails() {
             `Failed to get console details (status: ${response.status})`
         );
       }
-      const data = await response.json();
-      setConsoleDetails(data);
-      setShowConsoleView(true); // Show the console view modal
-      console.log("Console Details:", data);
+      const data: ConsoleDetailsData = await response.json();
+      
+      console.log("VMDetails: Storing console details in sessionStorage:", data); // Log what is being stored
+      // Store the received data structure directly in sessionStorage
+    
+      sessionStorage.setItem('vmConsoleDetails', JSON.stringify(data));
+
+      // Open a new window/tab for the console
+      const consoleWindow = window.open('/vm-console', '_blank', 'width=1024,height=768,resizable=yes,scrollbars=yes');
+      if (!consoleWindow) {
+        toast.error("Failed to open console window. Please check your browser's pop-up blocker settings.");
+      }
     } catch (error: any) {
       console.error("Error fetching console details:", error);
       toast.error(`Failed to open console: ${error.message}`);
-      setConsoleDetails(null);
-      setShowConsoleView(false);
-    } finally {
+       } finally {
       setIsConsoleLoading(false);
     }
   };
@@ -254,11 +257,8 @@ export default function VMDetails() {
                     {isConsoleLoading ? "Loading..." : "Open Console"}
                 </button>
             )}
-            </div> {/* This was the div for ml-auto flex items-center space-x-2 */}
-            {/* Debug: Display consoleDetails if not showing modal (can be removed later) */}
-            {/* {consoleDetails && !showConsoleView && (
-                <pre className="mt-2 p-2 bg-slate-900 text-xs text-white rounded overflow-auto max-h-32">{JSON.stringify(consoleDetails, null, 2)}</pre>
-            )} */}
+            </div> 
+     
           </div>
         </div>
 
@@ -636,17 +636,7 @@ export default function VMDetails() {
         )}
 
       </div>
-      {/* Console Modal */}
-      {showConsoleView && consoleDetails && (
-        <VMConsoleView
-          consoleDetails={consoleDetails}
-          onClose={() => {
-            setShowConsoleView(false);
-            setConsoleDetails(null); // Clear details when closing
-          }}
-          onError={(message) => toast.error(`Console Error: ${message}`)}
-        />
-      )}
+     
     </div>
   );
 }

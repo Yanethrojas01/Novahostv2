@@ -71,7 +71,7 @@ async function callPyvmomiService(method, path, hypervisor, body = null) {
     };
     options.body = JSON.stringify(requestBody);
   }
-  console.log(`[PyVmomi Call] Method: ${method}, URL: ${url}`);
+  //console.log(`[PyVmomi Call] Method: ${method}, URL: ${url}`);
   if (options.body) console.log(`PyVmomi microservice body: ${options.body.substring(0,200)}...`);
 
 
@@ -79,7 +79,7 @@ async function callPyvmomiService(method, path, hypervisor, body = null) {
     const response = await fetch(url, options);
     if (!response.ok) {
       let errorText = '';
-      console.log(`[PyVmomi Call] Received non-OK status: ${response.status} ${response.statusText}`);
+      //console.log(`[PyVmomi Call] Received non-OK status: ${response.status} ${response.statusText}`);
 
       let errorJson = null;
       try {
@@ -1006,7 +1006,7 @@ function extractIpAddressesFromAgent(agentInterfaces) {
 
 // GET /api/vms - List VMs from all connected hypervisors
 app.get('/api/vms', authenticate, async (req, res) => {
-  console.log('--- Received GET /api/vms ---');
+ // console.log('--- Received GET /api/vms ---');
   let allVms = [];
 
   try {
@@ -1104,7 +1104,7 @@ app.get('/api/vms', authenticate, async (req, res) => {
 // GET /api/vms/:id - Get details for a single VM
 app.get('/api/vms/:id', authenticate, async (req, res) => {
   const { id: vmExternalId } = req.params; // Proxmox vmid or vSphere UUID
-  console.log(`--- Received GET /api/vms/${vmExternalId} ---`);
+ // console.log(`--- Received GET /api/vms/${vmExternalId} ---`);
 
   let targetHypervisor = null;
   let targetNode = null; // For Proxmox
@@ -1381,7 +1381,7 @@ app.get('/api/vms/:id', authenticate, async (req, res) => {
 // GET /api/vms/:id/metrics - Get current performance metrics for a single VM
 app.get('/api/vms/:id/metrics', authenticate, async (req, res) => {
   const { id: vmExternalId } = req.params; // Proxmox vmid or vSphere UUID
-  console.log(`--- Received GET /api/vms/${vmExternalId}/metrics ---`);
+ // console.log(`--- Received GET /api/vms/${vmExternalId}/metrics ---`);
 
   let targetHypervisor = null;
   let targetNode = null; // For Proxmox
@@ -1443,7 +1443,7 @@ app.get('/api/vms/:id/metrics', authenticate, async (req, res) => {
         raw: { /* ... */ }
       };
     } else if (targetHypervisor.type === 'vsphere') {
-      console.log(`Fetching metrics for vSphere VM ${vmExternalId} via PyVmomi microservice`);
+      //console.log(`Fetching metrics for vSphere VM ${vmExternalId} via PyVmomi microservice`);
       // TODO: PYVMOMI: Implement '/vm/<vm_uuid>/metrics' endpoint in app.py
       // This endpoint should use pyVmomi's PerformanceManager to get CPU, memory, disk, network usage.
       try {
@@ -1486,7 +1486,7 @@ app.get('/api/vms/:id/historical-metrics', authenticate, async (req, res) => {
     return res.status(400).json({ error: 'Invalid timeframe. Must be one of: ' + validTimeframes.join(', ') });
   }
 
-  console.log(`--- Received GET /api/vms/${vmExternalId}/historical-metrics?timeframe=${timeframe} ---`);
+ // console.log(`--- Received GET /api/vms/${vmExternalId}/historical-metrics?timeframe=${timeframe} ---`);
 
   let targetHypervisor = null;
   let targetNode = null; // For Proxmox
@@ -1555,7 +1555,7 @@ app.get('/api/vms/:id/historical-metrics', authenticate, async (req, res) => {
 
       res.json(formattedMetrics);
     } else if (targetHypervisor.type === 'vsphere') { // Logic for vSphere historical metrics via PyVmomi
-      console.log(`Historical Metrics: Fetching for vSphere VM ${vmExternalId} with timeframe ${timeframe}`);
+      //console.log(`Historical Metrics: Fetching for vSphere VM ${vmExternalId} with timeframe ${timeframe}`);
       // Assuming PyVmomi microservice has an endpoint like /vm/<uuid>/historical_metrics?timeframe=...
       const pyvmomiHistoricalData = await callPyvmomiService(
         'GET', 
@@ -1639,7 +1639,7 @@ app.get('/api/hypervisors/:id/nodes', authenticate, async (req, res) => {
         };
       }));
     } else if (hypervisorInfo.type === 'vsphere') {
-      console.log(`Fetching vSphere nodes for hypervisor ${id} via PyVmomi microservice`);
+     // console.log(`Fetching vSphere nodes for hypervisor ${id} via PyVmomi microservice`);
       // TODO: PYVMOMI: Implement '/hosts' endpoint in app.py
       // This endpoint should list ESXi hosts (if vCenter) or the single ESXi host.
       // It should return details like name, status, CPU (cores, usage), memory (total, used).
@@ -1734,7 +1734,7 @@ app.get('/api/hypervisors/:id/storage', authenticate, async (req, res) => {
         }));
       }
     } else if (hypervisorInfo.type === 'vsphere') {
-      console.log(`Fetching vSphere storage (datastores) for ${id} via PyVmomi microservice`);
+     // console.log(`Fetching vSphere storage (datastores) for ${id} via PyVmomi microservice`);
       // TODO: PYVMOMI: Implement '/datastores' endpoint in app.py
       // This endpoint should list all datastores with name, type, capacity, free_space.
       try {
@@ -1768,7 +1768,7 @@ app.get('/api/hypervisors/:id/storage', authenticate, async (req, res) => {
 
 // Helper function to fetch VM Templates from vSphere (now via PyVmomi)
 async function fetchVSphereVMTemplates(hypervisor) { // Pass full hypervisor object
-  console.log(`vSphere Templates: Fetching VM templates for ${hypervisor.id} via PyVmomi`);
+  //console.log(`vSphere Templates: Fetching VM templates for ${hypervisor.id} via PyVmomi`);
   // TODO: PYVMOMI: Implement '/templates' endpoint in app.py
   // This endpoint should list VMs marked as templates, returning name, uuid, disk size, etc.
   try {
@@ -1794,7 +1794,7 @@ async function fetchVSphereVMTemplates(hypervisor) { // Pass full hypervisor obj
 
 // Helper function to fetch ISO files from vSphere datastores (now via PyVmomi)
 async function fetchVSphereIsoFiles(hypervisor) { // Pass full hypervisor object
-  console.log(`vSphere ISOs: Fetching ISO files for ${hypervisor.id} via PyVmomi`);
+  //console.log(`vSphere ISOs: Fetching ISO files for ${hypervisor.id} via PyVmomi`);
   // TODO: PYVMOMI: Implement '/isos' endpoint in app.py
   // This endpoint should browse datastores for .iso files, returning name, path, size, datastore.
   try {
@@ -1854,11 +1854,11 @@ app.get('/api/hypervisors/:id/templates', authenticate, async (req, res) => {
       const proxmox = await getProxmoxClient(id);
       allTemplates = await fetchProxmoxTemplates(proxmox); // Uses original Proxmox helper
     } else if (hypervisorInfo.type === 'vsphere') {
-      console.log(`Fetching vSphere templates and ISOs for ${id} via PyVmomi microservice`);
+      //console.log(`Fetching vSphere templates and ISOs for ${id} via PyVmomi microservice`);
       const vmTemplates = await fetchVSphereVMTemplates(hypervisorInfo); // Pass full hypervisor object
       const isoFiles = await fetchVSphereIsoFiles(hypervisorInfo); // Pass full hypervisor object
       allTemplates = vmTemplates.concat(isoFiles);
-      console.log(`Fetched ${allTemplates.length} vSphere templates/ISOs for ${id} via PyVmomi`);
+      //console.log(`Fetched ${allTemplates.length} vSphere templates/ISOs for ${id} via PyVmomi`);
     } else {
       return res.status(400).json({ error: `Unsupported hypervisor type: ${hypervisorInfo.type}` });
     }
@@ -1959,7 +1959,7 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
         status = 'connected'; // If callPyvmomiService doesn't throw, connection is successful
         last_sync = new Date();
         determinedVsphereSubtype = connectResponse.vsphere_subtype || clientVsphereSubtype || 'esxi'; // Prefer subtype from microservice
-        console.log(`Successfully connected to vSphere via PyVmomi. Response:`, connectResponse);
+       // console.log(`Successfully connected to vSphere via PyVmomi. Response:`, connectResponse);
         cleanHost = host.split(':')[0]; // Store clean host
       } catch (pyVmomiConnectError) {
         console.error(`vSphere connection via PyVmomi failed for ${host}:`, pyVmomiConnectError.details?.error || pyVmomiConnectError.message);
@@ -2003,7 +2003,7 @@ app.post('/api/hypervisors', authenticate, requireAdmin, async (req, res) => {
 // GET /api/hypervisors/:id - Get a single hypervisor by ID
 app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
   const { id } = req.params;
-  console.log(`GET /api/hypervisors/${id} called`);
+ // console.log(`GET /api/hypervisors/${id} called`);
   try {
     const { rows: [hypervisor] } = await pool.query(
       'SELECT id, name, type, host, username, password, token_name, api_token, status, last_sync, vsphere_subtype, created_at, updated_at FROM hypervisors WHERE id = $1',
@@ -2040,7 +2040,7 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
             pool.query('SELECT id, name, specs FROM vm_plans WHERE is_active = true').catch(e => { console.error(`DB vm_plans fetch error: ${e.message}`); return { rows: [] }; })
           ]);
 
-          console.log(`Hypervisor ${id} (Proxmox) - Raw Storage List from API:`, JSON.stringify(actualStorageList, null, 2));
+          //console.log(`Hypervisor ${id} (Proxmox) - Raw Storage List from API:`, JSON.stringify(actualStorageList, null, 2));
 
           // Mapear y enriquecer los datos de almacenamiento con detalles de estado por nodo
           hypervisor.storage = [];
@@ -2070,7 +2070,7 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
               totalAvailableDiskSpaceForVmsGB_Proxmox += (s.available / (1024 * 1024 * 1024)); // Convertir bytes a GB
             }
           });
-          console.log(`Hypervisor ${id} (Proxmox) - Total available disk space for VMs (GB): ${totalAvailableDiskSpaceForVmsGB_Proxmox.toFixed(2)}`);
+        //  console.log(`Hypervisor ${id} (Proxmox) - Total available disk space for VMs (GB): ${totalAvailableDiskSpaceForVmsGB_Proxmox.toFixed(2)}`);
 
           hypervisor.templates = templatesData; // Already formatted by fetchProxmoxTemplates
 
@@ -2170,7 +2170,7 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
             hypervisor.detailsError = detailError.message || 'Failed to load Proxmox details';
         }
       } else if (hypervisor.type === 'vsphere') {
-        console.log(`Hypervisor ${id} (vSphere) is connected, fetching details via PyVmomi...`);
+       // console.log(`Hypervisor ${id} (vSphere) is connected, fetching details via PyVmomi...`);
         try {
 
           // Fetch Nodes, Storage, Templates, ISOs, and VM Plans in parallel
@@ -2191,7 +2191,7 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
                 totalAvailableDiskSpaceForVmsGB_vSphere += (availableSpaceBytes / (1024 * 1024 * 1024)); // Convertir bytes a GB
               }
             });
-            console.log(`Hypervisor ${id} (vSphere) - Total available disk space for VMs (GB): ${totalAvailableDiskSpaceForVmsGB_vSphere.toFixed(2)}`);
+           // console.log(`Hypervisor ${id} (vSphere) - Total available disk space for VMs (GB): ${totalAvailableDiskSpaceForVmsGB_vSphere.toFixed(2)}`);
           }
 
           if (Array.isArray(pyvmomiNodes)) {
@@ -2266,7 +2266,7 @@ app.get('/api/hypervisors/:id', authenticate, async (req, res) => {
 
           hypervisor.templates = vmTemplatesPy.concat(isoFilesPy);
 
-          console.log(`Fetched vSphere details for ${id} via PyVmomi: ${hypervisor.nodes?.length || 0} nodes, ${hypervisor.storage?.length || 0} storage, ${hypervisor.templates?.length || 0} templates/ISOs`);
+         // console.log(`Fetched vSphere details for ${id} via PyVmomi: ${hypervisor.nodes?.length || 0} nodes, ${hypervisor.storage?.length || 0} storage, ${hypervisor.templates?.length || 0} templates/ISOs`);
           
           // Calculate AggregatedStats for vSphere
           if (hypervisor.nodes && hypervisor.nodes.length > 0) {
@@ -2420,7 +2420,7 @@ app.put('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) => 
 
     // Si se proporcionan nuevas credenciales, probarlas
     if (credsChanged) {
-      console.log(`Attempting to verify new credentials for hypervisor ${id}`);
+     // console.log(`Attempting to verify new credentials for hypervisor ${id}`);
 
       try {
         if (currentHypervisor.type === 'proxmox') {
@@ -2460,7 +2460,7 @@ app.put('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) => 
         }
         status = 'connected';
         last_sync = new Date();
-        console.log(`New credentials for hypervisor ${id} verified successfully.`);
+//console.log(`New credentials for hypervisor ${id} verified successfully.`);
       } catch (connectionError) {
         console.error(`Failed to verify new credentials for hypervisor ${id}:`, connectionError.message);
         return res.status(400).json({ error: 'Failed to connect with new credentials.', details: connectionError.message });
@@ -2486,7 +2486,7 @@ app.put('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) => 
 // DELETE /api/hypervisors/:id - Delete a hypervisor
 app.delete('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) => {
   const { id } = req.params;
-  console.log(`DELETE /api/hypervisors/${id} called`);
+ // console.log(`DELETE /api/hypervisors/${id} called`);
   try {
     const result = await pool.query('DELETE FROM hypervisors WHERE id = $1 RETURNING id', [id]);
     if (result.rowCount > 0) res.status(204).send();
@@ -2500,7 +2500,7 @@ app.delete('/api/hypervisors/:id', authenticate, requireAdmin, async (req, res) 
 // POST /api/hypervisors/:id/connect
 app.post('/api/hypervisors/:id/connect', authenticate, requireAdmin, async (req, res) => {
   const { id } = req.params;
-  console.log(`POST /api/hypervisors/${id}/connect called`);
+  //console.log(`POST /api/hypervisors/${id}/connect called`);
 
   try {
     const { rows: [hypervisor] } = await pool.query(
@@ -2533,7 +2533,7 @@ app.post('/api/hypervisors/:id/connect', authenticate, requireAdmin, async (req,
       last_sync = new Date();
       connectionMessage = `Successfully connected to Proxmox user ${hypervisor.username} on ${cleanHost}:${port}`;
     } else if (hypervisor.type === 'vsphere') {
-      console.log(`Attempting vSphere connection for hypervisor ${id} (${hypervisor.host}) via PyVmomi`);
+    //  console.log(`Attempting vSphere connection for hypervisor ${id} (${hypervisor.host}) via PyVmomi`);
       try {
         // Pass the full hypervisor object from DB to callPyvmomiService
         const connectResponse = await callPyvmomiService('POST', '/connect', hypervisor, {});
@@ -2541,7 +2541,7 @@ app.post('/api/hypervisors/:id/connect', authenticate, requireAdmin, async (req,
         last_sync = new Date();
         determinedVsphereSubtype = connectResponse.vsphere_subtype || hypervisor.vsphere_subtype || 'esxi';
         connectionMessage = `Successfully connected to vSphere via PyVmomi. Subtype: ${determinedVsphereSubtype}.`;
-        console.log(connectionMessage, connectResponse);
+       
       } catch (pyVmomiConnectError) {
         connectionMessage = `vSphere connection via PyVmomi failed: ${pyVmomiConnectError.details?.error || pyVmomiConnectError.message}`;
         console.error(connectionMessage);
@@ -2558,7 +2558,7 @@ app.post('/api/hypervisors/:id/connect', authenticate, requireAdmin, async (req,
       [newStatus, last_sync, determinedVsphereSubtype, id]
     );
     res.json({ ...updatedHypervisor, message: connectionMessage });
-    console.log(`Updated hypervisor ${id} status to ${newStatus}.`);
+    //console.log(`Updated hypervisor ${id} status to ${newStatus}.`);
 
   } catch (err) {
     const { rows: [hypervisorAttempted] } = await pool.query('SELECT type FROM hypervisors WHERE id = $1', [id]);
@@ -2760,7 +2760,7 @@ app.get('/api/stats/vm-creation-count', authenticate, async (req, res) => {
         uniqueVms.set(key, { createdAt: new Date(dbVm.created_at), type: null }); // type will be filled later
       }
     }
-    console.log(`Stats: Found ${uniqueVms.size} VMs from database with creation dates.`);
+    //console.log(`Stats: Found ${uniqueVms.size} VMs from database with creation dates.`);
 
     // 2. Fetch VMs from Connected Hypervisors
     const { rows: connectedHypervisors } = await pool.query(
@@ -2809,7 +2809,7 @@ app.get('/api/stats/vm-creation-count', authenticate, async (req, res) => {
         console.error(`Stats: Error fetching VMs from hypervisor ${hypervisor.name} (ID: ${hypervisor.id}):`, hypervisorError.message);
       }
     }
-    console.log(`Stats: Total unique VMs (DB + Hypervisors) before date filtering: ${uniqueVms.size}`);
+    //console.log(`Stats: Total unique VMs (DB + Hypervisors) before date filtering: ${uniqueVms.size}`);
 
     // 3. Filter by Date Range and Count
     const filteredVmCreationDates = [];
@@ -2843,7 +2843,7 @@ app.get('/api/stats/vm-creation-count', authenticate, async (req, res) => {
         .sort((a, b) => new Date(a.date) - new Date(b.date));
     }
 
-    console.log(`Stats: VMs created between ${startDate} and ${endDate}: ${count}. Daily counts generated: ${!!dailyCounts}`);
+    //console.log(`Stats: VMs created between ${startDate} and ${endDate}: ${count}. Daily counts generated: ${!!dailyCounts}`);
     res.json({ count, startDate, endDate, dailyCounts });
   } catch (err) {
     console.error('Error in /api/stats/vm-creation-count:', err);

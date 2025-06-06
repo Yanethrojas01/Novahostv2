@@ -593,19 +593,19 @@ def vm_metrics_route(vm_uuid): # El parámetro de la función ahora coincide con
     
     original_vm_uuid_param = vm_uuid # Guardar el original para el log
     vm_uuid = vm_uuid.strip() # Aplicar strip al parámetro vm_uuid recibido
-    app.logger.info(f"Metrics: Received raw UUID param: '{original_vm_uuid_param}', Stripped UUID for search: '{vm_uuid}' on host: {host}")
+    #app.logger.info(f"Metrics: Received raw UUID param: '{original_vm_uuid_param}', Stripped UUID for search: '{vm_uuid}' on host: {host}")
 
     if not all([host, user, password]):
-        app.logger.error("Metrics: Missing connection parameters")
+        #app.logger.error("Metrics: Missing connection parameters")
         return jsonify({'error': 'Missing connection parameters'}), 400
 
     si = None
     try:
         si = connect_vsphere(host, user, password, port)
         content = si.RetrieveContent()
-        app.logger.info(f"Metrics: Successfully connected to vSphere: {host}")
+       # app.logger.info(f"Metrics: Successfully connected to vSphere: {host}")
 
-        app.logger.info(f"Metrics: Attempting to find VM by iterating. Target UUID: {vm_uuid}")
+       # app.logger.info(f"Metrics: Attempting to find VM by iterating. Target UUID: {vm_uuid}")
         vm = None
         container = content.rootFolder
         viewType = [vim.VirtualMachine]
@@ -615,12 +615,12 @@ def vm_metrics_route(vm_uuid): # El parámetro de la función ahora coincide con
         for v_obj in containerView.view:
             if hasattr(v_obj, 'config') and v_obj.config is not None and v_obj.config.uuid == vm_uuid:
                 vm = v_obj
-                app.logger.info(f"Metrics: VM with UUID {vm_uuid} found by iteration: {vm.name}")
+                #app.logger.info(f"Metrics: VM with UUID {vm_uuid} found by iteration: {vm.name}")
                 break
         containerView.Destroy() # No olvides destruir la vista
         
         if not vm:
-            app.logger.error(f"Metrics: VM with UUID {vm_uuid} not found after iteration.")
+            #app.logger.error(f"Metrics: VM with UUID {vm_uuid} not found after iteration.")
             return jsonify({'error': f'VM with UUID {vm_uuid} not found in vSphere for metrics'}), 404
 
         summary = vm.summary
@@ -646,13 +646,13 @@ def vm_metrics_route(vm_uuid): # El parámetro de la función ahora coincide con
             'uptime_seconds': quick_stats.uptimeSeconds if quick_stats.uptimeSeconds is not None else 0,
         }
         
-        app.logger.info(f"Metrics: Returning for VM: {vm.name}")
+       # app.logger.info(f"Metrics: Returning for VM: {vm.name}")
         return jsonify(metrics_data)
     except vim.fault.InvalidLogin:
-        app.logger.error(f"Metrics: vSphere login failed for user {user} on host {host}")
+        #app.logger.error(f"Metrics: vSphere login failed for user {user} on host {host}")
         return jsonify({'error': 'vSphere login failed. Check credentials.'}), 401
     except Exception as e:
-        app.logger.error(f"Metrics: Error getting VM metrics for {vm_uuid} on {host}: {str(e)}", exc_info=True)
+        #app.logger.error(f"Metrics: Error getting VM metrics for {vm_uuid} on {host}: {str(e)}", exc_info=True)
         return jsonify({'error': f'An error occurred in Python service while fetching metrics: {str(e)}'}), 500
     finally:
         if si:
@@ -898,16 +898,17 @@ def list_isos():
 def vm_console_ticket(vm_uuid):
     data = request.get_json()
     if not data:
+        app.logger.error("Console Ticket: Request body must be JSON")
         return jsonify({'error': 'Request body must be JSON'}), 400
 
     host_param = data.get('host')
     user_param = data.get('user')
     password_param = data.get('password')
     port_param = int(data.get('port', 443))
-    # vm_name_param = data.get('vm_name', vm_uuid) # For logging or if needed
+    # vm_name_param = data.get('vm_name') # Optional VM name hint from frontend
 
     original_vm_uuid_param = vm_uuid
-    vm_uuid = vm_uuid.strip()
+    vm_uuid = vm_uuid.strip() # Clean up UUID
     app.logger.info(f"Console Ticket: Request for VM UUID '{original_vm_uuid_param}' (stripped: '{vm_uuid}') on vSphere {host_param}")
 
     if not all([host_param, user_param, password_param]):
@@ -925,67 +926,109 @@ def vm_console_ticket(vm_uuid):
             app.logger.error(f"Console Ticket: VM with UUID '{vm_uuid}' not found.")
             return jsonify({'error': f'VM with UUID {vm_uuid} not found'}), 404
 
-        app.logger.info(f"Console Ticket: Found VM '{vm.name}'. Acquiring WebMKS ticket...")
-        
-        ticket_details = None
-        ticket_type_acquired = None
+        app.logger.info(f"Console Ticket: Found VM '{vm.name}'. Acquiring console details...")
 
-        # Intento 1: MKS Ticket
+        console_options = []
+        vm_name = vm.name # Use the actual VM name from vSphere
+
+        # 1. HTML5 Console (Requires vCenter and Session Ticket)
+        # This is the preferred method for modern vSphere versions (6.5+)
+        if get_vsphere_subtype(content) == "vcenter":
+            try:
+                app.logger.info(f"Console Ticket: Attempting to acquire Session Ticket for HTML5 console...")
+                # AcquireCloneTicket is often used for session tickets for web consoles
+                session_ticket = content.sessionManager.AcquireCloneTicket()
+                server_guid = content.about.instanceUuid
+                vm_moid = vm._moId
+
+                # Construct the HTML5 console URL
+                # Format: https://<vcenter_host>/ui/webconsole.html?vmId=<moid>&vmName=<name>&serverGuid=<guid>&host=<vcenter_host>&sessionTicket=<ticket>
+                # Note: The 'host' parameter in the URL should be the vCenter host itself.
+                vcenter_host_only = host_param.split(':')[0]
+                html5_url = f"https://{vcenter_host_only}/ui/webconsole.html?vmId={vm_moid}&vmName={vm_name}&serverGuid={server_guid}&host={vcenter_host_only}&sessionTicket={session_ticket}"
+
+                console_options.append({
+                    'type': 'vsphere_html5', # New type for frontend
+                    'vmName': vm_name,
+                    'connectionDetails': { 'url': html5_url } # Just the URL needed for iframe
+                })
+                app.logger.info(f"Console Ticket: HTML5 console option added.")
+
+            except Exception as e_html5:
+                app.logger.warning(f"Console Ticket: Error acquiring Session Ticket for HTML5 console for VM '{vm.name}': {str(e_html5)}")
+                # Continue to try other methods even if HTML5 fails
+
+        # Intento 2: MKS Ticket
         try:
             app.logger.info(f"Console Ticket: Attempting to acquire MKS ticket for VM '{vm.name}'...")
             mks_ticket_obj = vm.AcquireMksTicket()
             app.logger.info(f"Console Ticket: MKS ticket acquired. ESXi Host: {mks_ticket_obj.host}, CfgFile: {mks_ticket_obj.cfgFile}")
             ticket_details = {
-                'ticket_type': 'mks',
                 'mksTicket': mks_ticket_obj.ticket,
                 'esxiHost': mks_ticket_obj.host,
                 'esxiPort': mks_ticket_obj.port,
                 'cfgFile': mks_ticket_obj.cfgFile,
                 'sslThumbprint': mks_ticket_obj.sslThumbprint, # ESXi host's thumbprint
-                'vcenterHost': host_param.split(':')[0] 
+                'vcenterHost': host_param.split(':')[0]
             }
-            ticket_type_acquired = 'mks'
+            console_options.append({'type': 'vsphere_mks', 'vmName': vm_name, 'connectionDetails': ticket_details})
+            app.logger.info(f"Console Ticket: MKS console option added.")
+
         except vmodl.fault.NotSupported:
-            app.logger.warning(f"Console Ticket: AcquireMksTicket is not supported for VM '{vm.name}'. Falling back to WebMKS ticket.")
+            app.logger.warning(f"Console Ticket: AcquireMksTicket is not supported for VM '{vm.name}'.")
         except Exception as e_mks:
-            app.logger.warning(f"Console Ticket: Error acquiring MKS ticket for VM '{vm.name}': {str(e_mks)}. Falling back to WebMKS ticket.")
+            app.logger.warning(f"Console Ticket: Error acquiring MKS ticket for VM '{vm.name}': {str(e_mks)}.")
 
-        # Intento 2: WebMKS Ticket (si MKS falló o no fue soportado)
-        if not ticket_type_acquired:
-            try:
-                app.logger.info(f"Console Ticket: Attempting to acquire WebMKS ticket for VM '{vm.name}'...")
-                webmks_ticket_obj = vm.AcquireTicket('webmks')
-                app.logger.info(f"Console Ticket: WebMKS ticket acquired. Host: {webmks_ticket_obj.host}, Port: {webmks_ticket_obj.port}")
-                ticket_details = {
-                    'ticket_type': 'webmks',
-                    'ticket': webmks_ticket_obj.ticket,
-                    'host': webmks_ticket_obj.host, # ESXi host or vCenter proxy
-                    'port': webmks_ticket_obj.port, # Typically 9443 for vCenter proxy, 443 for direct ESXi
-                    'sslThumbprint': webmks_ticket_obj.sslThumbprint # Thumbprint of 'host'
-                }
-                ticket_type_acquired = 'webmks'
-            except Exception as e_webmks:
-                app.logger.error(f"Console Ticket: Error acquiring WebMKS ticket for VM '{vm.name}' after MKS attempt failed: {str(e_webmks)}", exc_info=True)
-                raise e_webmks # Re-lanza la excepción si ambos métodos fallan
+        # Intento 3: WebMKS Ticket
+        try:
+            app.logger.info(f"Console Ticket: Attempting to acquire WebMKS ticket for VM '{vm.name}'...")
+            webmks_ticket_obj = vm.AcquireTicket('webmks')
+            app.logger.info(f"Console Ticket: WebMKS ticket acquired. Host: {webmks_ticket_obj.host}, Port: {webmks_ticket_obj.port}")
+            ticket_details = {
+                'ticket': webmks_ticket_obj.ticket,
+                'host': webmks_ticket_obj.host, # ESXi host or vCenter proxy
+                'port': webmks_ticket_obj.port, # Typically 9443 for vCenter proxy, 443 for direct ESXi
+                'sslThumbprint': webmks_ticket_obj.sslThumbprint # Thumbprint of 'host'
+            }
+            console_options.append({'type': 'vsphere_webmks', 'vmName': vm_name, 'connectionDetails': ticket_details})
+            app.logger.info(f"Console Ticket: WebMKS console option added.")
 
-        return jsonify(ticket_details), 200
+        except Exception as e_webmks:
+            app.logger.warning(f"Console Ticket: Error acquiring WebMKS ticket for VM '{vm.name}': {str(e_webmks)}.")
+
+
+        # Check if any console option was successfully acquired
+        if not console_options:
+             app.logger.error(f"Console Ticket: Failed to acquire any console ticket (HTML5, MKS, WebMKS) for VM '{vm.name}' ({vm_uuid}).")
+             return jsonify({'error': f'Failed to acquire any console ticket for VM {vm_uuid}.'}), 500
+
+
+        # Return the list of available console options
+        return jsonify({'vmName': vm_name, 'consoleOptions': console_options}), 200
 
 
     except vim.fault.InvalidLogin:
         app.logger.error(f"Console Ticket: vSphere login failed for {user_param}@{host_param}")
         return jsonify({'error': 'vSphere login failed. Check credentials.'}), 401
-   
+
     except AttributeError as ae:
-        if "'NoneType' object has no attribute 'AcquireMksTicket'" in str(ae): # Should be caught by vm not found earlier
-            app.logger.error(f"Console Ticket: VM with UUID '{vm_uuid}' not found (AttributeError on AcquireMksTicket).")
-            return jsonify({'error': f'VM with UUID {vm_uuid} not found'}), 404
-    
+        # This might catch cases where vm is None before calling a method on it
+        if "'NoneType' object has no attribute" in str(ae):
+             app.logger.error(f"Console Ticket: VM object was None when trying to acquire ticket for UUID '{vm_uuid}'.")
+             return jsonify({'error': f'VM with UUID {vm_uuid} not found or accessible.'}), 404
+        else:
+             # Re-raise if it's a different AttributeError
+             app.logger.error(f"Console Ticket: Unexpected AttributeError for VM {vm_uuid} on {host_param}: {str(ae)}", exc_info=True)
+             return jsonify({'error': f'An unexpected error occurred: {str(ae)}'}), 500
+
     except Exception as e:
         app.logger.error(f"Console Ticket: Error acquiring console ticket for VM {vm_uuid} on {host_param}: {str(e)}", exc_info=True)
         return jsonify({'error': f'An error occurred: {str(e)}'}), 500
     finally:
         if si:
             disconnect_vsphere(si)
+
+
 
 @app.route('/vm/<string:vm_uuid>/historical_metrics', methods=['GET'])
 def vm_historical_metrics_route(vm_uuid):
@@ -1006,11 +1049,11 @@ def vm_historical_metrics_route(vm_uuid):
     try:
         si = connect_vsphere(host, user, password, port)
         content = si.RetrieveContent()
-        app.logger.info(f"Historical Metrics: Successfully connected to vSphere: {host}")
+        #app.logger.info(f"Historical Metrics: Successfully connected to vSphere: {host}")
 
         vm = get_obj(content, [vim.VirtualMachine], uuid=vm_uuid)
         if not vm:
-            app.logger.error(f"Historical Metrics: VM with UUID {vm_uuid} not found.")
+           # app.logger.error(f"Historical Metrics: VM with UUID {vm_uuid} not found.")
             return jsonify({'error': f'VM with UUID {vm_uuid} not found in vSphere'}), 404
 
         perf_manager = content.perfManager

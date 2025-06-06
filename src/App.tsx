@@ -17,6 +17,7 @@ const Profile = lazy(() => import("./pages/Profile"));
 const HypervisorDetails = lazy(() => import("./pages/HypervisorDetails"));
 const Stats = lazy(() => import("./pages/Stats"));
 const PreferencesPage = lazy(() => import("./pages/PreferencesPage"));
+const StandaloneConsolePage = lazy(() => import("./pages/StandaloneConsolePage")); // Importar la nueva página
 
 function App() {
   const { isAuthenticated, user } = useAuth(); // Destructure user as well
@@ -118,6 +119,12 @@ function App() {
             }
           />
         </Route>
+
+         {/* Ruta para la consola en ventana aparte - No necesita Layout */}
+         <Route
+          path="/vm-console"
+          element={<StandaloneConsolePage />}
+        />
 
         <Route path="*" element={<NotFound />} />
       </Routes>
