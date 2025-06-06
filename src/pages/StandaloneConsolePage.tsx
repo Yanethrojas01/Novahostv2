@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import VMConsoleView, { type ConsoleDetailsData, type ConsoleOption } from '../components/VMConsoleView'; // Import ConsoleOption type
 import { toast } from 'react-hot-toast'; // Assuming you have react-hot-toast installed
 
@@ -6,6 +6,14 @@ const StandaloneConsolePage: React.FC = () => {
   const [consoleDetails, setConsoleDetails] = useState<ConsoleDetailsData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+ // Define all hooks at the top level of the component
+ const handleErrorToast = useCallback((message: string) => {
+    toast.error(`Console Error: ${message}`);
+  }, []); // toast function from react-hot-toast is stable
+  
+  const handleCloseWindow = useCallback(() => {
+    window.close();
+  }, []);
   useEffect(() => {
     const detailsString = sessionStorage.getItem('vmConsoleDetails');
     if (detailsString) {
@@ -82,8 +90,9 @@ if (
   return (
     <VMConsoleView
       consoleDetails={consoleDetails} // Pass the entire object with vmName and consoleOptions
-      onClose={() => window.close()}
-      onError={(message) => toast.error(`Console Error: ${message}`)}
+      onClose={handleCloseWindow}
+      onError={handleErrorToast}
+
     />
   );
 };

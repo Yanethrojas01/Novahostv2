@@ -36,7 +36,6 @@ type WMKSStatic = {
   };
 };
 
-
 declare global {
   interface Window {
     WMKS?: WMKSStatic; // VMware WebMKS library
@@ -165,6 +164,83 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
       setCurrentConsoleType(null); // Reset current type
   }, []); // No dependencies needed for cleanup logic itself
 
+  const attemptConnectionRef = useRef<((option: ConsoleOption) => void) | null>(null);
+
+  const handleConnectionFailureRef = useRef<((reason: string) => void) | null>(null);
+
+ // Function to handle connection failure and attempt the next option
+ const handleConnectionFailure = useCallback((reason: string) => {
+  console.warn(`Connection attempt failed. Reason: ${reason}. Attempting next option...`);
+  // Increment attempt index and try the next option in the list
+  setAttemptIndex(prevIndex => {
+      const nextIndex = prevIndex + 1;
+      // Ensure consoleOptions is available and nextIndex is within bounds
+      if (consoleOptions && nextIndex < consoleOptions.length) {
+    
+          // Wait a moment before attempting the next connection
+          setTimeout(() => { // Call through ref
+            if (attemptConnectionRef.current) {
+              attemptConnectionRef.current(consoleOptions[nextIndex]);
+            }
+          }, 1000); // 1 second delay before next attempt
+          return nextIndex;
+      } else {
+          // No more options left
+          console.error('All console connection options failed.');
+          setConnectionStatus('All connection attempts failed.');
+          const finalErrorMessage = `Failed to connect using any available method. Last error: ${reason}`;
+          setError(finalErrorMessage);
+          if (onError) onError(finalErrorMessage);
+          setCurrentConsoleType(null); // Ensure no client is rendered
+          return prevIndex; // Stay at the last index
+      }
+  });
+}, [consoleOptions, onError, setAttemptIndex, setConnectionStatus, setError, setCurrentConsoleType]);
+
+
+// Effect to handle HTML5 iframe source and events AFTER it's rendered
+useEffect(() => {
+  if (currentConsoleType === 'vsphere_html5' && iframeRef.current && consoleOptions && consoleOptions.length > 0) {
+    const html5Option = consoleOptions.find(opt => opt.type === 'vsphere_html5') as VSphereHTML5ConsoleOption | undefined;
+  if (html5Option) {
+    const details = html5Option.connectionDetails;
+    console.log(`vSphere HTML5 (Effect): Loading URL ${details.url}`);
+    setConnectionStatus('Loading HTML5 console...');
+    console.log(`Setting iframe src to: ${details.url}`);
+    iframeRef.current.src = details.url;
+
+    const iframe = iframeRef.current; // Capture current ref value for cleanup
+
+    const handleLoad = () => {
+      console.log('vSphere HTML5 (Effect): Iframe loaded');
+      setConnectionStatus(`HTML5 console loaded for ${vmName}`);
+    };
+
+    const handleError = (event: Event) => {
+      console.error('vSphere HTML5 (Effect): Iframe load error', event);
+      const message = 'HTML5 console iframe failed to load.';
+      setError(message);
+      if (onError) onError(message);
+      setConnectionStatus('Error loading HTML5 console');
+      // Attempt next console option if iframe fails to load
+      if (handleConnectionFailureRef.current) { // Call through ref
+        handleConnectionFailureRef.current(`HTML5 iframe failed to load.`);
+      }
+    };
+
+    iframe.addEventListener('load', handleLoad);
+    iframe.addEventListener('error', handleError);
+
+    return () => {
+      iframe.removeEventListener('load', handleLoad);
+      iframe.removeEventListener('error', handleError);
+    };
+  }
+
+} // eslint-disable-next-line react-hooks/exhaustive-deps 
+}, [currentConsoleType, consoleOptions, vmName, onError]); // Removed iframeRef (ref object itself is stable) and handleConnectionFailure (will use ref)
+
+
   // Function to attempt connecting with a specific console option
   const attemptConnection = useCallback((option: ConsoleOption) => {
       console.log(`Attempting connection with type: ${option.type}`);
@@ -218,6 +294,8 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
                       if (onError) onError(`VNC connection lost: ${reason}`);
                       // Optionally attempt next console option here if this one fails
                       // handleConnectionFailure(`Proxmox VNC failed: ${reason}`);
+                                        // For now, let's be explicit if we want to retry here
+
                   }
               });
 
@@ -228,7 +306,9 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
                   setError(`VNC security failure: ${reason}`);
                   if (onError) onError(`VNC security failure: ${reason}`);
                   // Attempt next console option
-                  handleConnectionFailure(`Proxmox VNC security failure: ${reason}`);
+                  if (handleConnectionFailureRef.current) { // Call through ref
+                    handleConnectionFailureRef.current(`Proxmox VNC security failure: ${reason}`);
+                  }
               });
 
               rfbInstance.current.addEventListener('error', (event: CustomEvent) => { // Simplified event type
@@ -239,8 +319,10 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
                    setConnectionStatus(`Error with ${vmName} (Proxmox)`);
                    setError(`VNC Error: ${message}`);
                    if (onError) onError(`VNC Error: ${message}`);
-                   // Attempt next console option
-                   handleConnectionFailure(`Proxmox VNC error: ${message}`);
+                   if (handleConnectionFailureRef.current) { // Call through ref
+                    handleConnectionFailureRef.current(`Proxmox VNC error: ${message}`);
+                  }
+
               });
 
 
@@ -276,8 +358,9 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
                           setConnectionStatus(`Disconnected from ${vmName} (vSphere WebMKS). Reason: ${reason}`);
                           setError(`WebMKS disconnected: ${reason}`);
                           if (onError) onError(`WebMKS disconnected: ${reason}`);
-                          // Attempt next console option
-                          handleConnectionFailure(`WebMKS disconnected: ${reason}`);
+                          if (handleConnectionFailureRef.current) { // Call through ref
+                            handleConnectionFailureRef.current(`WebMKS disconnected: ${reason}`);
+                          }
                       }
                   }
               )
@@ -289,8 +372,9 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
                       setConnectionStatus(`Error with ${vmName} (vSphere WebMKS)`);
                       setError(`WebMKS Error: ${message}`);
                       if (onError) onError(`WebMKS Error: ${message}`);
-                      // Attempt next console option
-                      handleConnectionFailure(`WebMKS error: ${message}`);
+                      if (handleConnectionFailureRef.current) { // Call through ref
+                        handleConnectionFailureRef.current(`WebMKS error: ${message}`);
+                      }
                   }
               );
 
@@ -337,8 +421,9 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
                           setConnectionStatus(`Disconnected from ${vmName} (vSphere MKS). Reason: ${reason}`);
                           setError(`MKS disconnected: ${reason}`);
                           if (onError) onError(`MKS disconnected: ${reason}`);
-                          // Attempt next console option
-                          handleConnectionFailure(`MKS disconnected: ${reason}`);
+                          if (handleConnectionFailureRef.current) { // Call through ref
+                            handleConnectionFailureRef.current(`MKS disconnected: ${reason}`);
+                          }
                       }
                   }
               )
@@ -350,8 +435,9 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
                       setConnectionStatus(`Error with ${vmName} (vSphere MKS)`);
                       setError(`MKS Error: ${message}`);
                       if (onError) onError(`MKS Error: ${message}`);
-                      // Attempt next console option
-                      handleConnectionFailure(`MKS error: ${message}`);
+                      if (handleConnectionFailureRef.current) { // Call through ref
+                        handleConnectionFailureRef.current(`MKS error: ${message}`);
+                      }
                   }
               );
 
@@ -363,34 +449,11 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
               wmksInstance.current.connect(mksUrl, { useSSL: true, sslThumbprint: "" });
 
           } else if (option.type === 'vsphere_html5') {
-              const details = option.connectionDetails;
-              if (!iframeRef.current) {
-                  throw new Error('HTML5 iframe element not found.');
-              }
-              console.log(`vSphere HTML5: Loading URL ${details.url}`);
-              setConnectionStatus('Loading HTML5 console...');
-
-              // Set iframe source
-              iframeRef.current.src = details.url;
-
-              // HTML5 console connection status is harder to track directly from iframe.
-              // We can use load/error events, but they don't indicate the *console* connection status,
-              // only whether the iframe content loaded.
-              iframeRef.current.onload = () => {
-                  console.log('vSphere HTML5: Iframe loaded');
-                  setConnectionStatus(`HTML5 console loaded for ${vmName}`);
-                  // Note: Actual console connection happens *inside* the iframe.
-                  // We can't easily monitor its state from here.
-              };
-              iframeRef.current.onerror = () => {
-                  console.error('vSphere HTML5: Iframe load error');
-                  const message = 'HTML5 console iframe failed to load.';
-                  setError(message);
-                  if (onError) onError(message);
-                  setConnectionStatus('Error loading HTML5 console');
-                  // Attempt next console option
-                  handleConnectionFailure(`HTML5 iframe failed to load.`);
-              };
+              // The actual iframe setup (src, event listeners) is handled by the dedicated useEffect hook above.
+              // This ensures the iframe element is in the DOM before we try to manipulate it.
+              console.log(`vSphere HTML5: Setting type. Effect will handle src and listeners.`);
+              setConnectionStatus('Preparing HTML5 console...'); // Initial status, will be updated by the effect
+     
           } else {
               // Exhaustive check: should never reach here if all types are handled
               const _exhaustiveCheck: never = option;
@@ -403,33 +466,19 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
           if (onError) onError(`Failed to initialize console client: ${message}`);
           setConnectionStatus(`Error initializing ${option.type} client`);
           // Attempt next console option if initialization fails
-          handleConnectionFailure(`Initialization failed for ${option.type}: ${message}`);
-      }
-  }, [vmName, consoleOptions, uniqueWmksId, onError, cleanupConsole]); // Added dependencies
+          if (handleConnectionFailureRef.current) { // Call through ref
+            handleConnectionFailureRef.current(`Initialization failed for ${option.type}: ${message}`);
+          }      }
+        }, [vmName, consoleOptions, uniqueWmksId, onError, cleanupConsole, setCurrentConsoleType, setConnectionStatus, setError]); // Removed handleConnectionFailure from dependencies
 
-  // Function to handle connection failure and attempt the next option
-  const handleConnectionFailure = useCallback((reason: string) => {
-      console.warn(`Connection attempt failed. Reason: ${reason}. Attempting next option...`);
-      // Increment attempt index and try the next option in the list
-      setAttemptIndex(prevIndex => {
-          const nextIndex = prevIndex + 1;
-          if (nextIndex < consoleOptions.length) {
-              // Wait a moment before attempting the next connection
-              setTimeout(() => {
-                 attemptConnection(consoleOptions[nextIndex]);
-              }, 1000); // 1 second delay before next attempt
-              return nextIndex;
-          } else {
-              // No more options left
-              console.error('All console connection options failed.');
-              setConnectionStatus('All connection attempts failed.');
-              setError(`Failed to connect using any available method. Last error: ${reason}`);
-              if (onError) onError(`All connection attempts failed. Last error: ${reason}`);
-              setCurrentConsoleType(null); // Ensure no client is rendered
-              return prevIndex; // Stay at the last index
-          }
-      });
-  }, [consoleOptions, attemptConnection, onError]); // Added dependencies
+    // Update the ref whenever attemptConnection (the memoized function) changes
+    useEffect(() => {
+      attemptConnectionRef.current = attemptConnection;
+    }, [attemptConnection]);
+  
+    useEffect(() => {
+      handleConnectionFailureRef.current = handleConnectionFailure;
+    }, [handleConnectionFailure]);
 
   // Effect to start the connection process when consoleDetails change
   useEffect(() => {
@@ -447,7 +496,7 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
       return () => {
           cleanupConsole();
       };
-  }, [consoleDetails, attemptConnection, cleanupConsole, onError]); // Re-run effect if consoleDetails changes
+    }, [consoleDetails, attemptConnection, cleanupConsole, onError]); // Removed consoleOptions (derived from consoleDetails)
 
   // Determine which console client to render based on currentConsoleType
   const renderConsoleClient = () => {
@@ -459,7 +508,7 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
       // We find the optionDetails to potentially pass to specific renderers if needed,
       // but the switch itself is on currentConsoleType.
       const optionDetails = consoleOptions.find(opt => opt.type === currentConsoleType);
-
+      
       if (!optionDetails) {
           // This case should ideally not be reached if currentConsoleType is valid and consoleOptions is populated.
           console.error(`Render error: No option details found for active console type: ${currentConsoleType}`);

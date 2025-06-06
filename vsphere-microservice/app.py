@@ -1039,10 +1039,10 @@ def vm_historical_metrics_route(vm_uuid):
     timeframe = request.args.get('timeframe', 'hour') # Default to hour
 
     vm_uuid = vm_uuid.strip()
-    app.logger.info(f"Historical Metrics: Request for VM UUID '{vm_uuid}' on host: {host}, timeframe: {timeframe}")
+   # app.logger.info(f"Historical Metrics: Request for VM UUID '{vm_uuid}' on host: {host}, timeframe: {timeframe}")
 
     if not all([host, user, password]):
-        app.logger.error("Historical Metrics: Missing connection parameters")
+        #app.logger.error("Historical Metrics: Missing connection parameters")
         return jsonify({'error': 'Missing connection parameters'}), 400
 
     si = None

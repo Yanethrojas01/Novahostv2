@@ -123,12 +123,37 @@ export default function VMDetails() {
             `Failed to get console details (status: ${response.status})`
         );
       }
-      const data: ConsoleDetailsData = await response.json();
+      const rawData = await response.json(); // Get the raw, potentially malformed data
+      console.log("VMDetails: Raw console data from API:", rawData);
       
-      console.log("VMDetails: Storing console details in sessionStorage:", data); // Log what is being stored
-      // Store the received data structure directly in sessionStorage
-    
-      sessionStorage.setItem('vmConsoleDetails', JSON.stringify(data));
+      // --- START FIX for data structure ---
+      // rawData is expected to be like:
+      // { type: "vsphere_undefined", connectionDetails: { vmName: "UUID", consoleOptions: [...] } }
+      // And rawData.connectionDetails.consoleOptions[i].vmName is the actual VM name.
+
+      let extractedVmName: string = 'VM'; // Default VM name
+      let extractedConsoleOptions: any[] = []; // Use 'any[]' for extracted options before casting
+
+      if (rawData && rawData.connectionDetails && Array.isArray(rawData.connectionDetails.consoleOptions)) {
+        extractedConsoleOptions = rawData.connectionDetails.consoleOptions;
+        // Use the vmName from the first console option if available, as it's the correct one
+        if (extractedConsoleOptions.length > 0 && extractedConsoleOptions[0].vmName) {
+          extractedVmName = extractedConsoleOptions[0].vmName;
+        }
+      } else {
+        console.error("VMDetails: Unexpected raw console data structure from API:", rawData);
+        toast.error("Received unexpected console data structure from server.");
+        // Handle error case, perhaps by not opening the console or showing a specific message
+      }
+
+      const correctlyStructuredData: ConsoleDetailsData = {
+        vmName: extractedVmName,
+        consoleOptions: extractedConsoleOptions, // Cast to ConsoleOption[] if confident about the structure
+      };
+      console.log("VMDetails: Storing CORRECTED console details in sessionStorage:", correctlyStructuredData);
+      sessionStorage.setItem('vmConsoleDetails', JSON.stringify(correctlyStructuredData));
+      // --- END FIX for data structure ---
+      
 
       // Open a new window/tab for the console
       const consoleWindow = window.open('/vm-console', '_blank', 'width=1024,height=768,resizable=yes,scrollbars=yes');

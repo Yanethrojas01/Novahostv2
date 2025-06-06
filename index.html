@@ -15,8 +15,24 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <script src="/js/wmks.min.js"></script> 
-
+    <script>
+      // Minimal AMD define and requirejs shim for libraries that might export to global
+      // or expect a basic AMD loader.
+      (function() {
+        if (typeof window.define === 'undefined') {
+          window.define = function(factory) {
+            if (typeof factory === 'function') {
+              factory(); // Assumes factory attaches to window.WMKS or similar
+            }
+          };
+          window.define.amd = {}; // Signal that an AMD define is present
+        }
+        if (typeof window.requirejs === 'undefined') {
+          window.requirejs = window.define; // Basic alias
+        }
+      })();
+    </script>
+<script src="/js/wmks.min.js"></script> 
   </head>
   <body class="bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-50 antialiased">
     <div id="root"></div>
