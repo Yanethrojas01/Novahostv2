@@ -126,33 +126,51 @@ export default function VMDetails() {
       const rawData = await response.json(); // Get the raw, potentially malformed data
       console.log("VMDetails: Raw console data from API:", rawData);
       
-      // --- START FIX for data structure ---
-      // rawData is expected to be like:
-      // { type: "vsphere_undefined", connectionDetails: { vmName: "UUID", consoleOptions: [...] } }
-      // And rawData.connectionDetails.consoleOptions[i].vmName is the actual VM name.
+      let finalData: ConsoleDetailsData;
 
-      let extractedVmName: string = 'VM'; // Default VM name
-      let extractedConsoleOptions: any[] = []; // Use 'any[]' for extracted options before casting
+      // Caso 1: Estructura anidada específica de vSphere
+      if (rawData && rawData.type === 'vsphere_undefined' && rawData.connectionDetails && Array.isArray(rawData.connectionDetails.consoleOptions)) {
+        console.log("VMDetails: Detected vSphere-specific nested structure. Applying correction.");
+        let extractedVmName: string = vm?.name || 'VM'; // Use actual VM name if available, else default
+        const vSphereConsoleOptions = rawData.connectionDetails.consoleOptions;
 
-      if (rawData && rawData.connectionDetails && Array.isArray(rawData.connectionDetails.consoleOptions)) {
-        extractedConsoleOptions = rawData.connectionDetails.consoleOptions;
-        // Use the vmName from the first console option if available, as it's the correct one
-        if (extractedConsoleOptions.length > 0 && extractedConsoleOptions[0].vmName) {
-          extractedVmName = extractedConsoleOptions[0].vmName;
+        if (vSphereConsoleOptions.length > 0 && vSphereConsoleOptions[0].vmName) {
+          extractedVmName = vSphereConsoleOptions[0].vmName;
         }
+        finalData = {
+          vmName: extractedVmName,
+          consoleOptions: vSphereConsoleOptions,
+        };
+              // Caso 2: La respuesta ya es ConsoleDetailsData (puede tener múltiples opciones)
+
+      } else if (rawData && typeof rawData.vmName === 'string' && Array.isArray(rawData.consoleOptions)) {
+        console.log("VMDetails: Assuming standard ConsoleDetailsData structure.");
+        finalData = rawData as ConsoleDetailsData;
+     // Caso 3: La respuesta es una única ConsoleOption (típico de Proxmox si el backend simplifica)
+    } else if (rawData && typeof rawData.type === 'string' && typeof rawData.connectionDetails === 'object') {
+      console.log("VMDetails: Detected single ConsoleOption structure. Wrapping into ConsoleDetailsData.");
+      // Asumimos que vm.name es el nombre correcto de la VM para este caso.
+      // Si rawData.vmName existe, se podría usar, pero los logs de Proxmox no lo muestran en el nivel superior.
+      const singleOption = rawData as any; // Cast a 'any' para acceder a vmName si existe en la opción
+      finalData = {
+        vmName: singleOption.vmName || vm?.name || 'VM', // Usar vmName de la opción, o del estado de VM, o default
+        consoleOptions: [singleOption], // Envolver la opción única en un array
+      };
+      // Asegurarse que la opción individual tenga un vmName si no lo tiene
+      if (!finalData.consoleOptions[0].vmName) {
+        finalData.consoleOptions[0].vmName = finalData.vmName;
+        }
+        
       } else {
         console.error("VMDetails: Unexpected raw console data structure from API:", rawData);
         toast.error("Received unexpected console data structure from server.");
-        // Handle error case, perhaps by not opening the console or showing a specific message
+        setIsConsoleLoading(false);
+        return; // Stop further processing
       }
+      
+      console.log("VMDetails: Storing final console details in sessionStorage:", finalData);
+      sessionStorage.setItem('vmConsoleDetails', JSON.stringify(finalData));
 
-      const correctlyStructuredData: ConsoleDetailsData = {
-        vmName: extractedVmName,
-        consoleOptions: extractedConsoleOptions, // Cast to ConsoleOption[] if confident about the structure
-      };
-      console.log("VMDetails: Storing CORRECTED console details in sessionStorage:", correctlyStructuredData);
-      sessionStorage.setItem('vmConsoleDetails', JSON.stringify(correctlyStructuredData));
-      // --- END FIX for data structure ---
       
 
       // Open a new window/tab for the console

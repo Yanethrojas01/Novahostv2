@@ -939,14 +939,13 @@ console.log("proxmoxConfig",proxmoxConfig)
     if (targetHypervisor.type === 'proxmox') {
       console.log(`Console: Requesting VNC proxy for Proxmox VM ${vmExternalId} on node ${targetNode}`);
       const vncProxyResponse = await proxmoxClientInstance.nodes.$(targetNode).qemu.$(vmExternalId).vncproxy.$post({});
-     // The host for the VNC connection should be the IP address of the targetNode.
-      // Since targetNode (name, e.g., "proxmox06") is not DNS resolvable by the client,
-      // we use the IP from the hypervisor's DB entry (`targetHypervisor.host`).
-      // This assumes targetHypervisor.host is the correct, client-accessible IP for the targetNode's VNC service.
-      const connectionHostIp = targetHypervisor.host.split(':')[0];
+      // targetHypervisor.host from DB is like "10.70.255.84:8006"
+      const [apiHost, apiPortStr] = targetHypervisor.host.split(':');
+      const proxmoxApiPort = apiPortStr ? parseInt(apiPortStr, 10) : 8006;
 
- 
-      console.log(`Proxmox vncproxy response (port, ticket): port=${vncProxyResponse.port}, ticket=${vncProxyResponse.ticket ? 'present' : 'missing'}. Using connection host IP: ${connectionHostIp} for node ${targetNode}`);
+      // vncProxyResponse.port is the actual VNC port (e.g., 5900)
+      // vncProxyResponse.ticket is the VNC ticket
+      console.log(`Proxmox vncproxy obtained: vncPort=${vncProxyResponse.port}, ticket=${vncProxyResponse.ticket ? 'present' : 'missing'}. Proxmox API for connection: ${apiHost}:${proxmoxApiPort}, Node: ${targetNode}`);
 
       if (!vncProxyResponse.port || !vncProxyResponse.ticket) {
         console.error(`Proxmox vncproxy response for VM ${vmExternalId} on node ${targetNode} is missing port or ticket.`);
@@ -957,13 +956,15 @@ console.log("proxmoxConfig",proxmoxConfig)
       res.json({
         type: 'proxmox',
         connectionDetails: {
-          host: connectionHostIp, // Use the IP from the configured hypervisor host
-          port: vncProxyResponse.port,
+          host: apiHost, // Proxmox API host (e.g., 10.70.255.84)
+          port: proxmoxApiPort, // Proxmox API port (e.g., 8006)
           ticket: vncProxyResponse.ticket, // This is the password for VNC
           vmid: vmExternalId,
           node: targetNode,
           vmName: vmNameForConsole,
-          // protocol: 'wss', // Frontend should determine based on Proxmox host's protocol
+          vncPort: vncProxyResponse.port // Actual VNC port from vncproxy (e.g., 5900)
+
+
         }
       });
     } else if (targetHypervisor.type === 'vsphere') {
