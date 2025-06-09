@@ -190,7 +190,7 @@ const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, 
             if (attemptConnectionRef.current) {
               attemptConnectionRef.current(consoleOptions[nextIndex]);
             }
-          }, 1000); // 1 second delay before next attempt
+          }, 0); // 1 second delay before next attempt
           return nextIndex;
       } else {
           // No more options left
@@ -472,7 +472,8 @@ useEffect(() => {
       switch (currentConsoleType) {
           case 'proxmox':
               // RFB (noVNC) uses a canvas element
-              return <canvas ref={rfbCanvasRef} className="w-full h-full" />;
+              // Added explicit minHeight and minWidth to ensure visibility
+              return <canvas ref={rfbCanvasRef} className="w-full h-full" style={{ minHeight: '400px', minWidth: '600px', backgroundColor: '#000' }} />;
           case 'vsphere_webmks':
           case 'vsphere_mks':
               // WMKS uses a div container
@@ -502,7 +503,7 @@ return <div className="text-center text-red-500">Tipo de consola no reconocido: 
         {currentConsoleType && <p className="text-xs text-slate-400 mb-2">Method: {currentConsoleType}</p>}
         {error && <p className="text-xs text-red-400 mb-2">Error: {error}</p>}
 
-        <div className="flex-grow bg-black rounded overflow-hidden">
+        <div className="flex-grow bg-black rounded overflow-hidden" style={{ minHeight: '400px', minWidth: '600px' }}>
            {/* Render the appropriate console client */}
            {renderConsoleClient()}
         </div>
