@@ -1,517 +1,158 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import RFB from '@novnc/novnc'; // Importar RFB desde el paquete npm
-import { toast } from "react-hot-toast";
+import React, { useEffect, useState } from 'react';
 
-// Types for WMKS
-type WMKSConnectionStateChangeData = {
-  state: string;
-  error?: { message?: string };
-};
-type WMKSErrorData = {
-  errorType?: string;
-  error?: { message?: string };
-};
-type WMKSEventHandler<T = unknown> = (event: unknown, data: T) => void;
+// Define types here as they are imported from this file by StandaloneConsolePage.tsx
+// and potentially VMDetails.tsx.
 
-type WMKSInstance = {
-  register: <T = unknown>(event: string, handler: WMKSEventHandler<T>) => WMKSInstance;
-  connect: (url: string, options: { useSSL: boolean; sslThumbprint: string }) => void;
-  destroy: () => void;
-  // Add other methods if used, e.g., sendCad(), sendKey(), sendMouseEvent()
-};
-
-type WMKSStatic = {
-  createWMKS: (containerId: string, options: object) => WMKSInstance;
-  Events: {
-    CONNECTION_STATE_CHANGE: string;
-    ERROR: string;
-  };
-  ConnectionState: {
-    CONNECTED: string;
-    DISCONNECTED: string;
-    ERROR: string; // Add ERROR state if WMKS has it
-    CONNECTING: string; // Add CONNECTING state
-    INITIALIZED: string; // Add INITIALIZED state
-    CLOSING: string; // Add CLOSING state
-  };
-};
-
-declare global {
-  interface Window {
-    WMKS?: WMKSStatic; // VMware WebMKS library
-  }
-}
-
-// Define connection details types for each hypervisor/method
 export interface ProxmoxConnectionDetails {
-  host: string; // Proxmox API host
-  port: number; // Proxmox API port
-  ticket: string; // This is the VNC password provided by Proxmox
-  node: string; // Proxmox node name
-  vmid: string | number; // Proxmox VM ID
-  vmName?: string; // Optional VM name hint
-  vncPort?: number; // The internal VNC port on the Proxmox node
+  host: string;
+  port: number | string;
+  node: string;
+  vmid: number | string;
+  ticket: string;
+  // ssl?: boolean; // Optional: to determine http vs https, though Proxmox typically uses https
 }
 
-// New type for vSphere MKS ticket details
-export interface VSphereMKSConnectionDetails {
-  vcenterHost: string; // vCenter host to connect WebSocket to (typically port 9443)
-  mksTicket: string; // The MKS ticket
-  esxiHost: string;    // ESXi host where VM runs (used in the URL)
-  esxiPort: number;    // ESXi VNC port (e.g., 902) (used in the URL)
-  cfgFile: string;     // Path to .vmx file (used in the URL)
-  sslThumbprint: string; // ESXi host's SSL thumbprint (used in the URL)
-  vmName?: string; // Optional VM name hint
+export interface VSphereHtml5ConnectionDetails {
+  url: string; // Typically a full URL for the HTML5 console
 }
 
-// Type for vSphere WebMKS ticket details
 export interface VSphereWebMKSConnectionDetails {
-  host: string; // ESXi host or vCenter proxy (where the WebSocket connects)
-  port: number; // Port for WebMKS ticket (e.g., 9443 for vCenter proxy, 443 for direct ESXi)
-  ticket: string; // WebMKS ticket
-  sslThumbprint: string; // Thumbprint of the 'host' (for SSL verification)
-  vmName?: string; // Optional VM name hint
+  host: string;
+  port?: number; // Port might be implicit in host or ticket for some SDKs
+  ticket: string;
+  thumbprint?: string; // SSL thumbprint
+  vmId?: string; // VM MoRef ID or similar identifier
+  // Add other fields required by the WMKS library
 }
 
-// Type for vSphere HTML5 console URL
-export interface VSphereHTML5ConnectionDetails {
-  url: string; // The full HTML5 console URL
-  vmName?: string; // Optional VM name hint
+// Add other specific connection detail types as needed (e.g., for MKS)
+
+export type ConsoleType = 'proxmox' | 'vsphere_html5' | 'vsphere_webmks' | 'vsphere_mks' | string; // Allow string for future/custom types
+
+export interface ConsoleOption {
+  type: ConsoleType;
+  name?: string; // e.g., "noVNC (Proxmox)", "HTML5 Console (vSphere)"
+  connectionDetails:
+    | ProxmoxConnectionDetails
+    | VSphereHtml5ConnectionDetails
+    | VSphereWebMKSConnectionDetails
+    | Record<string, any>; // Fallback for other/unknown structures
+  vmName?: string; // Optional: if the option itself carries a specific VM name
 }
 
-
-// Define types for each specific console option returned by the backend
-export interface ProxmoxConsoleOption {
-  type: 'proxmox';
-  connectionDetails: ProxmoxConnectionDetails;
-  vmName?: string; // Optional VM name specific to this option
-
-}
-
-export interface VSphereHTML5ConsoleOption {
-  type: 'vsphere_html5';
-  connectionDetails: VSphereHTML5ConnectionDetails;
-  vmName?: string; // Optional VM name specific to this option
-
-}
-
-export interface VSphereWebMKSConsoleOption {
-  type: 'vsphere_webmks';
-  connectionDetails: VSphereWebMKSConnectionDetails;
-  vmName?: string; // Optional VM name specific to this option
-
-}
-
-export interface VSphereMKSConsoleOption {
-  type: 'vsphere_mks';
-  connectionDetails: VSphereMKSConnectionDetails;
-  vmName?: string; // Optional VM name specific to this option
-
-}
-
-// Union type for all possible console options
-export type ConsoleOption = ProxmoxConsoleOption | VSphereHTML5ConsoleOption | VSphereWebMKSConsoleOption | VSphereMKSConsoleOption;
-
-// Interface for the data structure returned by the backend's /vm/<uuid>/console endpoint
 export interface ConsoleDetailsData {
-  vmName: string; // The VM name from the backend
-  consoleOptions: ConsoleOption[]; // List of available console connection methods
-};
+  vmName: string;
+  consoleOptions: ConsoleOption[];
+}
 
-// Props for the VMConsoleView component
 interface VMConsoleViewProps {
   consoleDetails: ConsoleDetailsData;
   onClose: () => void;
-  onError?: (message: string) => void;
+  onError: (message: string) => void;
 }
 
 const VMConsoleView: React.FC<VMConsoleViewProps> = ({ consoleDetails, onClose, onError }) => {
-  const rfbCanvasRef = useRef<HTMLCanvasElement>(null);
-  const wmksContainerRef = useRef<HTMLDivElement>(null);
-  const iframeRef = useRef<HTMLIFrameElement>(null); // For HTML5 console
+  const [selectedOption, setSelectedOption] = useState<ConsoleOption | null>(null);
+  const [consoleUrl, setConsoleUrl] = useState<string | null>(null);
 
-  const [connectionStatus, setConnectionStatus] = useState('Initializing...');
-  const [error, setError] = useState<string | null>(null);
-  const [currentConsoleType, setCurrentConsoleType] = useState<ConsoleOption['type'] | null>(null);
-  const [attemptIndex, setAttemptIndex] = useState(0); // Track which option we are attempting
+  useEffect(() => {
+    if (consoleDetails && consoleDetails.consoleOptions && consoleDetails.consoleOptions.length > 0) {
+      // Prioritize Proxmox, then vSphere HTML5, then first available.
+      let optionToUse = consoleDetails.consoleOptions.find(opt => opt.type === 'proxmox');
 
-  const rfbInstance = useRef<InstanceType<typeof RFB> | null>(null); // For Proxmox VNC
-  const wmksInstance = useRef<WMKSInstance | null>(null); // For vSphere WebMKS/MKS
-
-  const { vmName, consoleOptions } = consoleDetails;
-
-  // Generate a unique ID for the WMKS container if needed
-  const [uniqueWmksId] = useState(() => `wmks-container-${Math.random().toString(36).substring(2, 9)}`);
-
-  // Cleanup function for all console types
-  const cleanupConsole = useCallback(() => {
-      console.log('Cleaning up console connections...');
-      // Cleanup RFB (noVNC)
-      if (rfbInstance.current) {
-          console.log('Cleaning up Proxmox VNC connection');
-          try {
-              rfbInstance.current.disconnect();
-          } catch (cleanupError) {
-              console.warn('Error during RFB disconnect cleanup:', cleanupError);
-          }
-          rfbInstance.current = null;
+      if (!optionToUse) {
+        optionToUse = consoleDetails.consoleOptions.find(opt => opt.type === 'vsphere_html5' && (opt.connectionDetails as VSphereHtml5ConnectionDetails)?.url);
       }
-      // Cleanup WMKS
-      if (wmksInstance.current) {
-          console.log('Cleaning up vSphere WebMKS/MKS connection');
-          wmksInstance.current.destroy();
-          wmksInstance.current = null;
+      if (!optionToUse && consoleDetails.consoleOptions.length > 0) {
+        // Fallback to the first option if no preferred type is found yet
+        // This part might need more sophisticated logic if the first option isn't directly usable
+        // optionToUse = consoleDetails.consoleOptions[0];
       }
-      // Cleanup HTML5 iframe
-      if (iframeRef.current) {
-          console.log('Cleaning up HTML5 iframe');
-          iframeRef.current.src = 'about:blank'; // Stop loading
-          iframeRef.current.onload = null;
-          iframeRef.current.onerror = null;
-      }
-      setCurrentConsoleType(null); // Reset current type
-  }, []); // No dependencies needed for cleanup logic itself
 
-  const attemptConnectionRef = useRef<((option: ConsoleOption) => void) | null>(null);
-
-  const handleConnectionFailureRef = useRef<((reason: string) => void) | null>(null);
-
- // Function to handle connection failure and attempt the next option
- const handleConnectionFailure = useCallback((reason: string) => {
-  console.warn(`Connection attempt failed. Reason: ${reason}. Attempting next option...`);
-  // Increment attempt index and try the next option in the list
-  setAttemptIndex(prevIndex => {
-      const nextIndex = prevIndex + 1;
-      // Ensure consoleOptions is available and nextIndex is within bounds
-      if (consoleOptions && nextIndex < consoleOptions.length) {
-    
-          // Wait a moment before attempting the next connection
-          setTimeout(() => { // Call through ref
-            if (attemptConnectionRef.current) {
-              attemptConnectionRef.current(consoleOptions[nextIndex]);
+      if (optionToUse) {
+        setSelectedOption(optionToUse);
+        try {
+          if (optionToUse.type === 'proxmox') {
+            const details = optionToUse.connectionDetails as ProxmoxConnectionDetails;
+            // Log the ticket for debugging to see what value is being received
+            console.log("VMConsoleView: Proxmox ticket received by frontend:", details.ticket);
+            if (!details.host || !details.port || !details.node || !details.vmid || !details.ticket || typeof details.ticket !== 'string' || details.ticket.trim() === '') {
+              const errorMessage = `Incomplete or invalid Proxmox connection details. Host: ${details.host}, Port: ${details.port}, Node: ${details.node}, VMID: ${details.vmid}, Ticket: '${details.ticket}' (Type: ${typeof details.ticket})`;
+              onError(errorMessage);
+              throw new Error(errorMessage);
             }
-          }, 0); // 1 second delay before next attempt
-          return nextIndex;
-      } else {
-          // No more options left
-          console.error('All console connection options failed.');
-          setConnectionStatus('All connection attempts failed.');
-          const finalErrorMessage = `Failed to connect using any available method. Last error: ${reason}`;
-          setError(finalErrorMessage);
-          if (onError) onError(finalErrorMessage);
-          setCurrentConsoleType(null); // Ensure no client is rendered
-          return prevIndex; // Stay at the last index
-      }
-  });
-}, [consoleOptions, onError, setAttemptIndex, setConnectionStatus, setError, setCurrentConsoleType]);
 
-
-// Effect to handle HTML5 iframe source and events AFTER it's rendered
-useEffect(() => {
-  if (currentConsoleType === 'vsphere_html5' && iframeRef.current && consoleOptions && consoleOptions.length > 0) {
-    const html5Option = consoleOptions.find(opt => opt.type === 'vsphere_html5') as VSphereHTML5ConsoleOption | undefined;
-  if (html5Option) {
-    const details = html5Option.connectionDetails;
-    console.log(`vSphere HTML5 (Effect): Loading URL ${details.url}`);
-    setConnectionStatus('Loading HTML5 console...');
-    console.log(`Setting iframe src to: ${details.url}`);
-    iframeRef.current.src = details.url;
-
-    const iframe = iframeRef.current; // Capture current ref value for cleanup
-
-    const handleLoad = () => {
-      console.log('vSphere HTML5 (Effect): Iframe loaded');
-      setConnectionStatus(`HTML5 console loaded for ${vmName}`);
-    };
-
-    const handleError = (event: Event) => {
-      console.error('vSphere HTML5 (Effect): Iframe load error', event);
-      const message = 'HTML5 console iframe failed to load.';
-      setError(message);
-      if (onError) onError(message);
-      setConnectionStatus('Error loading HTML5 console');
-      // Attempt next console option if iframe fails to load
-      if (handleConnectionFailureRef.current) { // Call through ref
-        handleConnectionFailureRef.current(`HTML5 iframe failed to load.`);
-      }
-    };
-
-    iframe.addEventListener('load', handleLoad);
-    iframe.addEventListener('error', handleError);
-
-    return () => {
-      iframe.removeEventListener('load', handleLoad);
-      iframe.removeEventListener('error', handleError);
-    };
-  }
-
-} // eslint-disable-next-line react-hooks/exhaustive-deps 
-}, [currentConsoleType, consoleOptions, vmName, onError]); // Removed iframeRef (ref object itself is stable) and handleConnectionFailure (will use ref)
-
-
-  // Function to attempt connecting with a specific console option
-  const attemptConnection = useCallback((option: ConsoleOption) => {
-      const targetVmName = option.vmName || vmName; // Use option-specific vmName if available
-      console.log(`Attempting connection with type: ${option.type} for VM: ${targetVmName}`);
-      setConnectionStatus(`Initializing ${option.type}...`);
-      setError(null); // Clear previous errors
-
-      // Cleanup previous console *before* setting the new type.
-      cleanupConsole();
-      // Now, set the new console type. This will trigger the appropriate useEffect.
-      setCurrentConsoleType(option.type);
-
-  }, [vmName, cleanupConsole, setCurrentConsoleType, setConnectionStatus, setError]);
-
-    // Update the ref whenever attemptConnection (the memoized function) changes
-    useEffect(() => {
-      attemptConnectionRef.current = attemptConnection;
-    }, [attemptConnection]);
-  
-    useEffect(() => {
-      handleConnectionFailureRef.current = handleConnectionFailure;
-    }, [handleConnectionFailure]);
-
-  // Effect for Proxmox VNC connection
-  useEffect(() => {
-    if (currentConsoleType === 'proxmox' && consoleOptions && consoleOptions.length > 0) {
-      const proxmoxOption = consoleOptions.find(opt => opt.type === 'proxmox') as ProxmoxConsoleOption | undefined;
-      const targetVmName = proxmoxOption?.vmName || vmName;
-
-      if (!rfbCanvasRef.current) {
-        console.error("Proxmox (Effect): RFB canvas element not found when expected.");
-        if (handleConnectionFailureRef.current) {
-          handleConnectionFailureRef.current("RFB canvas element not found for Proxmox.");
-        }
-        return;
-      }
-      if (!proxmoxOption) {
-        console.error("Proxmox (Effect): Proxmox option details not found.");
-        if (handleConnectionFailureRef.current) {
-          handleConnectionFailureRef.current("Proxmox option details missing.");
-        }
-        return;
-      }
-      if (!RFB) {
-        console.error("Proxmox (Effect): RFB module not available.");
-        if (handleConnectionFailureRef.current) {
-          handleConnectionFailureRef.current("RFB module not available.");
-        }
-        return;
-      }
-
-      const details = proxmoxOption.connectionDetails;
-      const backendHost = window.location.hostname;
-      const backendPort = import.meta.env.DEV ? 3001 : (window.location.port || (window.location.protocol === 'https:' ? 443 : 80));
-      const backendWebSocketProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      const rfbUrl = `${backendWebSocketProtocol}://${backendHost}:${backendPort}/ws/proxmox-console/${details.node}/${details.vmid}?ticket=${encodeURIComponent(details.ticket)}&vncPort=${details.vncPort}`;
-
-      console.log(`Proxmox VNC (Effect via Proxy): Connecting to ${rfbUrl}`);
-      setConnectionStatus('Connecting to VNC...');
-
-      rfbInstance.current = new RFB(rfbCanvasRef.current, rfbUrl, {
-        credentials: { password: details.ticket },
-      });
-
-      rfbInstance.current.addEventListener('connect', () => {
-        console.log('Proxmox VNC (Effect): Connected');
-        setConnectionStatus(`Connected to ${targetVmName} (Proxmox)`);
-      });
-      rfbInstance.current.addEventListener('disconnect', (event: CustomEvent<{ clean: boolean, reason?: string }>) => {
-        console.log('Proxmox VNC (Effect): Disconnected', event.detail);
-        const reason = event.detail.reason || (event.detail.clean ? 'Clean disconnect' : 'Abrupt disconnect');
-        if (!event.detail.clean) {
-          setError(`VNC connection lost: ${reason}`);
-          if (onError) onError(`VNC connection lost: ${reason}`);
-          if (handleConnectionFailureRef.current) {
-            handleConnectionFailureRef.current(`Proxmox VNC disconnected: ${reason}`);
-          }
-        } else {
-           setConnectionStatus(`Disconnected from ${targetVmName} (Proxmox). Reason: ${reason}`);
-        }
-      });
-      rfbInstance.current.addEventListener('securityfailure', (event: CustomEvent<{ reason?: string }>) => {
-        console.error('Proxmox VNC (Effect): Security failure', event.detail);
-        const reason = event.detail.reason || 'Unknown reason';
-        setError(`VNC security failure: ${reason}`);
-        if (onError) onError(`VNC security failure: ${reason}`);
-        if (handleConnectionFailureRef.current) {
-          handleConnectionFailureRef.current(`Proxmox VNC security failure: ${reason}`);
-        }
-      });
-      rfbInstance.current.addEventListener('error', (event: CustomEvent) => {
-        const detail = event.detail as { message?: string, reason?: string } | undefined;
-        console.error('Proxmox VNC (Effect): Error event', detail);
-        const message = detail?.message || detail?.reason || 'Unknown VNC error';
-        setError(`VNC Error: ${message}`);
-        if (onError) onError(`VNC Error: ${message}`);
-        if (handleConnectionFailureRef.current) {
-          handleConnectionFailureRef.current(`Proxmox VNC error: ${message}`);
-        }
-      });
-
-      return () => {
-        if (rfbInstance.current) {
-          console.log('Proxmox (Effect Cleanup): Disconnecting RFB instance.');
-         // Check if connected before trying to disconnect to avoid errors on already disconnected instances
-         if (rfbInstance.current.connected) {
-          rfbInstance.current.disconnect();
-        }
-        rfbInstance.current = null; // Clear the ref
-
-        }
-      };
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentConsoleType, consoleOptions, vmName, onError, setConnectionStatus, setError]);
-
-  // Effect for vSphere WMKS/MKS connection
-  useEffect(() => {
-    if ((currentConsoleType === 'vsphere_webmks' || currentConsoleType === 'vsphere_mks') && consoleOptions && consoleOptions.length > 0) {
-      const wmksOption = consoleOptions.find(opt => opt.type === currentConsoleType) as (VSphereWebMKSConsoleOption | VSphereMKSConsoleOption) | undefined;
-      const targetVmName = wmksOption?.vmName || vmName;
-
-      if (!wmksContainerRef.current) {
-        console.error(`vSphere ${currentConsoleType} (Effect): WMKS container not found.`);
-        if (handleConnectionFailureRef.current) handleConnectionFailureRef.current("WMKS container not found.");
-        return;
-      }
-      if (!window.WMKS) {
-        console.error(`vSphere ${currentConsoleType} (Effect): WMKS library not found.`);
-        if (handleConnectionFailureRef.current) handleConnectionFailureRef.current("WMKS library not available.");
-        return;
-      }
-      if (!wmksOption) {
-        console.error(`vSphere ${currentConsoleType} (Effect): Option details not found.`);
-        if (handleConnectionFailureRef.current) handleConnectionFailureRef.current("WMKS option details missing.");
-        return;
-      }
-
-      wmksContainerRef.current.id = uniqueWmksId; // Ensure ID is set
-      setConnectionStatus(`Connecting to vSphere ${currentConsoleType}...`);
-
-      wmksInstance.current = window.WMKS.createWMKS(uniqueWmksId, {})
-        .register<WMKSConnectionStateChangeData>(window.WMKS.Events.CONNECTION_STATE_CHANGE, (event, data) => {
-          console.log(`vSphere ${currentConsoleType} (Effect): State Change`, data.state, data.error);
-          if (data.state === window.WMKS!.ConnectionState.CONNECTED) {
-            setConnectionStatus(`Connected to ${targetVmName} (vSphere ${currentConsoleType})`);
-          } else if (data.state === window.WMKS!.ConnectionState.DISCONNECTED) {
-            const reason = data.error?.message || 'Unknown reason';
-            setError(`${currentConsoleType} disconnected: ${reason}`);
-            if (onError) onError(`${currentConsoleType} disconnected: ${reason}`);
-            if (handleConnectionFailureRef.current) handleConnectionFailureRef.current(`${currentConsoleType} disconnected: ${reason}`);
+            const protocol = (Number(details.port) === 443 || Number(details.port) === 8006 || String(details.port).includes('443') || String(details.port).includes('8006')) ? 'https' : 'http';
+            const encodedTicket = encodeURIComponent(details.ticket);
+            // URL estándar de noVNC para Proxmox. El manejador noVNC del servidor Proxmox utiliza el ticket, node y vmid
+            // para establecer internamente la conexión WebSocket al puerto vncproxy correcto.
+            const url = `${protocol}://${details.host}:${details.port}/?console=kvm&novnc=1&vmid=${details.vmid}&node=${details.node}&ticket=${encodedTicket}&resize=scale`;
+            setConsoleUrl(url);
+          } else if (optionToUse.type === 'vsphere_html5') {
+            const details = optionToUse.connectionDetails as VSphereHtml5ConnectionDetails;
+            if (!details.url) {
+              throw new Error("vSphere HTML5 console URL is missing.");
+            }
+            setConsoleUrl(details.url);
           } else {
-            setConnectionStatus(`${data.state} to ${targetVmName} (vSphere ${currentConsoleType})...`);
+            // Handle other types or prepare for them
+            onError(`Console type '${optionToUse.type}' is recognized but not yet fully renderable in this view.`);
+            setConsoleUrl(null); // No direct URL for these yet
           }
-        })
-        .register<WMKSErrorData>(window.WMKS.Events.ERROR, (event, data) => {
-          console.error(`vSphere ${currentConsoleType} (Effect): Error Event`, data);
-          const message = data.error?.message || data.errorType || 'Unknown WMKS error';
-          setError(`${currentConsoleType} Error: ${message}`);
-          if (onError) onError(`${currentConsoleType} Error: ${message}`);
-          if (handleConnectionFailureRef.current) handleConnectionFailureRef.current(`${currentConsoleType} error: ${message}`);
-        });
-
-      let connectUrl: string;
-      let connectOptions: { useSSL: boolean; sslThumbprint: string };
-
-      if (wmksOption.type === 'vsphere_webmks') {
-        const details = wmksOption.connectionDetails;
-        connectUrl = `wss://${details.host}:${details.port}/ticket/${details.ticket}`;
-        connectOptions = { useSSL: true, sslThumbprint: details.sslThumbprint };
-      } else { // vsphere_mks
-        const details = wmksOption.connectionDetails;
-        connectUrl = `wss://${details.vcenterHost}:9443/vsphere-client/webconsole/authd?mksTicket=${encodeURIComponent(details.mksTicket)}&host=${encodeURIComponent(details.esxiHost)}&port=${details.esxiPort}&cfgFile=${encodeURIComponent(details.cfgFile)}&sslThumbprint=${encodeURIComponent(details.sslThumbprint)}`;
-        connectOptions = { useSSL: true, sslThumbprint: "" }; // Thumbprint is in URL for MKS via vCenter proxy
-      }
-      console.log(`vSphere ${currentConsoleType} (Effect): Connecting to ${connectUrl.split('?')[0]}`);
-      wmksInstance.current.connect(connectUrl, connectOptions);
-
-      return () => {
-        if (wmksInstance.current) {
-          console.log(`WMKS (Effect Cleanup): Destroying ${currentConsoleType} instance.`);
-          wmksInstance.current.destroy();
-          wmksInstance.current = null;
+        } catch (e: any) {
+          onError(`Error processing console details for type '${optionToUse.type}': ${e.message}`);
+          setConsoleUrl(null);
         }
-      };
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentConsoleType, consoleOptions, vmName, onError, uniqueWmksId, setConnectionStatus, setError]);
-
-  // Effect to start the connection process when consoleDetails change
-  useEffect(() => {
-      if (consoleOptions && consoleOptions.length > 0) {
-          setAttemptIndex(0); // Start from the first option
-          attemptConnection(consoleOptions[0]);
       } else {
-          setError("No console options provided by the backend.");
-          setConnectionStatus("Error: No console options.");
-          if (onError) onError("No console options provided by the backend.");
-          setCurrentConsoleType(null); // Ensure no client is rendered
+        onError(`No supported console option found. Available types: ${consoleDetails.consoleOptions.map(o => o.type).join(', ')}`);
+        setConsoleUrl(null);
       }
+    } else {
+      onError("No console options available in consoleDetails.");
+      setConsoleUrl(null);
+    }
+  }, [consoleDetails, onError]);
 
-      // Return the cleanup function
-      return () => {
-          cleanupConsole();
-      };
-    }, [consoleDetails, attemptConnection, cleanupConsole, onError]); // Removed consoleOptions (derived from consoleDetails)
+  const renderConsoleContent = () => {
+    if (!selectedOption) {
+      return <div className="p-4 text-center">Loading console or no option selected...</div>;
+    }
+    if (!consoleUrl && (selectedOption.type === 'proxmox' || selectedOption.type === 'vsphere_html5')) {
+        return <div className="p-4 text-center">Preparing console URL... If this persists, an error might have occurred.</div>;
+    }
 
-  // Determine which console client to render based on currentConsoleType
-  const renderConsoleClient = () => {
-      if (!currentConsoleType) {
-        return null;
-      }
-
-      // currentConsoleType is guaranteed to be ConsoleOption['type'] here.
-      // We find the optionDetails to potentially pass to specific renderers if needed,
-      // but the switch itself is on currentConsoleType.
-      const optionDetails = consoleOptions.find(opt => opt.type === currentConsoleType);
-      
-      if (!optionDetails) {
-          // This case should ideally not be reached if currentConsoleType is valid and consoleOptions is populated.
-          console.error(`Render error: No option details found for active console type: ${currentConsoleType}`);
-          return <div className="text-center text-red-500">Error interno al renderizar la consola.</div>;
-      }
-
-      switch (currentConsoleType) {
-          case 'proxmox':
-              // RFB (noVNC) uses a canvas element
-              // Added explicit minHeight and minWidth to ensure visibility
-              return <canvas ref={rfbCanvasRef} className="w-full h-full" style={{ minHeight: '400px', minWidth: '600px', backgroundColor: '#000' }} />;
-          case 'vsphere_webmks':
-          case 'vsphere_mks':
-              // WMKS uses a div container
-              return <div ref={wmksContainerRef} id={uniqueWmksId} className="w-full h-full" />;
-          case 'vsphere_html5':
-        
-              return <iframe ref={iframeRef} className="w-full h-full border-none" src="" title={`${vmName} Console`} allowFullScreen />;
-          default:
-// This makes the switch exhaustive for currentConsoleType
-const _exhaustiveCheck: never = currentConsoleType;
-return <div className="text-center text-red-500">Tipo de consola no reconocido: {_exhaustiveCheck}</div>;
-}
+    if ((selectedOption.type === 'proxmox' || selectedOption.type === 'vsphere_html5') && consoleUrl) {
+      return (
+        <iframe
+          src={consoleUrl}
+          title={`${consoleDetails.vmName} Console (${selectedOption.name || selectedOption.type})`}
+          className="w-full h-full border-0"
+          allowFullScreen
+        />
+      );
+    }
+    // Placeholder for other console types like WebMKS which require SDKs
+    return <div className="p-4 text-center">Console type '{selectedOption.type}' is not yet renderable with a direct URL. Further implementation needed.</div>;
   };
 
-
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-800 p-2 rounded-lg shadow-xl w-full max-w-4xl h-[85vh] flex flex-col">
-        <div className="flex justify-between items-center mb-2 text-white">
-          <h3 className="text-lg font-semibold">
-            Console: {vmName}
-          </h3>
-          <button onClick={onClose} className="text-slate-300 hover:text-white">&times; Close</button>
-        </div>
-        <p className="text-xs text-slate-400 mb-2">Status: {connectionStatus}</p>
-        {/* Display current console type being attempted/used */}
-        {currentConsoleType && <p className="text-xs text-slate-400 mb-2">Method: {currentConsoleType}</p>}
-        {error && <p className="text-xs text-red-400 mb-2">Error: {error}</p>}
-
-        <div className="flex-grow bg-black rounded overflow-hidden" style={{ minHeight: '400px', minWidth: '600px' }}>
-           {/* Render the appropriate console client */}
-           {renderConsoleClient()}
-        </div>
-      </div>
+    <div className="flex flex-col w-screen h-screen bg-slate-900 text-white">
+      <header className="bg-slate-800 p-3 flex justify-between items-center shadow-md flex-shrink-0">
+        <h1 className="text-lg font-semibold truncate pr-2" title={consoleDetails.vmName}>
+          Console: {consoleDetails.vmName}
+          {selectedOption && <span className="text-sm text-slate-400 ml-2">({selectedOption.name || selectedOption.type})</span>}
+        </h1>
+        <button
+          onClick={onClose}
+          className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-medium rounded-md transition-colors"
+          title="Close Console Window"
+        >
+          Close
+        </button>
+      </header>
+      <main className="flex-grow overflow-hidden bg-black">
+        {renderConsoleContent()}
+      </main>
     </div>
   );
 };
