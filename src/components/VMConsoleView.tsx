@@ -353,8 +353,12 @@ useEffect(() => {
       return () => {
         if (rfbInstance.current) {
           console.log('Proxmox (Effect Cleanup): Disconnecting RFB instance.');
+         // Check if connected before trying to disconnect to avoid errors on already disconnected instances
+         if (rfbInstance.current.connected) {
           rfbInstance.current.disconnect();
-          rfbInstance.current = null;
+        }
+        rfbInstance.current = null; // Clear the ref
+
         }
       };
     }
