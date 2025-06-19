@@ -38,7 +38,7 @@ if (
         typeof option.connectionDetails === 'object' // Ensure connectionDetails is an object
     );
 
-    if (hasValidOptions) {             setConsoleDetails(details);
+    if (hasValidOptions) {setConsoleDetails(details);
     } else {
         console.error("StandaloneConsolePage: Console options array contains invalid entries:", details.consoleOptions);
         setError("Invalid console options received. Please try opening the console again.");
